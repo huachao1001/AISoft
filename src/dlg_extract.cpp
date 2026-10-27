@@ -144,9 +144,6 @@ void PaintBanner(HWND hwnd) {
   RECT titleRc{g_app.px(12), 0, rc.right - g_app.px(40), g_app.px(24)};
   DrawTextLeft(dc, titleRc, L"解压", RGB(255, 255, 255), fonts.uiBold);
 
-  RECT brandRc{rc.right - g_app.px(330), 0, rc.right - g_app.px(12), g_app.px(24)};
-  DrawTextEllipsis(dc, brandRc, L"高效专业，值得信赖", RGB(220, 245, 255), fonts.uiBold);
-
   RECT subRc{g_app.px(12), g_app.px(24), rc.right - g_app.px(12), g_app.px(44)};
   std::wstring sub = g_app.archiveMode ? util::BaseName(g_app.archivePath) : L"";
   DrawTextEllipsis(dc, subRc, sub, RGB(214, 240, 252), fonts.uiSmall);

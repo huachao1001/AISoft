@@ -256,9 +256,6 @@ void PaintBanner(HWND hwnd) {
   RECT titleRc{g_app.px(12), 0, rc.right - g_app.px(40), g_app.px(24)};
   DrawTextLeft(dc, titleRc, L"压缩文件", RGB(255, 255, 255), fonts.uiBold);
 
-  RECT brandRc{rc.right - g_app.px(330), 0, rc.right - g_app.px(12), g_app.px(24)};
-  DrawTextEllipsis(dc, brandRc, L"高效专业，值得信赖", RGB(220, 245, 255), fonts.uiBold);
-
   RECT subRc{g_app.px(12), g_app.px(24), rc.right - g_app.px(12), g_app.px(44)};
   int count = g_state ? static_cast<int>(g_state->sources.size()) : 0;
   const std::wstring sub = L"共 " + std::to_wstring(count) + L" 项待压缩";
