@@ -1,0 +1,18 @@
+* text=auto eol=lf
+
+# 本仓库自有源码统一 LF
+/src/**      text eol=lf
+/tools/**    text eol=lf
+/*.md        text eol=lf
+/*.txt       text eol=lf
+/.gitignore  text eol=lf
+/.gitattributes text eol=lf
+
+# 第三方源码保持上游原样，不做换行规范化
+/third_party/** -text
+
+# 二进制
+*.ico binary
+*.png binary
+*.dll binary
+*.exe binary
