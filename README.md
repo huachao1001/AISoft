@@ -20,7 +20,7 @@ cmake --build build\cmake --parallel
 
 ## 单文件是怎么做到的
 
-`third_party/7z` 把官方 7-Zip 26.05 源码编成静态库 `7zstatic`，直接链进 exe。
+`third_party/7z/build-cmake` 把官方 7-Zip 26.05 源码编成静态库 `7zstatic`，直接链进 exe。
 构建清单取自官方 `7z.dll` 的配方 `CPP/7zip/Bundles/Format7zF/Arc.mak`，
 所以格式与算法支持和 7z.dll 完全一致。
 
@@ -70,8 +70,13 @@ MD5 / 虚拟光驱）、图片视频 PDF 压缩与预览、云盘、分享、安
 ## 目录
 
 ```
-src/            全部源码（界面、对话框、7-Zip 封装）
-src/res/        图标与 comctl32 v6 清单
-third_party/7z/ 7-Zip 26.05 源码 + 静态库构建配置
-tools/          内核验证程序（test_arc.cpp）与清单生成脚本
+src/                    全部源码（界面、对话框、7-Zip 封装）
+src/res/                图标与 comctl32 v6 清单
+third_party/7z/         7-Zip 26.05 源码（与官方源码包同构）
+third_party/7z/build-cmake/  静态库的 CMake 构建配置与对象清单
+tools/                  内核验证程序（test_arc.cpp）与清单生成脚本
 ```
+
+`third_party/7z/` 只保留编进 `7zstatic` 的部分：上游的 GUI（`CPP/7zip/UI`）、
+编译器工具链（`C/Util`）、非 Format7zF 的 bundle 和 7z.dll 分发件都已移除。
+需要核对上游改动时，可直接与官方 7-Zip 26.05 源码包对应目录 diff。

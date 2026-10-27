@@ -11,9 +11,6 @@ out/
 # 发布目录由 build 拷贝而来，不跟踪二进制
 dist/
 
-# 7-Zip 官方 dll：仅早期做交叉校验时留作参考，构建不使用
-third_party/7z/bin/7z.dll
-
 # 编辑器 / 系统
 .vs/
 .vscode/

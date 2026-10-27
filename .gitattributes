@@ -11,6 +11,9 @@
 # 第三方源码保持上游原样，不做换行规范化
 /third_party/** -text
 
+# 例外：我们自己写的构建配置，需要正常 diff
+/third_party/7z/build-cmake/** text eol=lf
+
 # 二进制
 *.ico binary
 *.png binary

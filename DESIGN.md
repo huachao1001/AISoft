@@ -102,5 +102,6 @@ MyZip/
 │  ├─ dlg_progress.h/.cpp 进度对话框
 │  ├─ res/                图标与资源
 │  └─ util.h/.cpp         路径、格式化、DPI
-└─ third_party/7z/        7-Zip 26.05 源码 + 静态库构建
+└─ third_party/7z/        7-Zip 26.05 源码（与官方源码包同构）
+   └─ build-cmake/        静态库构建配置与对象清单
 ```

@@ -12,7 +12,7 @@ endif()
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
 
 # 7-Zip 内核以静态库形式编进 exe，不再需要外部 dll
-add_subdirectory(third_party/7z)
+add_subdirectory(third_party/7z/build-cmake)
 
 # 7-Zip 各格式靠 *Register.cpp 里的全局对象在静态初始化阶段注册自己，这些对象
 # 没有任何外部引用，普通静态库链接会被整体丢弃，结果是格式列表为空。

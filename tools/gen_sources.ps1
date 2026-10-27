@@ -1,6 +1,9 @@
 $ErrorActionPreference = 'Stop'
-$root = "C:\Users\chaohua\Desktop\MyZip\third_party\7z\src"
-$out  = "C:\Users\chaohua\Desktop\MyZip\third_party\7z\sources.cmake"
+
+# 脚本位于 <repo>/tools/，7-Zip 源码在 <repo>/third_party/7z/ 下
+$repo = Split-Path $PSScriptRoot -Parent
+$root = Join-Path $repo "third_party\7z"
+$out  = Join-Path $root "build-cmake\sources.cmake"
 
 # 各 OBJS 组对应的源码目录
 $dirMap = [ordered]@{
