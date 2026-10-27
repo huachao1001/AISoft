@@ -213,15 +213,7 @@ LRESULT CALLBACK NavProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 HWND CreateNavBar(HWND parent, HINSTANCE inst) {
   static bool registered = false;
   if (!registered) {
-    WNDCLASSEXW wc{};
-    wc.cbSize = sizeof(wc);
-    wc.style = CS_HREDRAW | CS_VREDRAW;
-    wc.lpfnWndProc = NavProc;
-    wc.hInstance = inst;
-    wc.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
-    wc.hbrBackground = nullptr;
-    wc.lpszClassName = kNavClass;
-    registered = ::RegisterClassExW(&wc) != 0;
+    registered = RegisterWindowClass(kNavClass, NavProc, inst, CS_HREDRAW | CS_VREDRAW, nullptr);
   }
   return ::CreateWindowExW(0, kNavClass, L"", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, parent,
                            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kBackBtnId)), inst, nullptr);
@@ -273,8 +265,7 @@ void CreateChildren(HWND hwnd) {
 }
 
 // 地址栏布局：导航按钮 + 路径框 + 搜索框
-void LayoutAddressBar(int cx) {
-  const int y = g_app.px(kToolbarHeight);
+void LayoutAddressBar(int cx) {  const int y = g_app.px(kToolbarHeight);
   const int h = g_app.px(kAddressHeight);
   const int pad = g_app.px(8);
   const int gap = g_app.px(6);
@@ -303,7 +294,8 @@ void OnSize(HWND hwnd, int cx, int cy) {
   const int addressH = g_app.px(kAddressHeight);
   const int statusH = g_app.px(kStatusHeight);
 
-  ::MoveWindow(g_parts.toolbar, 0, 0, cx, toolbarH, TRUE);  LayoutAddressBar(cx);
+  ::MoveWindow(g_parts.toolbar, 0, 0, cx, toolbarH, TRUE);
+  LayoutAddressBar(cx);
 
   const int contentY = toolbarH + addressH;
   const int statusTop = cy - statusH;
@@ -388,7 +380,6 @@ LRESULT OnNotify(HWND hwnd, NMHDR* hdr) {
   if (!hdr) return 0;
   if (hdr->hwndFrom == g_parts.tree) return HandleTreeNotify(hwnd, hdr);
   if (hdr->hwndFrom == g_parts.list) return HandleListNotify(hwnd, hdr);
-  if (hdr->hwndFrom == g_parts.toolbar) return HandleToolbarNotify(hwnd, hdr);
   return 0;
 }
 
@@ -567,23 +558,10 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
 }  // namespace
 
-MainParts& Parts() { return g_parts; }
-
 bool RegisterMainWindow(HINSTANCE inst) {
-  WNDCLASSEXW wc{};
-  wc.cbSize = sizeof(wc);
-  wc.style = CS_HREDRAW | CS_VREDRAW;
-  wc.lpfnWndProc = MainProc;
-  wc.hInstance = inst;
-  wc.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
-  wc.hIcon = static_cast<HICON>(::LoadImageW(inst, MAKEINTRESOURCEW(101), IMAGE_ICON, 32, 32, 0));
-  wc.hIconSm = static_cast<HICON>(::LoadImageW(inst, MAKEINTRESOURCEW(101), IMAGE_ICON,
-                                               ::GetSystemMetrics(SM_CXSMICON),
-                                               ::GetSystemMetrics(SM_CYSMICON), 0));
   // 必须给背景刷：窗口移动/缩放时新露出的区域要靠它填，否则会闪黑条
-  wc.hbrBackground = ::CreateSolidBrush(kWindowBg);
-  wc.lpszClassName = kMainClass;
-  return ::RegisterClassExW(&wc) != 0;
+  return RegisterWindowClass(kMainClass, MainProc, inst, CS_HREDRAW | CS_VREDRAW,
+                             ::CreateSolidBrush(kWindowBg), 101);
 }
 
 // 把窗口摆到当前显示器工作区正中。
@@ -638,18 +616,13 @@ HWND CreateMainWindow(HINSTANCE inst) {
   return hwnd;
 }
 
-void LayoutMainWindow(HWND hwnd) {
-  RECT rc;
-  ::GetClientRect(hwnd, &rc);
-  OnSize(hwnd, rc.right, rc.bottom);
-}
-
 void UpdateMainTitle(HWND hwnd) {
-  std::wstring title = g_app.archiveMode ? util::BaseName(g_app.archivePath) + L" - MyZip" : L"MyZip";
+  const std::wstring title =
+      g_app.archiveMode ? util::BaseName(g_app.archivePath) + L" - MyZip" : L"MyZip";
   ::SetWindowTextW(hwnd, title.c_str());
 }
 
-void RefreshAddressBar(HWND hwnd) {
+void RefreshAddressBar(HWND) {
   std::wstring text;
   if (g_app.archiveMode) {
     text = g_app.archivePath;
@@ -665,7 +638,6 @@ void RefreshAddressBar(HWND hwnd) {
   }
   // 前进/后退可用性随历史变化
   if (g_parts.navBar) ::InvalidateRect(g_parts.navBar, nullptr, FALSE);
-  (void)hwnd;
 }
 
 void RefreshStatusBar(HWND hwnd) {

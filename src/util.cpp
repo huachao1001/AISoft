@@ -1,9 +1,7 @@
 #include "util.h"
 
-#include <shlwapi.h>
 #include <shlobj.h>
 
-#include <algorithm>
 #include <cstdio>
 
 namespace util {
@@ -48,12 +46,6 @@ std::wstring JoinPath(const std::wstring& a, const std::wstring& b) {
   while (i < b.size() && (b[i] == L'\\' || b[i] == L'/')) ++i;
   out.append(b.substr(i));
   return out;
-}
-
-std::wstring NormalizePath(const std::wstring& path) {
-  wchar_t buf[MAX_PATH * 2];
-  if (::PathCanonicalizeW(buf, path.c_str())) return buf;
-  return path;
 }
 
 bool PathExists(const std::wstring& path) {
@@ -172,12 +164,6 @@ std::wstring FormatCrc(uint32_t crc, bool has) {
   return buf;
 }
 
-std::wstring FormatCount(size_t n) {
-  std::wstring s = std::to_wstring(n);
-  for (int i = static_cast<int>(s.size()) - 3; i > 0; i -= 3) s.insert(i, L",");
-  return s;
-}
-
 int DpiForWindow(HWND hwnd) {
   using GetDpiForWindowFn = UINT(WINAPI*)(HWND);
   static auto fn = reinterpret_cast<GetDpiForWindowFn>(
@@ -188,8 +174,6 @@ int DpiForWindow(HWND hwnd) {
   ::ReleaseDC(nullptr, dc);
   return dpi > 0 ? dpi : 96;
 }
-
-int ScaleDpi(int value, int dpi) { return ::MulDiv(value, dpi, 96); }
 
 void EnableDpiAwareness() {
   using SetCtxFn = BOOL(WINAPI*)(void*);

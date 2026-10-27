@@ -1,19 +1,14 @@
 // 程序入口：单实例、DPI、命令行分发
 #include "app.h"
-#include "sevenzip_loader.h"
 #include "ui.h"
-#include "ui_list.h"
 #include "ui_main.h"
 #include "util.h"
 
 #include <commctrl.h>
-#include <ole2.h>
 #include <shellapi.h>
 #include <shlobj.h>
-#include <shlwapi.h>
 
 #include <string>
-#include <vector>
 
 namespace {
 
@@ -68,9 +63,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
                                                ICC_TREEVIEW_CLASSES | ICC_PROGRESS_CLASS |
                                                ICC_STANDARD_CLASSES | ICC_BAR_CLASSES};
   ::InitCommonControlsEx(&icc);
-
-// 7-Zip 内核已静态编进 exe，无需加载 dll
-  z7::Init();
 
   g_app.instance = inst;
   g_app.settings = util::LoadSettings();
@@ -139,7 +131,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
 
   ui::ClearIconCache();
   ui::fonts.Destroy();
-  z7::UnloadLibrary();
   if (mutex) ::CloseHandle(mutex);
   return static_cast<int>(msg.wParam);
 }

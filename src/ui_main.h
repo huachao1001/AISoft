@@ -7,7 +7,6 @@ namespace ui {
 
 bool RegisterMainWindow(HINSTANCE inst);
 HWND CreateMainWindow(HINSTANCE inst);
-void LayoutMainWindow(HWND hwnd);
 void UpdateMainTitle(HWND hwnd);
 void RefreshAddressBar(HWND hwnd);
 void RefreshStatusBar(HWND hwnd);
@@ -22,9 +21,6 @@ constexpr int kStatusId = 1005;
 constexpr int kPathEditId = 1006;
 constexpr int kSearchId = 1007;
 constexpr int kBackBtnId = 1008;
-constexpr int kForwardBtnId = 1009;
-constexpr int kUpBtnId = 1010;
-constexpr int kRefreshBtnId = 1011;
 
 struct MainParts {
   HWND toolbar = nullptr;
@@ -35,6 +31,5 @@ struct MainParts {
   HWND search = nullptr;
   HWND navBar = nullptr;  // 后退/前进/上级/刷新 自绘条
 };
-MainParts& Parts();
 
 }  // namespace ui

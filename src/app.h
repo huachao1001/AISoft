@@ -57,12 +57,3 @@ void AppGoBack();
 void AppGoForward();
 bool AppCanBack();
 bool AppCanForward();
-
-// 命令
-void AppCompressSelection(HWND owner);
-void AppExtractSelection(HWND owner);
-void AppDeleteSelection(HWND owner);
-void AppAddFiles(HWND owner);
-void AppOpenItem(HWND owner, int itemIndex);
-void AppUpdateWindowTitle();
-void AppShowItemProperties(HWND owner, int itemIndex);

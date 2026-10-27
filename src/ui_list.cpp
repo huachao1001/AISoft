@@ -10,7 +10,6 @@
 
 #include <commctrl.h>
 #include <shellapi.h>
-#include <shlobj.h>
 #include <shlwapi.h>
 
 #include <algorithm>
@@ -61,29 +60,6 @@ const ColDef kCols[kColCount] = {
     {L"压缩算法", 90, LVCFMT_LEFT, true},
     {L"路径", 150, LVCFMT_LEFT, true},
 };
-
-std::wstring TypeNameFor(const std::wstring& name, bool isDir) {
-  if (isDir) return L"文件夹";
-  const std::wstring ext = util::FileExtension(name);
-  if (ext.empty()) return L"文件";
-  if (ext == L".txt") return L"文本文档";
-  if (ext == L".zip") return L"ZIP 压缩文件";
-  if (ext == L".7z") return L"7Z 压缩文件";
-  if (ext == L".rar") return L"RAR 压缩文件";
-  if (ext == L".exe") return L"应用程序";
-  if (ext == L".dll") return L"应用程序扩展";
-  if (ext == L".png" || ext == L".jpg" || ext == L".jpeg" || ext == L".bmp" || ext == L".gif")
-    return L"图片文件";
-  if (ext == L".pdf") return L"PDF 文档";
-  if (ext == L".doc" || ext == L".docx") return L"Word 文档";
-  if (ext == L".xls" || ext == L".xlsx") return L"Excel 工作表";
-  if (ext == L".json") return L"JSON 文件";
-  if (ext == L".js") return L"JavaScript 文件";
-  if (ext == L".md") return L"Markdown 文件";
-  std::wstring upper;
-  for (size_t i = 1; i < ext.size(); ++i) upper.push_back(static_cast<wchar_t>(towupper(ext[i])));
-  return upper + L" 文件";
-}
 
 std::wstring ItemText(int column, const Item& it) {
   switch (column) {

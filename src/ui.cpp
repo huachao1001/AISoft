@@ -1,5 +1,7 @@
 #include "ui.h"
 
+#include "util.h"
+
 #include <shlobj.h>
 #include <shellapi.h>
 
@@ -23,12 +25,10 @@ void Fonts::Create(int dpi) {
   };
   ui = make(9, FW_NORMAL);
   uiBold = make(9, FW_SEMIBOLD);
-  uiSmall = make(8, FW_NORMAL);
-  icon = make(9, FW_NORMAL);
 }
 
 void Fonts::Destroy() {
-  for (HFONT* f : {&ui, &uiBold, &uiSmall, &icon}) {
+  for (HFONT* f : {&ui, &uiBold}) {
     if (*f) {
       ::DeleteObject(*f);
       *f = nullptr;
@@ -132,11 +132,6 @@ void FillGradientRoundRect(HDC dc, const RECT& rc, COLORREF top, COLORREF bottom
   GradientV(dc, rc, top, bottom);
   ::SelectClipRgn(dc, nullptr);
   ::DeleteObject(rgn);
-}
-
-void DrawVLine(HDC dc, int x, int top, int bottom, COLORREF color) {
-  RECT rc{x, top, x + 1, bottom};
-  FillRect(dc, rc, color);
 }
 
 void DrawHLine(HDC dc, int left, int right, int y, COLORREF color) {
@@ -249,8 +244,7 @@ void DrawIconShape(HDC dc, IconId id, const RECT& rc, bool enabled, COLORREF ink
   };
 
   switch (id) {
-    case IconId::kAdd:
-    case IconId::kZip: {
+    case IconId::kAdd: {
       FillGradientRoundRect(dc, tile, C(78, 158, 240), C(24, 106, 196), tileRadius);
       StrokeRoundRect(dc, tile, C(18, 84, 164), tileRadius, stroke);
       const int arm = u * 10;
@@ -292,26 +286,6 @@ void DrawIconShape(HDC dc, IconId id, const RECT& rc, bool enabled, COLORREF ink
       RECT tab{cx - s / 2 + 2, cy - s / 3, cx - 2, cy - s / 4};
       FillRoundRect(dc, tab, C(232, 176, 72), s / 12);
       DrawHLine(dc, cx - s / 2 + 2, cx + s / 2 - 2, cy - s / 4, C(216, 158, 56));
-      break;
-    }
-    case IconId::kArchive: {
-      RECT body{cx - s / 3, cy - s / 3, cx + s / 3, cy + s / 3};
-      FillRoundRect(dc, body, C(246, 246, 240), s / 14);
-      RECT band{cx - s / 3, cy - s / 3, cx + s / 3, cy - s / 6};
-      FillRect(dc, band, C(198, 214, 228));
-      for (int i = 0; i < 3; ++i) {
-        RECT notch{cx - 2, cy - s / 6 + 2 + i * 5, cx + 2, cy - s / 6 + 5 + i * 5};
-        FillRect(dc, notch, C(120, 140, 158));
-      }
-      break;
-    }
-    case IconId::kFile: {
-      RECT body{cx - s / 3, cy - s / 2 + 2, cx + s / 3, cy + s / 2 - 2};
-      FillRoundRect(dc, body, C(252, 252, 252), s / 20);
-      StrokeRoundRect(dc, body, C(170, 182, 194), s / 20, stroke);
-      for (int i = 0; i < 3; ++i) {
-        DrawHLine(dc, body.left + 3, body.right - 5, cy - 2 + i * 5, C(198, 208, 218));
-      }
       break;
     }
     case IconId::kArrowBack: {
@@ -490,6 +464,84 @@ void ClearIconCache() { g_iconMap.clear(); }
 HIMAGELIST ShellImageList() {
   EnsureImageList();
   return g_smallList;
+}
+
+// ───────────────────────── 窗口/对话框公共设施 ─────────────────────────
+
+bool RegisterWindowClass(const wchar_t* name, WNDPROC proc, HINSTANCE inst, UINT style,
+                         HBRUSH bg, int iconId) {
+  WNDCLASSEXW wc{};
+  wc.cbSize = sizeof(wc);
+  wc.style = style;
+  wc.lpfnWndProc = proc;
+  wc.hInstance = inst;
+  wc.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
+  wc.hbrBackground = bg;
+  wc.lpszClassName = name;
+  if (iconId) {
+    wc.hIcon = static_cast<HICON>(::LoadImageW(inst, MAKEINTRESOURCEW(iconId), IMAGE_ICON, 32, 32, 0));
+    wc.hIconSm = static_cast<HICON>(::LoadImageW(inst, MAKEINTRESOURCEW(iconId), IMAGE_ICON,
+                                                 ::GetSystemMetrics(SM_CXSMICON),
+                                                 ::GetSystemMetrics(SM_CYSMICON), 0));
+  }
+  // 已注册（例如同名类被重复创建）视为成功
+  return ::RegisterClassExW(&wc) != 0 || ::GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
+}
+
+HWND CreateDlgItem(HWND parent, const wchar_t* cls, const wchar_t* text, DWORD style, int x,
+                   int y, int w, int h, int id, DWORD exStyle) {
+  const int dpi = util::DpiForWindow(parent);
+  auto px = [dpi](int v) { return ::MulDiv(v, dpi, 96); };
+  return ::CreateWindowExW(exStyle, cls, text, WS_CHILD | WS_VISIBLE | style, px(x), px(y), px(w),
+                           px(h), parent, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+                           reinterpret_cast<HINSTANCE>(::GetWindowLongPtrW(parent, GWLP_HINSTANCE)),
+                           nullptr);
+}
+
+void PaintDialogBackground(HWND hwnd) {
+  RECT rc;
+  ::GetClientRect(hwnd, &rc);
+  HDC target = ::GetDC(hwnd);
+  MemDC mem(target, rc);
+  FillRect(mem.dc(), rc, kDialogBg);
+  mem.Commit();
+  ::ReleaseDC(hwnd, target);
+}
+
+HBRUSH DialogCtlBrush(UINT msg, HWND ctl) {
+  if (msg == WM_CTLCOLORBTN) {
+    // 只有分组框/复选/单选需要底色，普通按钮保持系统观感
+    const LONG type = ctl ? (::GetWindowLongW(ctl, GWL_STYLE) & BS_TYPEMASK) : 0;
+    if (type == BS_PUSHBUTTON || type == BS_DEFPUSHBUTTON || type == BS_OWNERDRAW) return nullptr;
+  }
+  static HBRUSH brush = ::CreateSolidBrush(kDialogBg);
+  return brush;
+}
+
+RECT DialogRect(HWND owner, int w, int h) {
+  RECT out{CW_USEDEFAULT, CW_USEDEFAULT, w, h};
+  RECT ownerRc{};
+  if (owner && ::GetWindowRect(owner, &ownerRc)) {
+    out.left = ownerRc.left + ((ownerRc.right - ownerRc.left) - w) / 2;
+    out.top = ownerRc.top + ((ownerRc.bottom - ownerRc.top) - h) / 2;
+  }
+  return out;
+}
+
+void RunModalDialog(HWND dlg, HWND owner, const std::function<void()>& onBeforeEnable) {
+  if (owner) ::EnableWindow(owner, FALSE);
+  MSG msg;
+  while (::IsWindow(dlg) && ::GetMessageW(&msg, nullptr, 0, 0) > 0) {
+    if (!::IsDialogMessageW(dlg, &msg)) {
+      ::TranslateMessage(&msg);
+      ::DispatchMessageW(&msg);
+    }
+  }
+  if (onBeforeEnable) onBeforeEnable();
+  if (owner) {
+    ::EnableWindow(owner, TRUE);
+    ::SetActiveWindow(owner);
+  }
 }
 
 }  // namespace ui

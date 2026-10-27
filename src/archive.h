@@ -12,14 +12,12 @@ namespace arc {
 // 列表中的一项
 struct Entry {
   std::wstring path;      // 包内完整路径
-  std::wstring name;      // 显示名（末段）
   bool isDir = false;
   bool encrypted = false;
   uint64_t size = 0;      // 原始大小
   uint64_t packSize = 0;  // 压缩后大小
   uint32_t crc = 0;
   bool hasCrc = false;
-  uint32_t attrib = 0;
   FILETIME mtime{};
   bool hasMtime = false;
   std::wstring method;    // 压缩算法
@@ -28,7 +26,6 @@ struct Entry {
 struct OpenResult {
   bool ok = false;
   std::wstring error;
-  std::wstring formatName;
 };
 
 // 进度回调：返回 false 表示取消
@@ -46,7 +43,6 @@ struct ExtractOptions {
   Overwrite overwrite = Overwrite::kAsk;
   Update update = Update::kExtractReplace;
   std::wstring password;
-  bool keepBroken = false;
 };
 
 struct CompressOptions {
@@ -54,7 +50,6 @@ struct CompressOptions {
   std::wstring password;
   int level = 5;         // 0=存储 1=最快 3=快速 5=标准 7=最大 9=极限
   bool solid = true;     // 仅 7z
-  std::wstring method;   // 覆盖算法名，空=按格式默认
   std::wstring formatName;  // 压缩格式显示名（如 L"TAR.GZ"），空=按扩展名推断
 };
 
@@ -70,7 +65,6 @@ class Archive {
   void Close();
 
   const std::vector<Entry>& Entries() const { return entries_; }
-  const std::wstring& Path() const { return path_; }
   bool IsOpen() const { return archive_ != nullptr; }
 
   // indices 为空表示全部
@@ -83,7 +77,6 @@ class Archive {
  private:
   void* stream_ = nullptr;  // z7::IInStream*
   z7::IInArchive* archive_ = nullptr;
-  std::wstring path_;
   std::vector<Entry> entries_;
 };
 

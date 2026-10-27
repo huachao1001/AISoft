@@ -71,22 +71,14 @@ bool ReportProgress(uint64_t completed, uint64_t total, const std::wstring& curr
   return !st->cancel.load(std::memory_order_relaxed);
 }
 
-void CreateControls(HWND hwnd, HINSTANCE inst) {
-  const int dpi = g_app.dpi;
-  auto px = [&](int v) { return ::MulDiv(v, dpi, 96); };
-  auto make = [&](const wchar_t* cls, const wchar_t* text, DWORD style, int x, int y, int w, int h,
-                  int id) {
-    return ::CreateWindowExW(0, cls, text, WS_CHILD | WS_VISIBLE | style, px(x), px(y), px(w),
-                             px(h), hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), inst,
-                             nullptr);
-  };
-
-  make(L"STATIC", L"正在处理，请稍候…", SS_LEFT, 14, 14, 340, 18, 0);
-  g_state->labelFile = make(L"STATIC", L"", SS_LEFT | SS_ENDELLIPSIS, 14, 36, 340, 18, 0);
-  g_state->bar = make(PROGRESS_CLASSW, L"", PBS_SMOOTH, 14, 60, 340, 18, kIdBar);
-  g_state->labelPct = make(L"STATIC", L"0%", SS_LEFT, 14, 82, 340, 16, 0);
-  g_state->cancelBtn = make(L"BUTTON", L"取消", BS_PUSHBUTTON | WS_TABSTOP, 286, 106, 68, 26,
-                            kIdCancel);
+void CreateControls(HWND hwnd) {
+  CreateDlgItem(hwnd, L"STATIC", L"正在处理，请稍候…", SS_LEFT, 14, 14, 340, 18, 0);
+  g_state->labelFile = CreateDlgItem(hwnd, L"STATIC", L"", SS_LEFT | SS_ENDELLIPSIS, 14, 36, 340,
+                                     18, 0);
+  g_state->bar = CreateDlgItem(hwnd, PROGRESS_CLASSW, L"", PBS_SMOOTH, 14, 60, 340, 18, kIdBar);
+  g_state->labelPct = CreateDlgItem(hwnd, L"STATIC", L"0%", SS_LEFT, 14, 82, 340, 16, 0);
+  g_state->cancelBtn =
+      CreateDlgItem(hwnd, L"BUTTON", L"取消", BS_PUSHBUTTON | WS_TABSTOP, 286, 106, 68, 26, kIdCancel);
 
   ::SendMessageW(g_state->bar, PBM_SETRANGE32, 0, 1000);
   ::SendMessageW(g_state->bar, PBM_SETPOS, 0, 0);
@@ -149,7 +141,7 @@ LRESULT CALLBACK Proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
   switch (msg) {
     case WM_CREATE:
       g_state->wnd = hwnd;
-      CreateControls(hwnd, reinterpret_cast<HINSTANCE>(::GetWindowLongPtrW(hwnd, GWLP_HINSTANCE)));
+      CreateControls(hwnd);
       return 0;
 
     case kMsgProgress:
@@ -193,15 +185,8 @@ LRESULT CALLBACK Proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 bool ShowProgressDialog(HWND owner, const std::wstring& title, const WorkFn& work) {
   static bool registered = false;
   if (!registered) {
-    WNDCLASSEXW wc{};
-    wc.cbSize = sizeof(wc);
-    wc.style = CS_HREDRAW | CS_VREDRAW;
-    wc.lpfnWndProc = Proc;
-    wc.hInstance = g_app.instance;
-    wc.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
-    wc.hbrBackground = reinterpret_cast<HBRUSH>(::GetStockObject(WHITE_BRUSH));
-    wc.lpszClassName = kClass;
-    registered = ::RegisterClassExW(&wc) != 0;
+    registered = RegisterWindowClass(kClass, Proc, g_app.instance, CS_HREDRAW | CS_VREDRAW,
+                                     reinterpret_cast<HBRUSH>(::GetStockObject(WHITE_BRUSH)));
   }
 
   ProgressState state;
@@ -209,25 +194,17 @@ bool ShowProgressDialog(HWND owner, const std::wstring& title, const WorkFn& wor
   state.owner = owner;
   g_state = &state;
 
-  const int dpi = g_app.dpi;
-  auto px = [&](int v) { return ::MulDiv(v, dpi, 96); };
-
-  RECT ownerRc{};
-  if (owner) ::GetWindowRect(owner, &ownerRc);
-  const int w = px(380);
-  const int h = px(150);
-  const int x = owner ? ownerRc.left + ((ownerRc.right - ownerRc.left) - w) / 2 : CW_USEDEFAULT;
-  const int y = owner ? ownerRc.top + ((ownerRc.bottom - ownerRc.top) - h) / 2 : CW_USEDEFAULT;
+  const int w = g_app.px(380);
+  const int h = g_app.px(150);
+  const RECT dr = DialogRect(owner, w, h);
 
   HWND dlg = ::CreateWindowExW(WS_EX_DLGMODALFRAME, kClass, title.c_str(),
-                               WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE, x, y, w, h, owner,
-                               nullptr, g_app.instance, nullptr);
+                               WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE, dr.left, dr.top, w,
+                               h, owner, nullptr, g_app.instance, nullptr);
   if (!dlg) {
     g_state = nullptr;
     return false;
   }
-
-  if (owner) ::EnableWindow(owner, FALSE);
 
   state.worker = std::thread([&state]() {
     bool ok = false;
@@ -242,19 +219,11 @@ bool ShowProgressDialog(HWND owner, const std::wstring& title, const WorkFn& wor
     if (state.wnd) ::PostMessageW(state.wnd, kMsgDone, 0, 0);
   });
 
-  MSG msg;
-  while (::IsWindow(dlg) && ::GetMessageW(&msg, nullptr, 0, 0)) {
-    if (!::IsDialogMessageW(dlg, &msg)) {
-      ::TranslateMessage(&msg);
-      ::DispatchMessageW(&msg);
-    }
-  }
+  RunModalDialog(dlg, owner, [&state]() {
+    // 必须在恢复 owner 之前回收工作线程，否则 owner 已可用而线程仍在跑
+    if (state.worker.joinable()) state.worker.join();
+  });
 
-  if (state.worker.joinable()) state.worker.join();
-  if (owner) {
-    ::EnableWindow(owner, TRUE);
-    ::SetActiveWindow(owner);
-  }
   g_state = nullptr;
   return state.ok;
 }

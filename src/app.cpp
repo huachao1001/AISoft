@@ -10,10 +10,6 @@
 #include "ui_tree.h"
 #include "util.h"
 
-#include <shlobj.h>
-#include <shlwapi.h>
-
-#include <algorithm>
 #include <map>
 
 App g_app;

@@ -13,7 +13,6 @@ std::wstring FileStem(const std::wstring& path);            // 去目录去扩�
 std::wstring BaseName(const std::wstring& path);            // 去目录
 std::wstring DirName(const std::wstring& path);
 std::wstring JoinPath(const std::wstring& a, const std::wstring& b);
-std::wstring NormalizePath(const std::wstring& path);
 bool PathExists(const std::wstring& path);
 bool IsDirectory(const std::wstring& path);
 bool EnsureDirectory(const std::wstring& path);
@@ -37,11 +36,9 @@ void CollectSources(const std::vector<std::wstring>& paths, std::vector<SourceIt
 std::wstring FormatSize(uint64_t bytes);                    // 1.5 MB
 std::wstring FormatTime(const FILETIME& ft);                // 2026-10-26 10:15
 std::wstring FormatCrc(uint32_t crc, bool has);             // 8 位大写十六进制
-std::wstring FormatCount(size_t n);                         // 千分位
 
 // ── 字体/DPI ──
 int DpiForWindow(HWND hwnd);
-int ScaleDpi(int value, int dpi);
 void EnableDpiAwareness();
 
 // ── 设置持久化（注册表 HKCU\Software\MyZip）──

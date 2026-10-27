@@ -6,8 +6,6 @@
 #include "dlg_extract.h"
 #include "ui.h"
 #include "ui_list.h"
-#include "ui_main.h"
-#include "util.h"
 
 #include <windowsx.h>
 
@@ -18,7 +16,6 @@ constexpr const wchar_t* kToolbarClass = L"MyZipToolbar";
 constexpr int kBtnWidth = 74;
 constexpr int kBtnHeight = 62;
 constexpr int kIconSize = 34;
-constexpr int kGroupGap = 18;
 
 enum BtnId { kBtnAdd = 1, kBtnExtract, kBtnDelete, kBtnMin, kBtnMax, kBtnClose };
 
@@ -351,20 +348,11 @@ LRESULT CALLBACK ToolbarProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 HWND CreateToolbarWindow(HWND parent, HINSTANCE inst, int id) {
   static bool registered = false;
   if (!registered) {
-    WNDCLASSEXW wc{};
-    wc.cbSize = sizeof(wc);
-    wc.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
-    wc.lpfnWndProc = ToolbarProc;
-    wc.hInstance = inst;
-    wc.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
-    wc.hbrBackground = nullptr;
-    wc.lpszClassName = kToolbarClass;
-    registered = ::RegisterClassExW(&wc) != 0;
+    registered = RegisterWindowClass(kToolbarClass, ToolbarProc, inst,
+                                     CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS, nullptr);
   }
   return ::CreateWindowExW(0, kToolbarClass, L"", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, parent,
                            reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), inst, nullptr);
 }
-
-LRESULT HandleToolbarNotify(HWND, NMHDR*) { return 0; }
 
 }  // namespace ui

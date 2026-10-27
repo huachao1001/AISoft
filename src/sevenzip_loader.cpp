@@ -7,31 +7,14 @@
 extern "C" HRESULT WINAPI CreateObject(const GUID* clsid, const GUID* iid, void** outObject);
 
 namespace z7 {
-namespace {
-bool g_ready = false;
-}  // namespace
-
-bool Init() {
-  if (g_ready) return true;
-  g_ready = true;
-  return true;
-}
-
-void UnloadLibrary() {}
-
-CreateObjectFn CreateObjectProc() {
-  return g_ready ? &CreateObject : nullptr;
-}
 
 IInArchive* CreateInArchive(const GUID& clsId) {
-  if (!g_ready) return nullptr;
   void* out = nullptr;
   if (FAILED(::CreateObject(&clsId, &kIidIInArchive, &out))) return nullptr;
   return static_cast<IInArchive*>(out);
 }
 
 IOutArchive* CreateOutArchive(const GUID& clsId) {
-  if (!g_ready) return nullptr;
   void* out = nullptr;
   if (FAILED(::CreateObject(&clsId, &kIidIOutArchive, &out))) return nullptr;
   return static_cast<IOutArchive*>(out);

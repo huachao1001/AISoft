@@ -10,7 +10,6 @@
 #include "util.h"
 
 #include <commctrl.h>
-#include <dlgs.h>
 #include <shellapi.h>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -24,9 +23,6 @@ namespace {
 
 constexpr const wchar_t* kClass = L"MyZipExtractDlg";
 
-// 对话框非横幅区域底色
-constexpr COLORREF kDlgBg = RGB(240, 247, 252);
-
 constexpr int kIdTarget = 2101;
 constexpr int kIdBrowse = 2102;
 constexpr int kIdNewFolder = 2103;
@@ -37,7 +33,6 @@ constexpr int kIdOver1 = 2120;     // 询问
 constexpr int kIdOver2 = 2121;     // 覆盖
 constexpr int kIdOver3 = 2122;     // 跳过
 constexpr int kIdOver4 = 2123;     // 重命名
-constexpr int kIdOptPath = 2130;   // 在目标保留完整路径
 constexpr int kIdOptOpen = 2131;   // 完成后打开文件夹
 constexpr int kIdOptDelete = 2132; // 完成后删除压缩包
 constexpr int kIdPassword = 2133;
@@ -70,14 +65,10 @@ std::wstring DefaultTargetDir() {
   return g_app.curDir;
 }
 
-void CreateControls(HWND hwnd, HINSTANCE inst) {
-  const int dpi = g_app.dpi;
-  auto px = [&](int v) { return ::MulDiv(v, dpi, 96); };
+void CreateControls(HWND hwnd) {
   auto make = [&](const wchar_t* cls, const wchar_t* text, DWORD style, int x, int y, int w, int h,
                   int id) {
-    return ::CreateWindowExW(0, cls, text, WS_CHILD | WS_VISIBLE | style, px(x), px(y), px(w),
-                             px(h), hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), inst,
-                             nullptr);
+    return CreateDlgItem(hwnd, cls, text, style, x, y, w, h, id);
   };
 
   make(L"STATIC", L"目标路径(T)", SS_LEFT, 12, 12, 160, 16, 0);
@@ -123,19 +114,6 @@ void CreateControls(HWND hwnd, HINSTANCE inst) {
   for (HWND c = ::GetWindow(hwnd, GW_CHILD); c; c = ::GetWindow(c, GW_HWNDNEXT)) {
     ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(fonts.ui), TRUE);
   }
-}
-
-void PaintBanner(HWND hwnd) {
-  // 横幅已取消，只负责铺一遍对话框底色；
-  // 否则吞掉 WM_ERASEBKGND 后会露出未初始化的黑底
-  RECT rc;
-  ::GetClientRect(hwnd, &rc);
-  HDC target = ::GetDC(hwnd);
-  ui::MemDC mem(target, rc);
-  HDC dc = mem.dc();
-  FillRect(dc, rc, kDlgBg);
-  mem.Commit();
-  ::ReleaseDC(hwnd, target);
 }
 
 void OnBrowse(HWND hwnd) {
@@ -292,13 +270,13 @@ LRESULT CALLBACK Proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
   switch (msg) {
     case WM_CREATE:
       g_state = static_cast<DlgState*>(reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams);
-      CreateControls(hwnd, reinterpret_cast<HINSTANCE>(::GetWindowLongPtrW(hwnd, GWLP_HINSTANCE)));
+      CreateControls(hwnd);
       return 0;
 
     case WM_PAINT: {
       PAINTSTRUCT ps;
       ::BeginPaint(hwnd, &ps);
-      PaintBanner(hwnd);
+      PaintDialogBackground(hwnd);
       ::EndPaint(hwnd, &ps);
       return 0;
     }
@@ -306,24 +284,11 @@ LRESULT CALLBACK Proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_ERASEBKGND:
       return 1;
 
-    case WM_CTLCOLORBTN: {
-      // 普通按钮交给系统默认绘制，分组框/复选/单选需要与对话框同色底
-      HWND ctl = reinterpret_cast<HWND>(lParam);
-      const LONG style = ctl ? ::GetWindowLongW(ctl, GWL_STYLE) : 0;
-      const LONG type = style & BS_TYPEMASK;
-      if (type == BS_PUSHBUTTON || type == BS_DEFPUSHBUTTON || type == BS_OWNERDRAW) {
-        break;
-      }
-      HDC dc = reinterpret_cast<HDC>(wParam);
-      ::SetBkColor(dc, kDlgBg);
-      static HBRUSH b = ::CreateSolidBrush(kDlgBg);
-      return reinterpret_cast<LRESULT>(b);
-    }
-
+    case WM_CTLCOLORBTN:
     case WM_CTLCOLORSTATIC: {
-      HDC dc = reinterpret_cast<HDC>(wParam);
-      ::SetBkColor(dc, kDlgBg);
-      static HBRUSH b = ::CreateSolidBrush(kDlgBg);
+      HBRUSH b = DialogCtlBrush(msg, reinterpret_cast<HWND>(lParam));
+      if (!b) break;  // 普通按钮交给 DefWindowProc
+      ::SetBkColor(reinterpret_cast<HDC>(wParam), kDialogBg);
       return reinterpret_cast<LRESULT>(b);
     }
 
@@ -379,51 +344,25 @@ LRESULT CALLBACK Proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 void ShowExtractDialog(HWND owner, const std::vector<int>& selected) {
   static bool registered = false;
   if (!registered) {
-    WNDCLASSEXW wc{};
-    wc.cbSize = sizeof(wc);
-    wc.style = CS_HREDRAW | CS_VREDRAW;
-    wc.lpfnWndProc = Proc;
-    wc.hInstance = g_app.instance;
-    wc.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
-    wc.hbrBackground = reinterpret_cast<HBRUSH>(::GetStockObject(WHITE_BRUSH));
-    wc.lpszClassName = kClass;
-    registered = ::RegisterClassExW(&wc) != 0;
+    registered = RegisterWindowClass(kClass, Proc, g_app.instance, CS_HREDRAW | CS_VREDRAW,
+                                     reinterpret_cast<HBRUSH>(::GetStockObject(WHITE_BRUSH)));
   }
 
   DlgState st;
   st.selected = selected;
   st.targetDir = DefaultTargetDir();
 
-  const int dpi = g_app.dpi;
-  auto px = [&](int v) { return ::MulDiv(v, dpi, 96); };
-
-  RECT ownerRc{};
-  if (owner) ::GetWindowRect(owner, &ownerRc);
-  const int w = px(496);
-  const int h = px(434);
-  const int x = owner ? ownerRc.left + ((ownerRc.right - ownerRc.left) - w) / 2 : CW_USEDEFAULT;
-  const int y = owner ? ownerRc.top + ((ownerRc.bottom - ownerRc.top) - h) / 2 : CW_USEDEFAULT;
+  const int w = g_app.px(496);
+  const int h = g_app.px(434);
+  const RECT dr = DialogRect(owner, w, h);
 
   HWND dlg = ::CreateWindowExW(WS_EX_DLGMODALFRAME, kClass, L"解压",
-                               WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE, x, y, w, h, owner,
-                               nullptr, g_app.instance, &st);
+                               WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE, dr.left, dr.top, w,
+                               h, owner, nullptr, g_app.instance, &st);
   if (!dlg) return;
 
-  if (owner) ::EnableWindow(owner, FALSE);
   ::SetFocus(dlg);
-
-  MSG msg;
-  while (::IsWindow(dlg) && ::GetMessageW(&msg, nullptr, 0, 0)) {
-    if (!::IsDialogMessageW(dlg, &msg)) {
-      ::TranslateMessage(&msg);
-      ::DispatchMessageW(&msg);
-    }
-  }
-
-  if (owner) {
-    ::EnableWindow(owner, TRUE);
-    ::SetActiveWindow(owner);
-  }
+  RunModalDialog(dlg, owner);
 }
 
 }  // namespace ui

@@ -8,7 +8,8 @@
 #include <string>
 #include <vector>
 
-static void Dump(const arc::Archive& a) {  printf("entries=%zu\n", a.Entries().size());
+static void Dump(const arc::Archive& a) {
+  printf("entries=%zu\n", a.Entries().size());
   for (const auto& e : a.Entries()) {
     printf("  %-40ls dir=%d size=%llu pack=%llu crc=%ls m=%ls\n", e.path.c_str(), e.isDir ? 1 : 0,
            (unsigned long long)e.size, (unsigned long long)e.packSize,
@@ -19,7 +20,6 @@ static void Dump(const arc::Archive& a) {  printf("entries=%zu\n", a.Entries().s
 int wmain(int argc, wchar_t** argv) {
   // err 里是中文，printf %ls 在 C locale 下遇到非 ASCII 会静默丢失
   setlocale(LC_ALL, ".UTF-8");
-  z7::Init();
   if (argc < 3) {
     printf("usage: test_arc <open|extract|compress> ...\n");
     return 2;
@@ -31,7 +31,8 @@ int wmain(int argc, wchar_t** argv) {
     arc::Archive a;
     const std::wstring pwd = argc > 3 ? argv[3] : L"";
     auto r = a.Open(argv[2], pwd);
-    printf("open=%d fmt=%ls err=%ls\n", r.ok, r.formatName.c_str(), r.error.c_str());
+    printf("open=%d fmt=%ls err=%ls\n", r.ok,
+           z7::FormatNameFromExtension(util::FileExtension(argv[2])), r.error.c_str());
     if (r.ok) Dump(a);
     return r.ok ? 0 : 1;
   }

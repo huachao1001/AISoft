@@ -6,6 +6,5 @@
 namespace ui {
 
 HWND CreateToolbarWindow(HWND parent, HINSTANCE inst, int id);
-LRESULT HandleToolbarNotify(HWND mainWnd, NMHDR* hdr);
 
 }  // namespace ui

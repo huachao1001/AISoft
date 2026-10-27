@@ -31,7 +31,6 @@ constexpr GUID kClsidLzma = MakeHandlerGuid(0x0A);
 constexpr GUID kClsidXz = MakeHandlerGuid(0x0C);
 constexpr GUID kClsidPpmd = MakeHandlerGuid(0x0D);
 constexpr GUID kClsidZstd = MakeHandlerGuid(0x0E);
-constexpr GUID kClsidSparse = MakeHandlerGuid(0xC2);
 constexpr GUID kClsidApfs = MakeHandlerGuid(0xC3);
 constexpr GUID kClsidVhdx = MakeHandlerGuid(0xC4);
 constexpr GUID kClsidBase64 = MakeHandlerGuid(0xC5);
@@ -89,11 +88,7 @@ constexpr GUID kIidIInArchive = MakeIfaceGuid(6, 0x60);
 constexpr GUID kIidIOutArchive = MakeIfaceGuid(6, 0xA0);
 constexpr GUID kIidISetProperties = MakeIfaceGuid(6, 0x03);
 
-// 7-Zip 内核（静态链接，无需 dll）
-bool Init();
-void UnloadLibrary();
-CreateObjectFn CreateObjectProc();
-
+// 7-Zip 内核（静态链接，无需 dll，也不需要显式初始化）
 IInArchive* CreateInArchive(const GUID& clsId);
 IOutArchive* CreateOutArchive(const GUID& clsId);
 

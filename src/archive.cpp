@@ -3,9 +3,6 @@
 #include "sevenzip_loader.h"
 #include "util.h"
 
-#include <shlwapi.h>
-
-#include <algorithm>
 #include <atomic>
 
 namespace arc {
@@ -681,7 +678,6 @@ void Archive::Close() {
     stream_ = nullptr;
   }
   entries_.clear();
-  path_.clear();
 }
 
 OpenResult Archive::Open(const std::wstring& filePath, const std::wstring& password) {
@@ -736,8 +732,6 @@ OpenResult Archive::Open(const std::wstring& filePath, const std::wstring& passw
 
   archive_ = opened;
   stream_ = inStream;
-  path_ = filePath;
-  r.formatName = z7::FormatNameFromExtension(ext);
 
   uint32_t count = 0;
   if (opened->GetNumberOfItems(&count) != S_OK) {
@@ -757,7 +751,6 @@ OpenResult Archive::Open(const std::wstring& filePath, const std::wstring& passw
     if (e.path.empty()) e.path = GetStringProp(opened, i, z7::kpidName);
     if (e.path.empty() && !fallbackName.empty()) e.path = fallbackName;
     if (e.path.empty()) continue;
-    e.name = util::BaseName(e.path);
     e.isDir = GetBoolProp(opened, i, z7::kpidIsDir);
     e.encrypted = GetBoolProp(opened, i, z7::kpidEncrypted);
     GetUInt64Prop(opened, i, z7::kpidSize, e.size);
