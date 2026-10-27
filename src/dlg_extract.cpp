@@ -80,45 +80,45 @@ void CreateControls(HWND hwnd, HINSTANCE inst) {
                              nullptr);
   };
 
-  make(L"STATIC", L"目标路径(T)", SS_LEFT, 12, 52, 160, 16, 0);
-  make(L"EDIT", g_state->targetDir.c_str(), WS_BORDER | ES_AUTOHSCROLL, 12, 70, 380, 22, kIdTarget);
-  make(L"BUTTON", L"浏览(B)...", BS_PUSHBUTTON | WS_TABSTOP, 398, 69, 84, 24, kIdBrowse);
-  make(L"BUTTON", L"新建文件夹(N)", BS_PUSHBUTTON | WS_TABSTOP, 398, 97, 84, 24, kIdNewFolder);
+  make(L"STATIC", L"目标路径(T)", SS_LEFT, 12, 12, 160, 16, 0);
+  make(L"EDIT", g_state->targetDir.c_str(), WS_BORDER | ES_AUTOHSCROLL, 12, 30, 380, 22, kIdTarget);
+  make(L"BUTTON", L"浏览(B)...", BS_PUSHBUTTON | WS_TABSTOP, 398, 29, 84, 24, kIdBrowse);
+  make(L"BUTTON", L"新建文件夹(N)", BS_PUSHBUTTON | WS_TABSTOP, 398, 57, 84, 24, kIdNewFolder);
 
   // 更新方式
-  make(L"BUTTON", L"更新方式", BS_GROUPBOX, 12, 112, 380, 74, kIdGroupUpdate);
-  make(L"BUTTON", L"解压并替换文件(R)", BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP, 22, 132, 350,
+  make(L"BUTTON", L"更新方式", BS_GROUPBOX, 12, 72, 380, 74, kIdGroupUpdate);
+  make(L"BUTTON", L"解压并替换文件(R)", BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP, 22, 92, 350,
        18, kIdUpdate1);
-  make(L"BUTTON", L"解压并更新文件(U)", BS_AUTORADIOBUTTON | WS_TABSTOP, 22, 152, 350, 18,
+  make(L"BUTTON", L"解压并更新文件(U)", BS_AUTORADIOBUTTON | WS_TABSTOP, 22, 112, 350, 18,
        kIdUpdate2);
-  make(L"BUTTON", L"仅更新已存在的文件(E)", BS_AUTORADIOBUTTON | WS_TABSTOP, 22, 172, 350, 18,
+  make(L"BUTTON", L"仅更新已存在的文件(E)", BS_AUTORADIOBUTTON | WS_TABSTOP, 22, 132, 350, 18,
        kIdUpdate3);
   ::SendMessageW(::GetDlgItem(hwnd, kIdUpdate1), BM_SETCHECK, BST_CHECKED, 0);
 
   // 覆盖方式
-  make(L"BUTTON", L"覆盖方式", BS_GROUPBOX, 12, 192, 380, 100, kIdGroupOver);
-  make(L"BUTTON", L"覆盖前询问(A)", BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP, 22, 212, 350, 18,
+  make(L"BUTTON", L"覆盖方式", BS_GROUPBOX, 12, 152, 380, 100, kIdGroupOver);
+  make(L"BUTTON", L"覆盖前询问(A)", BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP, 22, 172, 350, 18,
        kIdOver1);
-  make(L"BUTTON", L"直接覆盖，不询问(W)", BS_AUTORADIOBUTTON | WS_TABSTOP, 22, 232, 350, 18,
+  make(L"BUTTON", L"直接覆盖，不询问(W)", BS_AUTORADIOBUTTON | WS_TABSTOP, 22, 192, 350, 18,
        kIdOver2);
-  make(L"BUTTON", L"跳过已存在的文件(S)", BS_AUTORADIOBUTTON | WS_TABSTOP, 22, 252, 350, 18,
+  make(L"BUTTON", L"跳过已存在的文件(S)", BS_AUTORADIOBUTTON | WS_TABSTOP, 22, 212, 350, 18,
        kIdOver3);
-  make(L"BUTTON", L"自动重命名已存在的文件(R)", BS_AUTORADIOBUTTON | WS_TABSTOP, 22, 272, 350, 18,
+  make(L"BUTTON", L"自动重命名已存在的文件(R)", BS_AUTORADIOBUTTON | WS_TABSTOP, 22, 232, 350, 18,
        kIdOver4);
   ::SendMessageW(::GetDlgItem(hwnd, kIdOver2), BM_SETCHECK, BST_CHECKED, 0);
 
   // 其他选项
-  make(L"BUTTON", L"其他选项", BS_GROUPBOX, 12, 298, 380, 84, kIdGroupOther);
+  make(L"BUTTON", L"其他选项", BS_GROUPBOX, 12, 258, 380, 84, kIdGroupOther);
   HWND openChk = make(L"BUTTON", L"解压完成后打开目标文件夹(O)", BS_AUTOCHECKBOX | WS_TABSTOP, 22,
-                      316, 350, 18, kIdOptOpen);
+                      276, 350, 18, kIdOptOpen);
   ::SendMessageW(openChk, BM_SETCHECK, BST_CHECKED, 0);
-  make(L"BUTTON", L"解压完成后删除压缩包(D)", BS_AUTOCHECKBOX | WS_TABSTOP, 22, 336, 350, 18,
+  make(L"BUTTON", L"解压完成后删除压缩包(D)", BS_AUTOCHECKBOX | WS_TABSTOP, 22, 296, 350, 18,
        kIdOptDelete);
-  make(L"BUTTON", L"密码(P)...", BS_PUSHBUTTON | WS_TABSTOP, 22, 354, 84, 22, kIdPassword);
+  make(L"BUTTON", L"密码(P)...", BS_PUSHBUTTON | WS_TABSTOP, 22, 314, 84, 22, kIdPassword);
 
-  make(L"BUTTON", L"保存为默认(S)", BS_PUSHBUTTON | WS_TABSTOP, 12, 394, 110, 24, kIdSaveDefault);
-  make(L"BUTTON", L"确定(O)", BS_DEFPUSHBUTTON | WS_TABSTOP, 320, 394, 68, 26, kIdOk);
-  make(L"BUTTON", L"取消(C)", BS_PUSHBUTTON | WS_TABSTOP, 394, 394, 68, 26, kIdCancel);
+  make(L"BUTTON", L"保存为默认(S)", BS_PUSHBUTTON | WS_TABSTOP, 12, 354, 110, 24, kIdSaveDefault);
+  make(L"BUTTON", L"确定(O)", BS_DEFPUSHBUTTON | WS_TABSTOP, 320, 354, 68, 26, kIdOk);
+  make(L"BUTTON", L"取消(C)", BS_PUSHBUTTON | WS_TABSTOP, 394, 354, 68, 26, kIdCancel);
 
   for (HWND c = ::GetWindow(hwnd, GW_CHILD); c; c = ::GetWindow(c, GW_HWNDNEXT)) {
     ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(fonts.ui), TRUE);
@@ -126,28 +126,14 @@ void CreateControls(HWND hwnd, HINSTANCE inst) {
 }
 
 void PaintBanner(HWND hwnd) {
+  // 横幅已取消，只负责铺一遍对话框底色；
+  // 否则吞掉 WM_ERASEBKGND 后会露出未初始化的黑底
   RECT rc;
   ::GetClientRect(hwnd, &rc);
   HDC target = ::GetDC(hwnd);
   ui::MemDC mem(target, rc);
   HDC dc = mem.dc();
-  ::SetBkMode(dc, TRANSPARENT);
-
-  // 整块客户区先铺底色，否则吞掉 WM_ERASEBKGND 后会露出未初始化的黑底
   FillRect(dc, rc, kDlgBg);
-
-  RECT banner{0, 0, rc.right, g_app.px(46)};
-  FillRect(dc, banner, RGB(28, 148, 208));
-  RECT bannerR{0, 0, rc.right, g_app.px(22)};
-  FillRect(dc, bannerR, RGB(22, 130, 190));
-
-  RECT titleRc{g_app.px(12), 0, rc.right - g_app.px(40), g_app.px(24)};
-  DrawTextLeft(dc, titleRc, L"解压", RGB(255, 255, 255), fonts.uiBold);
-
-  RECT subRc{g_app.px(12), g_app.px(24), rc.right - g_app.px(12), g_app.px(44)};
-  std::wstring sub = g_app.archiveMode ? util::BaseName(g_app.archivePath) : L"";
-  DrawTextEllipsis(dc, subRc, sub, RGB(214, 240, 252), fonts.uiSmall);
-
   mem.Commit();
   ::ReleaseDC(hwnd, target);
 }
@@ -414,7 +400,7 @@ void ShowExtractDialog(HWND owner, const std::vector<int>& selected) {
   RECT ownerRc{};
   if (owner) ::GetWindowRect(owner, &ownerRc);
   const int w = px(496);
-  const int h = px(478);
+  const int h = px(434);
   const int x = owner ? ownerRc.left + ((ownerRc.right - ownerRc.left) - w) / 2 : CW_USEDEFAULT;
   const int y = owner ? ownerRc.top + ((ownerRc.bottom - ownerRc.top) - h) / 2 : CW_USEDEFAULT;
 

@@ -114,33 +114,33 @@ void CreateControls(HWND hwnd, HINSTANCE inst) {
                              nullptr);
   };
 
-  make(L"STATIC", L"压缩文件名(F)", SS_LEFT, 12, 54, 160, 16, 0);
-  make(L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 12, 72, 330, 22, kIdPath);
-  make(L"BUTTON", L"浏览(B)...", BS_PUSHBUTTON | WS_TABSTOP, 348, 71, 88, 24, kIdBrowse);
+  make(L"STATIC", L"压缩文件名(F)", SS_LEFT, 12, 12, 160, 16, 0);
+  make(L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 12, 30, 330, 22, kIdPath);
+  make(L"BUTTON", L"浏览(B)...", BS_PUSHBUTTON | WS_TABSTOP, 348, 29, 88, 24, kIdBrowse);
 
-  make(L"STATIC", L"压缩文件格式", SS_LEFT, 12, 104, 160, 16, 0);
+  make(L"STATIC", L"压缩文件格式", SS_LEFT, 12, 62, 160, 16, 0);
   // 与 HaoZip 一致：○ ZIP ○ 7Z ○ [格式▾]，第三个单选没有文字，下拉框充当它的标签
-  make(L"BUTTON", L"ZIP", BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP, 12, 124, 46, 18, kIdFormatZip);
-  make(L"BUTTON", L"7Z", BS_AUTORADIOBUTTON | WS_TABSTOP, 62, 124, 40, 18, kIdFormat7z);
-  make(L"BUTTON", L"", BS_AUTORADIOBUTTON | WS_TABSTOP, 104, 124, 16, 18, kIdFormatOther);
+  make(L"BUTTON", L"ZIP", BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP, 12, 82, 46, 18, kIdFormatZip);
+  make(L"BUTTON", L"7Z", BS_AUTORADIOBUTTON | WS_TABSTOP, 62, 82, 40, 18, kIdFormat7z);
+  make(L"BUTTON", L"", BS_AUTORADIOBUTTON | WS_TABSTOP, 104, 82, 16, 18, kIdFormatOther);
   // 宽度止于 204：右侧「压缩选项」分组框从 216 开始，越界会压住它
-  HWND fmtCombo = make(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 122, 123,
+  HWND fmtCombo = make(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 122, 81,
                        82, 220, kIdFormatCombo);
   for (int i = 2; i < z7::FormatCount(); ++i) {
     ::SendMessageW(fmtCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(z7::Formats()[i].name));
   }
   ::SendMessageW(fmtCombo, CB_SETCURSEL, 0, 0);
 
-  make(L"STATIC", L"压缩方式(M)", SS_LEFT, 12, 152, 160, 16, 0);
-  HWND level = make(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 12, 170, 190, 200,
+  make(L"STATIC", L"压缩方式(M)", SS_LEFT, 12, 110, 160, 16, 0);
+  HWND level = make(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 12, 128, 190, 200,
                     kIdLevel);
   for (int i = 0; i < kLevelCount; ++i) {
     ::SendMessageW(level, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(kLevelNames[i]));
   }
   ::SendMessageW(level, CB_SETCURSEL, 3, 0);
 
-  make(L"STATIC", L"更新方式(U)", SS_LEFT, 12, 200, 160, 16, 0);
-  HWND update = make(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 12, 218, 190, 200,
+  make(L"STATIC", L"更新方式(U)", SS_LEFT, 12, 158, 160, 16, 0);
+  HWND update = make(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 12, 176, 190, 200,
                      kIdUpdate);
   for (const wchar_t* s : {L"添加并替换文件", L"添加并更新文件", L"仅更新已存在的文件",
                            L"同步文件夹内容"}) {
@@ -148,11 +148,11 @@ void CreateControls(HWND hwnd, HINSTANCE inst) {
   }
   ::SendMessageW(update, CB_SETCURSEL, 0, 0);
 
-  make(L"STATIC", L"压缩分卷大小设置(V)", SS_LEFT, 12, 248, 200, 16, 0);
+  make(L"STATIC", L"压缩分卷大小设置(V)", SS_LEFT, 12, 206, 200, 16, 0);
   // 同左栏约束：输入框与单位下拉合计必须止于 204
-  make(L"COMBOBOX", L"", CBS_DROPDOWN | WS_VSCROLL | WS_TABSTOP | CBS_AUTOHSCROLL, 12, 266, 138,
+  make(L"COMBOBOX", L"", CBS_DROPDOWN | WS_VSCROLL | WS_TABSTOP | CBS_AUTOHSCROLL, 12, 224, 138,
        200, kIdVolume);
-  HWND volUnit = make(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 156, 266, 48,
+  HWND volUnit = make(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 156, 224, 48,
                       200, kIdVolumeUnit);
   for (const wchar_t* s : {L"MB", L"GB", L"KB"}) {
     ::SendMessageW(volUnit, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(s));
@@ -160,25 +160,25 @@ void CreateControls(HWND hwnd, HINSTANCE inst) {
   ::SendMessageW(volUnit, CB_SETCURSEL, 0, 0);
 
   // 右侧压缩选项
-  make(L"BUTTON", L"压缩选项", BS_GROUPBOX, 216, 104, 220, 190, 0);
-  make(L"BUTTON", L"压缩后删除源文件(L)", BS_AUTOCHECKBOX | WS_TABSTOP, 226, 124, 200, 18,
+  make(L"BUTTON", L"压缩选项", BS_GROUPBOX, 216, 62, 220, 190, 0);
+  make(L"BUTTON", L"压缩后删除源文件(L)", BS_AUTOCHECKBOX | WS_TABSTOP, 226, 82, 200, 18,
        kIdOptDelete);
-  make(L"BUTTON", L"压缩后测试压缩文件(E)", BS_AUTOCHECKBOX | WS_TABSTOP, 226, 146, 200, 18,
+  make(L"BUTTON", L"压缩后测试压缩文件(E)", BS_AUTOCHECKBOX | WS_TABSTOP, 226, 104, 200, 18,
        kIdOptTest);
   HWND solid = make(L"BUTTON", L"创建固实压缩文件(S)(仅 7Z)", BS_AUTOCHECKBOX | WS_TABSTOP, 226,
-                    168, 200, 18, kIdOptSolid);
+                    126, 200, 18, kIdOptSolid);
   ::SendMessageW(solid, BM_SETCHECK, BST_CHECKED, 0);
-  make(L"BUTTON", L"压缩每个选中项到单独的压缩文件", BS_AUTOCHECKBOX | WS_TABSTOP, 226, 190, 200,
+  make(L"BUTTON", L"压缩每个选中项到单独的压缩文件", BS_AUTOCHECKBOX | WS_TABSTOP, 226, 148, 200,
        18, kIdOptSeparate);
-  make(L"BUTTON", L"创建自解压格式压缩文件(X)", BS_AUTOCHECKBOX | WS_DISABLED, 226, 212, 200, 18,
+  make(L"BUTTON", L"创建自解压格式压缩文件(X)", BS_AUTOCHECKBOX | WS_DISABLED, 226, 170, 200, 18,
        kIdOptSfx);
 
-  make(L"BUTTON", L"密码(P)...", BS_PUSHBUTTON | WS_TABSTOP, 12, 300, 88, 24, kIdPassword);
-  make(L"BUTTON", L"注释(M)...", BS_PUSHBUTTON | WS_TABSTOP, 106, 300, 88, 24, kIdComment);
+  make(L"BUTTON", L"密码(P)...", BS_PUSHBUTTON | WS_TABSTOP, 12, 258, 88, 24, kIdPassword);
+  make(L"BUTTON", L"注释(M)...", BS_PUSHBUTTON | WS_TABSTOP, 106, 258, 88, 24, kIdComment);
 
-  make(L"BUTTON", L"保存为默认(S)", BS_PUSHBUTTON | WS_TABSTOP, 12, 356, 110, 24, kIdDefault);
-  make(L"BUTTON", L"确定(O)", BS_DEFPUSHBUTTON | WS_TABSTOP, 292, 356, 72, 26, kIdOk);
-  make(L"BUTTON", L"取消(C)", BS_PUSHBUTTON | WS_TABSTOP, 370, 356, 72, 26, kIdCancel);
+  make(L"BUTTON", L"保存为默认(S)", BS_PUSHBUTTON | WS_TABSTOP, 12, 314, 110, 24, kIdDefault);
+  make(L"BUTTON", L"确定(O)", BS_DEFPUSHBUTTON | WS_TABSTOP, 290, 314, 72, 26, kIdOk);
+  make(L"BUTTON", L"取消(C)", BS_PUSHBUTTON | WS_TABSTOP, 368, 314, 72, 26, kIdCancel);
 
   for (HWND c = ::GetWindow(hwnd, GW_CHILD); c; c = ::GetWindow(c, GW_HWNDNEXT)) {
     ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(fonts.ui), TRUE);
@@ -238,29 +238,14 @@ void SyncFormatUi(HWND hwnd, int formatIndex) {
 }
 
 void PaintBanner(HWND hwnd) {
+  // 横幅已取消，只负责铺一遍对话框底色；
+  // 否则吞掉 WM_ERASEBKGND 后会露出未初始化的黑底
   RECT rc;
   ::GetClientRect(hwnd, &rc);
   HDC target = ::GetDC(hwnd);
   ui::MemDC mem(target, rc);
   HDC dc = mem.dc();
-  ::SetBkMode(dc, TRANSPARENT);
-
-  // 整块客户区先铺底色，否则吞掉 WM_ERASEBKGND 后会露出未初始化的黑底
   FillRect(dc, rc, kDlgBg);
-
-  RECT banner{0, 0, rc.right, g_app.px(46)};
-  FillRect(dc, banner, RGB(28, 148, 208));
-  RECT bannerR{0, 0, rc.right, g_app.px(22)};
-  FillRect(dc, bannerR, RGB(22, 130, 190));
-
-  RECT titleRc{g_app.px(12), 0, rc.right - g_app.px(40), g_app.px(24)};
-  DrawTextLeft(dc, titleRc, L"压缩文件", RGB(255, 255, 255), fonts.uiBold);
-
-  RECT subRc{g_app.px(12), g_app.px(24), rc.right - g_app.px(12), g_app.px(44)};
-  int count = g_state ? static_cast<int>(g_state->sources.size()) : 0;
-  const std::wstring sub = L"共 " + std::to_wstring(count) + L" 项待压缩";
-  DrawTextEllipsis(dc, subRc, sub, RGB(214, 240, 252), fonts.uiSmall);
-
   mem.Commit();
   ::ReleaseDC(hwnd, target);
 }
@@ -610,7 +595,7 @@ void ShowCompressDialog(HWND owner, const std::vector<std::wstring>& sourcesIn) 
   RECT ownerRc{};
   if (owner) ::GetWindowRect(owner, &ownerRc);
   const int w = px(456);
-  const int h = px(428);
+  const int h = px(384);
   const int x = owner ? ownerRc.left + ((ownerRc.right - ownerRc.left) - w) / 2 : CW_USEDEFAULT;
   const int y = owner ? ownerRc.top + ((ownerRc.bottom - ownerRc.top) - h) / 2 : CW_USEDEFAULT;
 
