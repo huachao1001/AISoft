@@ -22,7 +22,7 @@
 namespace ui {
 namespace {
 
-constexpr const wchar_t* kClass = L"MyZipCompressDlg";
+constexpr const wchar_t* kClass = L"AIZipCompressDlg";
 
 constexpr int kIdPath = 2001;
 constexpr int kIdBrowse = 2002;
@@ -279,17 +279,17 @@ void OnOk(HWND hwnd, DlgState& st) {
   ::GetWindowTextW(::GetDlgItem(hwnd, kIdPath), pathBuf, MAX_PATH * 2);
   std::wstring outPath = pathBuf;
   if (outPath.empty()) {
-    ::MessageBoxW(hwnd, L"请填写压缩文件名。", L"MyZip", MB_OK | MB_ICONINFORMATION);
+    ::MessageBoxW(hwnd, L"请填写压缩文件名。", L"AIZip", MB_OK | MB_ICONINFORMATION);
     return;
   }
   outPath = util::AbsolutePath(outPath);
   const std::wstring dir = util::DirName(outPath);
   if (!dir.empty() && !util::EnsureDirectory(dir)) {
-    ::MessageBoxW(hwnd, L"无法创建目标目录。", L"MyZip", MB_OK | MB_ICONERROR);
+    ::MessageBoxW(hwnd, L"无法创建目标目录。", L"AIZip", MB_OK | MB_ICONERROR);
     return;
   }
   if (util::PathExists(outPath)) {
-    if (::MessageBoxW(hwnd, L"文件已存在，是否覆盖？", L"MyZip",
+    if (::MessageBoxW(hwnd, L"文件已存在，是否覆盖？", L"AIZip",
                       MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) {
       return;
     }
@@ -344,7 +344,7 @@ void OnOk(HWND hwnd, DlgState& st) {
                                                                      : std::wstring(L"XZ"))) +
                      L"」，或勾选「压缩每个选中项到单独的压缩文件」。")
                         .c_str(),
-                    L"MyZip", MB_OK | MB_ICONINFORMATION);
+                    L"AIZip", MB_OK | MB_ICONINFORMATION);
       return;
     }
   }
@@ -363,7 +363,7 @@ void OnOk(HWND hwnd, DlgState& st) {
 
   if (!ok) {
     if (!err.empty()) {
-      ::MessageBoxW(g_app.mainWnd, (L"压缩失败：\n" + err).c_str(), L"MyZip", MB_OK | MB_ICONERROR);
+      ::MessageBoxW(g_app.mainWnd, (L"压缩失败：\n" + err).c_str(), L"AIZip", MB_OK | MB_ICONERROR);
     }
     return;
   }
@@ -393,7 +393,7 @@ void OnOk(HWND hwnd, DlgState& st) {
     arc::Archive check;
     const auto r = check.Open(outPath);
     if (!r.ok) {
-      ::MessageBoxW(g_app.mainWnd, L"压缩包测试失败。", L"MyZip", MB_OK | MB_ICONWARNING);
+      ::MessageBoxW(g_app.mainWnd, L"压缩包测试失败。", L"AIZip", MB_OK | MB_ICONWARNING);
     }
   }
 }
@@ -452,7 +452,7 @@ LRESULT CALLBACK Proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
           OnPassword(hwnd);
           return 0;
         case kIdComment:
-          ::MessageBoxW(hwnd, L"压缩包注释暂未支持。", L"MyZip", MB_OK | MB_ICONINFORMATION);
+          ::MessageBoxW(hwnd, L"压缩包注释暂未支持。", L"AIZip", MB_OK | MB_ICONINFORMATION);
           return 0;
         case kIdOk:
           OnOk(hwnd, *g_state);
@@ -494,7 +494,7 @@ LRESULT CALLBACK Proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
           g_app.settings.compressLevel = kLevelValues[g_state->levelIndex];
           g_app.settings.solid = g_state->solid;
           util::SaveSettings(g_app.settings);
-          ::MessageBoxW(hwnd, L"已保存为默认设置。", L"MyZip", MB_OK | MB_ICONINFORMATION);
+          ::MessageBoxW(hwnd, L"已保存为默认设置。", L"AIZip", MB_OK | MB_ICONINFORMATION);
           return 0;
         default:
           break;
@@ -529,7 +529,7 @@ void ShowCompressDialog(HWND owner, const std::vector<std::wstring>& sourcesIn) 
   st.sources = sourcesIn;
   if (st.sources.empty() && !g_app.archiveMode) st.sources.push_back(g_app.curDir);
   if (st.sources.empty()) {
-    ::MessageBoxW(owner, L"没有可压缩的内容。", L"MyZip", MB_OK | MB_ICONINFORMATION);
+    ::MessageBoxW(owner, L"没有可压缩的内容。", L"AIZip", MB_OK | MB_ICONINFORMATION);
     return;
   }
   // 从设置里恢复格式名，按名查索引（顺序变了也不会串）

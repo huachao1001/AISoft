@@ -161,7 +161,7 @@ void AppNavigateTo(const std::wstring& dirIn) {
   // 归一化
   while (dir.size() > 3 && (dir.back() == L'\\')) dir.pop_back();
   if (!util::IsDirectory(dir)) {
-    ::MessageBoxW(g_app.mainWnd, (L"路径不存在：\n" + dir).c_str(), L"MyZip", MB_OK | MB_ICONWARNING);
+    ::MessageBoxW(g_app.mainWnd, (L"路径不存在：\n" + dir).c_str(), L"AIZip", MB_OK | MB_ICONWARNING);
     return;
   }
 
@@ -209,7 +209,7 @@ void AppOpenArchive(const std::wstring& path) {
   arc::OpenResult r;
   if (!OpenArchiveWithPassword(g_app.archive, path, g_app.mainWnd, r)) {
     if (r.error.empty()) return;  // 用户取消
-    ::MessageBoxW(g_app.mainWnd, (L"无法打开压缩包：\n" + path + L"\n\n" + r.error).c_str(), L"MyZip",
+    ::MessageBoxW(g_app.mainWnd, (L"无法打开压缩包：\n" + path + L"\n\n" + r.error).c_str(), L"AIZip",
                   MB_OK | MB_ICONERROR);
     return;
   }

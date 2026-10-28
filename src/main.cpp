@@ -12,7 +12,7 @@
 
 namespace {
 
-constexpr const wchar_t* kMutexName = L"Local\\MyZip.SingleInstance.v1";
+constexpr const wchar_t* kMutexName = L"Local\\AIZip.SingleInstance.v1";
 
 // 解析命令行：返回第一个非选项参数（文件或目录）
 std::wstring ParseFirstArgument() {
@@ -31,7 +31,7 @@ std::wstring ParseFirstArgument() {
 }
 
 void ShowFatal(const wchar_t* message) {
-  ::MessageBoxW(nullptr, message, L"MyZip", MB_OK | MB_ICONERROR);
+  ::MessageBoxW(nullptr, message, L"AIZip", MB_OK | MB_ICONERROR);
 }
 
 }  // namespace
@@ -42,7 +42,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
   // 单实例：已有进程时把参数转发过去后退出
   HANDLE mutex = ::CreateMutexW(nullptr, FALSE, kMutexName);
   if (mutex && ::GetLastError() == ERROR_ALREADY_EXISTS) {
-    HWND existing = ::FindWindowW(L"MyZipMainWindow", nullptr);
+    HWND existing = ::FindWindowW(L"AIZipMainWindow", nullptr);
     if (existing) {
       const std::wstring arg = ParseFirstArgument();
       if (!arg.empty()) {

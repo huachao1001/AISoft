@@ -41,7 +41,7 @@ std::wstring FormatCrc(uint32_t crc, bool has);             // 8 位大写十六
 int DpiForWindow(HWND hwnd);
 void EnableDpiAwareness();
 
-// ── 设置持久化（注册表 HKCU\Software\MyZip）──
+// ── 设置持久化（注册表 HKCU\Software\AIZip）──
 struct Settings {
   std::wstring lastDir;
   std::wstring extractDir;

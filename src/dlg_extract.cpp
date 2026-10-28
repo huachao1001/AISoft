@@ -21,7 +21,7 @@
 namespace ui {
 namespace {
 
-constexpr const wchar_t* kClass = L"MyZipExtractDlg";
+constexpr const wchar_t* kClass = L"AIZipExtractDlg";
 
 constexpr int kIdTarget = 2101;
 constexpr int kIdBrowse = 2102;
@@ -138,7 +138,7 @@ void OnNewFolder(HWND hwnd) {
   if (name.empty()) return;
   std::wstring path = util::JoinPath(cur, name);
   if (!util::EnsureDirectory(path)) {
-    ::MessageBoxW(hwnd, L"无法创建文件夹。", L"MyZip", MB_OK | MB_ICONERROR);
+    ::MessageBoxW(hwnd, L"无法创建文件夹。", L"AIZip", MB_OK | MB_ICONERROR);
     return;
   }
   ::SetWindowTextW(::GetDlgItem(hwnd, kIdTarget), path.c_str());
@@ -156,12 +156,12 @@ void OnOk(HWND hwnd) {
   ::GetWindowTextW(::GetDlgItem(hwnd, kIdTarget), buf, MAX_PATH * 2);
   std::wstring target = buf;
   if (target.empty()) {
-    ::MessageBoxW(hwnd, L"请填写解压目标路径。", L"MyZip", MB_OK | MB_ICONINFORMATION);
+    ::MessageBoxW(hwnd, L"请填写解压目标路径。", L"AIZip", MB_OK | MB_ICONINFORMATION);
     return;
   }
   target = util::AbsolutePath(target);
   if (!util::EnsureDirectory(target)) {
-    ::MessageBoxW(hwnd, L"无法创建目标文件夹。", L"MyZip", MB_OK | MB_ICONERROR);
+    ::MessageBoxW(hwnd, L"无法创建目标文件夹。", L"AIZip", MB_OK | MB_ICONERROR);
     return;
   }
 
@@ -225,7 +225,7 @@ void OnOk(HWND hwnd) {
               int result = 1;
               RunOnUiThread([&]() {
                 const std::wstring msg = L"文件已存在：\n\n" + path + L"\n\n是否覆盖？";
-                const int r = ::MessageBoxW(g_app.mainWnd, msg.c_str(), L"MyZip",
+                const int r = ::MessageBoxW(g_app.mainWnd, msg.c_str(), L"AIZip",
                                             MB_YESNO | MB_ICONWARNING);
                 result = (r == IDYES) ? 1 : 0;
               });
@@ -246,7 +246,7 @@ void OnOk(HWND hwnd) {
 
   if (!ok) {
     if (!err.empty()) {
-      ::MessageBoxW(g_app.mainWnd, (L"解压失败：\n" + err).c_str(), L"MyZip",
+      ::MessageBoxW(g_app.mainWnd, (L"解压失败：\n" + err).c_str(), L"AIZip",
                     MB_OK | MB_ICONERROR);
     }
     return;
@@ -310,7 +310,7 @@ LRESULT CALLBACK Proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
           ::GetWindowTextW(::GetDlgItem(hwnd, kIdTarget), buf, MAX_PATH * 2);
           g_app.settings.extractDir = buf;
           util::SaveSettings(g_app.settings);
-          ::MessageBoxW(hwnd, L"已保存为默认设置。", L"MyZip", MB_OK | MB_ICONINFORMATION);
+          ::MessageBoxW(hwnd, L"已保存为默认设置。", L"AIZip", MB_OK | MB_ICONINFORMATION);
           return 0;
         }
         case kIdOk:

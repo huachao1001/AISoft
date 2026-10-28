@@ -15,7 +15,7 @@
 namespace ui {
 namespace {
 
-constexpr const wchar_t* kClass = L"MyZipProgressDlg";
+constexpr const wchar_t* kClass = L"AIZipProgressDlg";
 constexpr UINT kMsgProgress = WM_APP + 1;
 constexpr UINT kMsgSyncCall = WM_APP + 3;
 constexpr UINT kMsgDone = WM_APP + 4;

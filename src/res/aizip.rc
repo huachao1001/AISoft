@@ -1,7 +1,7 @@
-﻿#pragma code_page(65001)
+#pragma code_page(65001)
 #include <windows.h>
 
-101 ICON "myzip.ico"
+101 ICON "aizip.ico"
 
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION 1,0,0,0
@@ -16,12 +16,12 @@ BEGIN
     BEGIN
         BLOCK "080404B0"
         BEGIN
-            VALUE "CompanyName", "MyZip"
-            VALUE "FileDescription", "MyZip 压缩软件"
+            VALUE "CompanyName", "AIZip"
+            VALUE "FileDescription", "AIZip 压缩软件"
             VALUE "FileVersion", "1.0.0.0"
-            VALUE "InternalName", "MyZip"
-            VALUE "OriginalFilename", "MyZip.exe"
-            VALUE "ProductName", "MyZip"
+            VALUE "InternalName", "AIZip"
+            VALUE "OriginalFilename", "AIZip.exe"
+            VALUE "ProductName", "AIZip"
             VALUE "ProductVersion", "1.0.0.0"
         END
     END

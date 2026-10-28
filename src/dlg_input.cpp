@@ -9,7 +9,7 @@
 namespace ui {
 namespace {
 
-constexpr const wchar_t* kClass = L"MyZipInputDlg";
+constexpr const wchar_t* kClass = L"AIZipInputDlg";
 constexpr int kIdEdit = 4001;
 constexpr int kIdOk = IDOK;
 constexpr int kIdCancel = IDCANCEL;

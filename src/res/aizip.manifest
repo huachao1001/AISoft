@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <assemblyIdentity version="1.0.0.0" processorArchitecture="amd64" name="MyZip" type="win32"/>
-  <description>MyZip 压缩软件</description>
+  <assemblyIdentity version="1.0.0.0" processorArchitecture="amd64" name="AIZip" type="win32"/>
+  <description>AIZip 压缩软件</description>
   <dependency>
     <dependentAssembly>
       <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls"

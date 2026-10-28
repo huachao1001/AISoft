@@ -1,4 +1,4 @@
-﻿# MyZip 设计说明
+﻿# AIZip 设计说明
 
 ## 目标
 
@@ -58,7 +58,7 @@
 
 | 产物 | 大小 |
 |---|---|
-| MyZip.exe（7-Zip 静态链接） | 2.0 MB |
+| AIZip.exe（7-Zip 静态链接） | 2.0 MB |
 
 单文件分发，无需附带任何 dll，只依赖系统 DLL。原版 HaoZip 目录 122 MB（含广告
 SDK、图片/视频/PDF 压缩器、虚拟光驱驱动等）。
@@ -87,7 +87,7 @@ SDK、图片/视频/PDF 压缩器、虚拟光驱驱动等）。
 ## 目录结构
 
 ```
-MyZip/
+AIZip/
 ├─ CMakeLists.txt
 ├─ src/
 │  ├─ main.cpp            程序入口、单实例、命令行分发

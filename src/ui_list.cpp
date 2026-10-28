@@ -261,7 +261,7 @@ void OnRightClick(HWND mainWnd) {
       std::vector<std::wstring> paths;
       if (g_app.archiveMode) {
         // 压缩包内不能直接再压缩，提示先解压
-        ::MessageBoxW(mainWnd, L"压缩包内无法直接创建新压缩包，请先解压。", L"MyZip",
+        ::MessageBoxW(mainWnd, L"压缩包内无法直接创建新压缩包，请先解压。", L"AIZip",
                       MB_OK | MB_ICONINFORMATION);
         break;
       }
@@ -452,12 +452,12 @@ void SetFilterFromEdit(HWND edit) {
 
 void DeleteItems(HWND mainWnd, const std::vector<int>& indices) {
   if (g_app.archiveMode) {
-    ::MessageBoxW(mainWnd, L"压缩包内的条目不支持直接删除。\n请解压后重新打包。", L"MyZip",
+    ::MessageBoxW(mainWnd, L"压缩包内的条目不支持直接删除。\n请解压后重新打包。", L"AIZip",
                   MB_OK | MB_ICONINFORMATION);
     return;
   }
   if (indices.empty()) {
-    ::MessageBoxW(mainWnd, L"请先选择要删除的文件或文件夹。", L"MyZip", MB_OK | MB_ICONINFORMATION);
+    ::MessageBoxW(mainWnd, L"请先选择要删除的文件或文件夹。", L"AIZip", MB_OK | MB_ICONINFORMATION);
     return;
   }
 
@@ -484,7 +484,7 @@ void DeleteItems(HWND mainWnd, const std::vector<int>& indices) {
   op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI;
   const int r = ::SHFileOperationW(&op);
   if (r != 0) {
-    ::MessageBoxW(mainWnd, L"部分项目删除失败。", L"MyZip", MB_OK | MB_ICONWARNING);
+    ::MessageBoxW(mainWnd, L"部分项目删除失败。", L"AIZip", MB_OK | MB_ICONWARNING);
   }
   AppRefreshView();
 }

@@ -187,7 +187,7 @@ void EnableDpiAwareness() {
 }
 
 namespace {
-constexpr const wchar_t* kRegPath = L"Software\\MyZip";
+constexpr const wchar_t* kRegPath = L"Software\\AIZip";
 }
 
 Settings LoadSettings() {

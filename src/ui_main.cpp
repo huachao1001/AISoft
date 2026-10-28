@@ -22,8 +22,8 @@ namespace ui {
 namespace {
 
 MainParts g_parts;
-constexpr const wchar_t* kMainClass = L"MyZipMainWindow";
-constexpr const wchar_t* kNavClass = L"MyZipNavBar";
+constexpr const wchar_t* kMainClass = L"AIZipMainWindow";
+constexpr const wchar_t* kNavClass = L"AIZipNavBar";
 constexpr int kMinWidth = 720;
 constexpr int kMinHeight = 460;
 int g_treeWidth = kTreeDefaultWidth;
@@ -354,7 +354,7 @@ void NavigateFromPathEdit(HWND hwnd) {
     ::SetFocus(g_parts.list);
     return;
   }
-  ::MessageBoxW(hwnd, (L"路径不存在：\n" + target).c_str(), L"MyZip", MB_OK | MB_ICONWARNING);
+  ::MessageBoxW(hwnd, (L"路径不存在：\n" + target).c_str(), L"AIZip", MB_OK | MB_ICONWARNING);
   RefreshAddressBar(hwnd);
 }
 
@@ -602,7 +602,7 @@ HWND CreateMainWindow(HINSTANCE inst) {
   if (w > work.right - work.left) w = work.right - work.left;
   if (h > work.bottom - work.top) h = work.bottom - work.top;
 
-  HWND hwnd = ::CreateWindowExW(WS_EX_ACCEPTFILES, kMainClass, L"MyZip",
+  HWND hwnd = ::CreateWindowExW(WS_EX_ACCEPTFILES, kMainClass, L"AIZip",
                                 WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, 0, 0, w, h, nullptr,
                                 nullptr, inst, nullptr);
   if (!hwnd) return nullptr;
@@ -618,7 +618,7 @@ HWND CreateMainWindow(HINSTANCE inst) {
 
 void UpdateMainTitle(HWND hwnd) {
   const std::wstring title =
-      g_app.archiveMode ? util::BaseName(g_app.archivePath) + L" - MyZip" : L"MyZip";
+      g_app.archiveMode ? util::BaseName(g_app.archivePath) + L" - AIZip" : L"AIZip";
   ::SetWindowTextW(hwnd, title.c_str());
 }
 

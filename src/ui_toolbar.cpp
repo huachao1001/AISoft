@@ -12,7 +12,7 @@
 namespace ui {
 namespace {
 
-constexpr const wchar_t* kToolbarClass = L"MyZipToolbar";
+constexpr const wchar_t* kToolbarClass = L"AIZipToolbar";
 constexpr int kBtnWidth = 74;
 constexpr int kBtnHeight = 62;
 constexpr int kIconSize = 34;
@@ -263,7 +263,7 @@ LRESULT CALLBACK ToolbarProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             if (g_app.archiveMode) {
               // 压缩包内不支持追加，提示
               ::MessageBoxW(main, L"当前处于压缩包浏览模式，无法添加文件。\n请先返回文件浏览。",
-                            L"MyZip", MB_OK | MB_ICONINFORMATION);
+                            L"AIZip", MB_OK | MB_ICONINFORMATION);
               break;
             }
             // 默认把当前选中项（没有则当前目录内容）打包

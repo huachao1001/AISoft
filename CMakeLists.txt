@@ -1,11 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
-project(MyZip CXX C ASM_MASM)
+project(AIZip CXX C ASM_MASM)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(NOT MSVC)
-  message(FATAL_ERROR "MyZip only builds with MSVC")
+  message(FATAL_ERROR "AIZip only builds with MSVC")
 endif()
 
 # 静态链接 CRT，免安装运行库
@@ -19,7 +19,7 @@ add_subdirectory(third_party/7z/build-cmake)
 # /WHOLEARCHIVE 整库拉入，再由 /OPT:REF 清理真正死掉的函数。
 set(Z7_LINK_OPTIONS "/WHOLEARCHIVE:7zstatic")
 
-add_executable(MyZip WIN32
+add_executable(AIZip WIN32
   src/main.cpp
   src/app.cpp
   src/archive.cpp
@@ -34,12 +34,12 @@ add_executable(MyZip WIN32
   src/dlg_input.cpp
   src/dlg_progress.cpp
   src/util.cpp
-  src/res/myzip.rc
+  src/res/aizip.rc
 )
 
-target_include_directories(MyZip PRIVATE src)
+target_include_directories(AIZip PRIVATE src)
 
-target_compile_definitions(MyZip PRIVATE
+target_compile_definitions(AIZip PRIVATE
   UNICODE _UNICODE
   WIN32_LEAN_AND_MEAN
   NOMINMAX
@@ -49,7 +49,7 @@ target_compile_definitions(MyZip PRIVATE
 )
 
 # 体积优先：函数/数据分段 + 链接期裁剪
-target_compile_options(MyZip PRIVATE /O2 /Gy /Gw /GF /utf-8 /W4 /permissive- /Zc:__cplusplus /GL)
+target_compile_options(AIZip PRIVATE /O2 /Gy /Gw /GF /utf-8 /W4 /permissive- /Zc:__cplusplus /GL)
 
 # 清单里声明 comctl32 v6（控件视觉风格）与 Per-Monitor V2 DPI 感知。
 # 必须用 /MANIFESTINPUT 合并，直接在 .rc 里写 RT_MANIFEST 会和链接器自动生成的清单冲突。
@@ -57,13 +57,13 @@ target_compile_options(MyZip PRIVATE /O2 /Gy /Gw /GF /utf-8 /W4 /permissive- /Zc
 # /WHOLEARCHIVE:7zstatic 是关键：7-Zip 各格式靠 *Register.cpp 里的全局对象在
 # 静态初始化阶段注册自己，这些对象没有任何外部引用，普通静态库链接会被整体丢弃，
 # 结果是格式列表为空。整库拉入后由 /OPT:REF 清理真正死掉的函数。
-target_link_options(MyZip PRIVATE
+target_link_options(AIZip PRIVATE
   /OPT:REF /OPT:ICF /LTCG /INCREMENTAL:NO
-  "/MANIFESTINPUT:${CMAKE_SOURCE_DIR}/src/res/myzip.manifest"
+  "/MANIFESTINPUT:${CMAKE_SOURCE_DIR}/src/res/aizip.manifest"
   ${Z7_LINK_OPTIONS}
 )
 
-target_link_libraries(MyZip PRIVATE
+target_link_libraries(AIZip PRIVATE
   7zstatic
   comctl32 shell32 shlwapi ole32 oleaut32 uuid uxtheme msimg32 dwmapi
 )

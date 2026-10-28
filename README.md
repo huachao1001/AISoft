@@ -1,9 +1,9 @@
-# MyZip
+# AIZip
 
 HaoZip（2345 好压）压缩 / 解压功能的极简复刻。纯 Win32 + GDI 界面，官方 7-Zip
 内核，无广告、无推广、无工具箱。
 
-**单文件分发：`MyZip.exe` 2.0 MB**（原版 122 MB）。7-Zip 内核已作为静态库
+**单文件分发：`AIZip.exe` 2.0 MB**（原版 122 MB）。7-Zip 内核已作为静态库
 链接进 exe，不依赖任何外部 dll，拷走一个文件即可运行。
 
 ## 构建
@@ -16,7 +16,7 @@ cmake -S . -B build\cmake -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build\cmake --parallel
 ```
 
-产物是单个 `build\cmake\MyZip.exe`。CRT 已静态链接，目标机无需安装 VC++ 运行库。
+产物是单个 `build\cmake\AIZip.exe`。CRT 已静态链接，目标机无需安装 VC++ 运行库。
 
 ## 单文件是怎么做到的
 
@@ -40,7 +40,7 @@ cmake --build build\cmake --parallel
 ## 使用
 
 - 双击 exe 打开文件浏览；从命令行传目录或压缩包可直接定位：
-  `MyZip.exe <路径>`
+  `AIZip.exe <路径>`
 - **添加**：把选中项（未选中则当前目录）打包，弹出压缩对话框
 - **解压到**：解压选中项或整个压缩包
 - **删除**：移入回收站
