@@ -1,6 +1,7 @@
 // 程序入口：单实例、DPI、命令行分发
 #include "app.h"
 #include "shell_menu.h"
+#include "single_instance.h"
 #include "ui.h"
 #include "util.h"
 
@@ -28,16 +29,24 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
     }
   }
 
-  const LaunchRequest req = ParseLaunchArgs();
+  LaunchRequest req = ParseLaunchArgs();
   if (req.paths.empty()) {
     ::MessageBoxW(nullptr,
                   L"用法：在文件或压缩包上点右键选 AIZip，\n"
                   L"或把文件拖到 AIZip.exe 上。",
                   L"AIZip", MB_OK | MB_ICONINFORMATION);
   } else {
+    // 静态动词没有 %*：多选时 shell 为每个文件各起一个进程。压缩类动作先聚合
+    // 成一次操作（一个包），解压则各管各的。
+    if (req.action != LaunchRequest::Action::kExtract) {
+      LaunchRequest merged;
+      if (!inst::Collect(req, merged)) return 0;   // 已转交给先启动的实例
+      req = std::move(merged);
+    }
     AppDispatchLaunch(req);
   }
 
+  inst::Shutdown();
   ui::fonts.Destroy();
   return 0;
 }

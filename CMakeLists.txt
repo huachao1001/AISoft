@@ -30,6 +30,7 @@ add_executable(AIZip WIN32
   src/dlg_input.cpp
   src/dlg_progress.cpp
   src/shell_menu.cpp
+  src/single_instance.cpp
   src/util.cpp
   src/res/aizip.rc
 )

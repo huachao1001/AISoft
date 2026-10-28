@@ -89,11 +89,11 @@ std::wstring WriteVerb(const std::wstring& parent, const wchar_t* verb, const wc
   // 置顶：右键就能看到，不用展开级联菜单
   if (topMost && !SetString(base, L"Position", L"Top")) return L"写入菜单位置失败：" + base;
 
-  // MultiSelectModel=Player + %*：多选时只启动一个进程，全部路径一起传进来，
-  // 避免选十个文件弹出十个压缩对话框
+  // 静态动词只认 %1..%N，没有 %*（写了也展开成空）。多选时 shell 会为每个
+  // 选中项各启动一次进程，各带一个 %1，靠程序内的单实例聚合合并成一次操作。
   if (!SetString(base, L"MultiSelectModel", L"Player")) return L"写入多选模式失败：" + base;
 
-  const std::wstring cmd = L"\"" + exe + L"\" " + argSwitch + L" %*";
+  const std::wstring cmd = L"\"" + exe + L"\" " + argSwitch + L" \"%1\"";
   if (!SetString(cmdKey, nullptr, cmd)) return L"写入命令行失败：" + cmdKey;
   return L"";
 }
@@ -156,6 +156,8 @@ bool IsContextMenuRegistered() {
 
   // 认命令行里的 exe 路径：程序换了位置就视为未注册。
   // 两个压缩动词都要在，只缺一个（比如从旧版本升级）也要重新注册。
+  // 另外旧版本用的是 %*（静态动词不支持，展开成空），这里要求必须带 "%1"，
+  // 老版本升级时会自动纠正过来。
   for (const auto* verb : {kVerbCompress, kVerbCompressZip}) {
     std::wstring cmd;
     if (!ReadString(L"Software\\Classes\\*\\shell\\" + std::wstring(verb) + L"\\command", nullptr,
@@ -163,6 +165,7 @@ bool IsContextMenuRegistered() {
       return false;
     }
     if (cmd.find(L"\"" + exe + L"\"") == std::wstring::npos) return false;
+    if (cmd.find(L"\"%1\"") == std::wstring::npos) return false;
   }
   return true;
 }
