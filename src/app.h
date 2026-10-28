@@ -27,7 +27,7 @@ extern App g_app;
 
 // 外部发起的一次操作（资源管理器右键菜单、单实例转发、命令行）
 struct LaunchRequest {
-  enum class Action { kCompress, kExtract };
+  enum class Action { kCompress, kExtract, kQuickZip };
   Action action = Action::kCompress;
   std::vector<std::wstring> paths;
 };
@@ -41,3 +41,6 @@ LaunchRequest DeserializeLaunch(const std::wstring& packed);
 
 // 执行请求：弹出压缩或解压对话框
 void AppDispatchLaunch(const LaunchRequest& req);
+
+// 一键压缩：直接用源文件名产出 <名字>.zip（同名自动改名），不弹参数对话框
+void AppQuickZip(const std::vector<std::wstring>& paths);

@@ -34,6 +34,11 @@ add_executable(AIZip WIN32
   src/res/aizip.rc
 )
 
+# .rc 里引用的 .ico 不被 CMake 跟踪：换图标后 .res 不会重编，exe 里还是旧图标。
+# 显式声明依赖，让改图标一定触发重新编译。
+set_source_files_properties(src/res/aizip.rc PROPERTIES
+  OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/res/aizip.ico")
+
 target_include_directories(AIZip PRIVATE src)
 
 target_compile_definitions(AIZip PRIVATE

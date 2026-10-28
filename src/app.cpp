@@ -3,6 +3,7 @@
 #include "dlg_compress.h"
 #include "dlg_extract.h"
 #include "dlg_input.h"
+#include "dlg_progress.h"
 #include "util.h"
 
 #include <shellapi.h>
@@ -38,6 +39,22 @@ bool OpenArchiveWithPassword(arc::Archive& a, const std::wstring& path, HWND own
 // 模态循环会把它 EnableWindow(FALSE)，程序一退出就永久锁死整台机器。
 constexpr HWND kNoOwner = nullptr;
 
+// 一键压缩：直接用源文件名生成 <名字>.zip，不弹对话框。
+// 单个文件用主名，多选/文件夹用第一个的名字（与压缩对话框的默认命名一致）。
+std::wstring QuickZipPath(const std::vector<std::wstring>& sources) {
+  if (sources.empty()) return L"";
+  const std::wstring& first = sources.front();
+  const std::wstring dir = util::DirName(first);
+  std::wstring base = util::IsDirectory(first) ? util::BaseName(first) : util::FileStem(first);
+  if (base.empty()) base = L"archive";
+  return util::JoinPath(dir, base + L".zip");
+}
+
+// 同名时自动让路成 "名字 (2).zip"，不覆盖用户已有的包
+std::wstring QuickZipUniquePath(const std::wstring& path) {
+  return util::PathExists(path) ? util::MakeUniquePath(path) : path;
+}
+
 }  // namespace
 
 LaunchRequest ParseLaunchArgs() {
@@ -51,6 +68,9 @@ LaunchRequest ParseLaunchArgs() {
     const std::wstring a = argv[i];
     if (EqualsNoCase(a, L"-compress")) {
       req.action = LaunchRequest::Action::kCompress;
+      actionGiven = true;
+    } else if (EqualsNoCase(a, L"-compress-zip")) {
+      req.action = LaunchRequest::Action::kQuickZip;
       actionGiven = true;
     } else if (EqualsNoCase(a, L"-extract")) {
       req.action = LaunchRequest::Action::kExtract;
@@ -69,7 +89,12 @@ LaunchRequest ParseLaunchArgs() {
 }
 
 std::wstring SerializeLaunch(const LaunchRequest& req) {
-  std::wstring s = (req.action == LaunchRequest::Action::kCompress) ? L"-compress" : L"-extract";
+  std::wstring s = L"-compress";
+  if (req.action == LaunchRequest::Action::kExtract) {
+    s = L"-extract";
+  } else if (req.action == LaunchRequest::Action::kQuickZip) {
+    s = L"-compress-zip";
+  }
   for (const auto& p : req.paths) {
     s += L'\n';
     s += p;
@@ -90,6 +115,9 @@ LaunchRequest DeserializeLaunch(const std::wstring& packed) {
     if (EqualsNoCase(line, L"-compress")) {
       req.action = LaunchRequest::Action::kCompress;
       actionGiven = true;
+    } else if (EqualsNoCase(line, L"-compress-zip")) {
+      req.action = LaunchRequest::Action::kQuickZip;
+      actionGiven = true;
     } else if (EqualsNoCase(line, L"-extract")) {
       req.action = LaunchRequest::Action::kExtract;
       actionGiven = true;
@@ -105,6 +133,15 @@ LaunchRequest DeserializeLaunch(const std::wstring& packed) {
 
 void AppDispatchLaunch(const LaunchRequest& req) {
   const HWND owner = kNoOwner;
+
+  if (req.action == LaunchRequest::Action::kQuickZip) {
+    if (req.paths.empty()) {
+      ::MessageBoxW(owner, L"没有可压缩的文件。", L"AIZip", MB_OK | MB_ICONINFORMATION);
+      return;
+    }
+    AppQuickZip(req.paths);
+    return;
+  }
 
   if (req.action == LaunchRequest::Action::kCompress) {
     if (req.paths.empty()) {
@@ -141,4 +178,25 @@ void AppDispatchLaunch(const LaunchRequest& req) {
   }
   g_app.archivePath = path;
   ui::ShowExtractDialog(owner);
+}
+
+void AppQuickZip(const std::vector<std::wstring>& paths) {
+  const std::wstring target = QuickZipUniquePath(QuickZipPath(paths));
+  if (target.empty()) return;
+
+  arc::CompressOptions opts;
+  opts.archivePath = target;
+  opts.formatName = L"ZIP";
+  opts.level = g_app.settings.compressLevel;
+  opts.solid = g_app.settings.solid;
+
+  std::wstring err;
+  const bool ok =
+      ui::ShowProgressDialog(kNoOwner, L"正在压缩", [&](const arc::ProgressFn& prog) {
+        return arc::Compress(paths, opts, prog, err);
+      });
+
+  if (!ok && !err.empty()) {
+    ::MessageBoxW(kNoOwner, (L"压缩失败：\n" + err).c_str(), L"AIZip", MB_OK | MB_ICONERROR);
+  }
 }
