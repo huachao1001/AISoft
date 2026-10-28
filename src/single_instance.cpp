@@ -11,8 +11,6 @@ constexpr wchar_t kInboxDir[] = L"AIZip.inbox";
 constexpr DWORD kSettleMs = 150;    // 每轮等这么久，够 shell 把同批进程拉起来
 constexpr DWORD kMaxWaitMs = 2000;  // 上限，避免异常情况一直等
 
-HANDLE g_mutex = nullptr;
-
 std::wstring InboxDir() {
   wchar_t tmp[MAX_PATH]{};
   if (!::GetTempPathW(static_cast<DWORD>(std::size(tmp)), tmp)) return L"";
@@ -112,21 +110,20 @@ void MergeInto(LaunchRequest& into, const LaunchRequest& more) {
 }  // namespace
 
 bool Collect(const LaunchRequest& first, LaunchRequest& merged) {
-  g_mutex = ::CreateMutexW(nullptr, FALSE, kMutexName);
-  if (!g_mutex) {  // 拿不到互斥体就退化成不聚合，功能仍可用
+  HANDLE mutex = ::CreateMutexW(nullptr, FALSE, kMutexName);
+  if (!mutex) {  // 拿不到互斥体就退化成不聚合，功能仍可用
     merged = first;
     return true;
   }
   if (::GetLastError() == ERROR_ALREADY_EXISTS) {
-    ::CloseHandle(g_mutex);
-    g_mutex = nullptr;
+    ::CloseHandle(mutex);
     Forward(first);
     return false;
   }
 
-  // 本进程是这一批的第一个，互斥体持有到进程结束
   merged = first;
 
+  // 等一小会儿，把 shell 同时拉起的那批进程收齐
   const DWORD start = ::GetTickCount();
   for (;;) {
     ::Sleep(kSettleMs);
@@ -135,27 +132,12 @@ bool Collect(const LaunchRequest& first, LaunchRequest& merged) {
     const int got = DrainInbox(batch);
     for (const auto& r : batch) MergeInto(merged, r);
 
-    if (got == 0) break;  // 这一轮没人再来，说明同批进程都投递完了
-    if (::GetTickCount() - start >= kMaxWaitMs) break;
+    if (got == 0 || ::GetTickCount() - start >= kMaxWaitMs) break;
   }
+
+  // 收集结束立刻释放：对话框开着时再右键，新进程能独立成为收集者
+  ::CloseHandle(mutex);
   return true;
-}
-
-LaunchRequest TakePending() {
-  LaunchRequest req;
-  std::vector<LaunchRequest> batch;
-  if (DrainInbox(batch) == 0) return req;
-  req = std::move(batch.front());
-  for (size_t i = 1; i < batch.size(); ++i) MergeInto(req, batch[i]);
-  return req;
-}
-
-void Shutdown() {
-  if (g_mutex) {
-    ::ReleaseMutex(g_mutex);
-    ::CloseHandle(g_mutex);
-    g_mutex = nullptr;
-  }
 }
 
 }  // namespace inst

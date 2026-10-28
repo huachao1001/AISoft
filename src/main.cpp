@@ -46,7 +46,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
     AppDispatchLaunch(req);
   }
 
-  inst::Shutdown();
   ui::fonts.Destroy();
   return 0;
 }
