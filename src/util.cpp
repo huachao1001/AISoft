@@ -3,6 +3,9 @@
 #include <shlobj.h>
 
 #include <cstdio>
+#include <map>
+#include <string>
+#include <vector>
 
 namespace util {
 
@@ -187,84 +190,175 @@ void EnableDpiAwareness() {
 }
 
 namespace {
-constexpr const wchar_t* kRegPath = L"Software\\AIZip";
+
+// 配置放在用户漫游配置目录：%APPDATA%\AIZip\settings.ini。
+// 不写注册表，便于备份/迁移，也避免污染系统库。
+std::wstring ConfigDir() {
+  PWSTR appData = nullptr;
+  if (FAILED(::SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &appData)) || !appData) {
+    if (appData) ::CoTaskMemFree(appData);
+    return L"";
+  }
+  std::wstring dir = JoinPath(appData, L"AIZip");
+  ::CoTaskMemFree(appData);
+  return dir;
 }
+
+std::wstring ConfigFile() {
+  const std::wstring dir = ConfigDir();
+  return dir.empty() ? L"" : JoinPath(dir, L"settings.ini");
+}
+
+// 自己解析而不是用 GetPrivateProfileString：后者按 ANSI 处理，
+// 用户用记事本另存为 UTF-8（带 BOM）后节名就变成 "\xEF\xBB\xBF[settings]"，
+// 整份配置立刻全部失效。这里固定按 UTF-16LE 读写，BOM 可有可无。
+std::wstring TrimRight(std::wstring s) {
+  while (!s.empty() && (s.back() == L'\r' || s.back() == L'\n' || s.back() == L' ' ||
+                        s.back() == L'\t')) {
+    s.pop_back();
+  }
+  return s;
+}
+
+// 读成 key → value；节名与大小写都不敏感地忽略，只认顶层键值
+bool ParseIni(const std::wstring& path, std::map<std::wstring, std::wstring>& out) {
+  HANDLE h = ::CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                           FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (h == INVALID_HANDLE_VALUE) return false;
+
+  LARGE_INTEGER size{};
+  if (!::GetFileSizeEx(h, &size) || size.QuadPart <= 0 || size.QuadPart > (1 << 20)) {
+    ::CloseHandle(h);
+    return false;
+  }
+  std::vector<char> raw(static_cast<size_t>(size.QuadPart));
+  DWORD read = 0;
+  const BOOL ok = ::ReadFile(h, raw.data(), static_cast<DWORD>(raw.size()), &read, nullptr);
+  ::CloseHandle(h);
+  if (!ok || read == 0) return false;
+
+  // 统一转成宽字符：带 BOM 的 UTF-16 直接按 UTF-16 解，否则按 UTF-8
+  std::wstring text;
+  const auto* p = reinterpret_cast<const unsigned char*>(raw.data());
+  const size_t n = read;
+  if (n >= 2 && p[0] == 0xFF && p[1] == 0xFE) {
+    text.assign(reinterpret_cast<const wchar_t*>(p + 2), (n - 2) / sizeof(wchar_t));
+  } else if (n >= 2 && p[1] == 0 && p[0] != 0) {
+    // 无 BOM 的 UTF-16LE：偶数位多为 0，按 UTF-16 解
+    text.assign(reinterpret_cast<const wchar_t*>(p), n / sizeof(wchar_t));
+  } else {
+    const size_t skip = (n >= 3 && p[0] == 0xEF && p[1] == 0xBB && p[2] == 0xBF) ? 3 : 0;
+    const int need = ::MultiByteToWideChar(CP_UTF8, 0, reinterpret_cast<const char*>(p + skip),
+                                           static_cast<int>(n - skip), nullptr, 0);
+    if (need > 0) {
+      text.resize(static_cast<size_t>(need));
+      ::MultiByteToWideChar(CP_UTF8, 0, reinterpret_cast<const char*>(p + skip),
+                            static_cast<int>(n - skip), text.data(), need);
+    }
+  }
+  if (text.empty()) return false;
+
+  size_t pos = 0;
+  while (pos <= text.size()) {
+    const size_t end = text.find(L'\n', pos);
+    std::wstring line =
+        TrimRight(text.substr(pos, end == std::wstring::npos ? std::wstring::npos : end - pos));
+    pos = (end == std::wstring::npos) ? text.size() + 1 : end + 1;
+
+    if (line.empty() || line[0] == L'[' || line[0] == L';' || line[0] == L'#') continue;
+    const size_t eq = line.find(L'=');
+    if (eq == std::wstring::npos) continue;
+    out[TrimRight(line.substr(0, eq))] = line.substr(eq + 1);
+  }
+  return true;
+}
+
+std::wstring StrOf(const std::map<std::wstring, std::wstring>& m, const wchar_t* key,
+                   const wchar_t* def = L"") {
+  const auto it = m.find(key);
+  return it == m.end() ? def : it->second;
+}
+
+int IntOf(const std::map<std::wstring, std::wstring>& m, const wchar_t* key, int def) {
+  const auto it = m.find(key);
+  if (it == m.end() || it->second.empty()) return def;
+  try {
+    return std::stoi(it->second);
+  } catch (...) {
+    return def;
+  }
+}
+
+void AppendUtf16(std::vector<char>& buf, const std::wstring& s) {
+  const auto* p = reinterpret_cast<const char*>(s.data());
+  buf.insert(buf.end(), p, p + s.size() * sizeof(wchar_t));
+}
+
+}  // namespace
 
 Settings LoadSettings() {
   Settings s;
-  HKEY key = nullptr;
-  if (::RegOpenKeyExW(HKEY_CURRENT_USER, kRegPath, 0, KEY_READ, &key) != ERROR_SUCCESS) return s;
+  const std::wstring file = ConfigFile();
+  if (file.empty() || !PathExists(file)) return s;
 
-  auto readStr = [&](const wchar_t* name, std::wstring& out) {
-    wchar_t buf[MAX_PATH * 2];
-    DWORD size = sizeof(buf);
-    DWORD type = 0;
-    if (::RegQueryValueExW(key, name, nullptr, &type, reinterpret_cast<LPBYTE>(buf), &size) ==
-            ERROR_SUCCESS &&
-        type == REG_SZ) {
-      out.assign(buf, size / sizeof(wchar_t));
-      while (!out.empty() && out.back() == L'\0') out.pop_back();
-    }
-  };
-  auto readDword = [&](const wchar_t* name, int& out) {
-    DWORD size = sizeof(DWORD);
-    DWORD type = 0;
-    DWORD v = 0;
-    if (::RegQueryValueExW(key, name, nullptr, &type, reinterpret_cast<LPBYTE>(&v), &size) ==
-            ERROR_SUCCESS &&
-        type == REG_DWORD) {
-      out = static_cast<int>(v);
-    }
-  };
+  std::map<std::wstring, std::wstring> m;
+  if (!ParseIni(file, m)) return s;
 
-  readStr(L"LastDir", s.lastDir);
-  readStr(L"ExtractDir", s.extractDir);
-  readStr(L"FormatName", s.compressFormat);
-  readDword(L"Level", s.compressLevel);
-  readDword(L"Solid", *reinterpret_cast<int*>(&s.solid));
-  readDword(L"OpenAfterExtract", *reinterpret_cast<int*>(&s.openAfterExtract));
-  readDword(L"ShowTree", *reinterpret_cast<int*>(&s.showTree));
-  readDword(L"SortColumn", s.listSortColumn);
-  readDword(L"SortAsc", *reinterpret_cast<int*>(&s.listSortAsc));
-  readDword(L"WinX", s.winX);
-  readDword(L"WinY", s.winY);
-  readDword(L"WinW", s.winW);
-  readDword(L"WinH", s.winH);
-  readDword(L"WinMax", *reinterpret_cast<int*>(&s.winMax));
-  ::RegCloseKey(key);
+  s.lastDir = StrOf(m, L"LastDir");
+  s.extractDir = StrOf(m, L"ExtractDir");
+  const std::wstring fmt = StrOf(m, L"FormatName");
+  if (!fmt.empty()) s.compressFormat = fmt;
+  s.compressLevel = IntOf(m, L"Level", s.compressLevel);
+  s.solid = IntOf(m, L"Solid", s.solid ? 1 : 0) != 0;
+  s.openAfterExtract = IntOf(m, L"OpenAfterExtract", s.openAfterExtract ? 1 : 0) != 0;
+  s.showTree = IntOf(m, L"ShowTree", s.showTree ? 1 : 0) != 0;
+  s.listSortColumn = IntOf(m, L"SortColumn", s.listSortColumn);
+  s.listSortAsc = IntOf(m, L"SortAsc", s.listSortAsc ? 1 : 0) != 0;
+  s.winW = IntOf(m, L"WinW", s.winW);
+  s.winH = IntOf(m, L"WinH", s.winH);
+  s.winMax = IntOf(m, L"WinMax", s.winMax ? 1 : 0) != 0;
   return s;
 }
 
 void SaveSettings(const Settings& s) {
-  HKEY key = nullptr;
-  if (::RegCreateKeyExW(HKEY_CURRENT_USER, kRegPath, 0, nullptr, 0, KEY_WRITE, nullptr, &key,
-                        nullptr) != ERROR_SUCCESS) {
-    return;
-  }
-  auto writeStr = [&](const wchar_t* name, const std::wstring& v) {
-    ::RegSetValueExW(key, name, 0, REG_SZ, reinterpret_cast<const BYTE*>(v.c_str()),
-                     static_cast<DWORD>((v.size() + 1) * sizeof(wchar_t)));
-  };
-  auto writeDword = [&](const wchar_t* name, int v) {
-    DWORD d = static_cast<DWORD>(v);
-    ::RegSetValueExW(key, name, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&d), sizeof(DWORD));
-  };
+  const std::wstring dir = ConfigDir();
+  if (dir.empty() || !EnsureDirectory(dir)) return;
+  const std::wstring file = JoinPath(dir, L"settings.ini");
 
-  writeStr(L"LastDir", s.lastDir);
-  writeStr(L"ExtractDir", s.extractDir);
-  writeStr(L"FormatName", s.compressFormat);
-  writeDword(L"Level", s.compressLevel);
-  writeDword(L"Solid", s.solid ? 1 : 0);
-  writeDword(L"OpenAfterExtract", s.openAfterExtract ? 1 : 0);
-  writeDword(L"ShowTree", s.showTree ? 1 : 0);
-  writeDword(L"SortColumn", s.listSortColumn);
-  writeDword(L"SortAsc", s.listSortAsc ? 1 : 0);
-  writeDword(L"WinX", s.winX);
-  writeDword(L"WinY", s.winY);
-  writeDword(L"WinW", s.winW);
-  writeDword(L"WinH", s.winH);
-  writeDword(L"WinMax", s.winMax ? 1 : 0);
-  ::RegCloseKey(key);
+  auto key = [](const wchar_t* k, const std::wstring& v) {
+    std::wstring line = k;
+    line += L'=';
+    line += v;
+    line += L"\r\n";
+    return line;
+  };
+  std::wstring text = L"[settings]\r\n";
+  text += key(L"LastDir", s.lastDir);
+  text += key(L"ExtractDir", s.extractDir);
+  text += key(L"FormatName", s.compressFormat);
+  text += key(L"Level", std::to_wstring(s.compressLevel));
+  text += key(L"Solid", std::to_wstring(s.solid ? 1 : 0));
+  text += key(L"OpenAfterExtract", std::to_wstring(s.openAfterExtract ? 1 : 0));
+  text += key(L"ShowTree", std::to_wstring(s.showTree ? 1 : 0));
+  text += key(L"SortColumn", std::to_wstring(s.listSortColumn));
+  text += key(L"SortAsc", std::to_wstring(s.listSortAsc ? 1 : 0));
+  text += key(L"WinW", std::to_wstring(s.winW));
+  text += key(L"WinH", std::to_wstring(s.winH));
+  text += key(L"WinMax", std::to_wstring(s.winMax ? 1 : 0));
+
+  // 固定写 UTF-16LE + BOM：路径里的中文不会因代码页变化而损坏
+  std::vector<char> buf;
+  const wchar_t bom = 0xFEFF;
+  buf.insert(buf.end(), reinterpret_cast<const char*>(&bom),
+             reinterpret_cast<const char*>(&bom) + sizeof(bom));
+  AppendUtf16(buf, text);
+
+  HANDLE h = ::CreateFileW(file.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+                           FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (h == INVALID_HANDLE_VALUE) return;
+  DWORD written = 0;
+  ::WriteFile(h, buf.data(), static_cast<DWORD>(buf.size()), &written, nullptr);
+  ::CloseHandle(h);
 }
 
 }  // namespace util

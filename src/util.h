@@ -41,7 +41,7 @@ std::wstring FormatCrc(uint32_t crc, bool has);             // 8 位大写十六
 int DpiForWindow(HWND hwnd);
 void EnableDpiAwareness();
 
-// ── 设置持久化（注册表 HKCU\Software\AIZip）──
+// ── 设置持久化（%APPDATA%\AIZip\settings.ini）──
 struct Settings {
   std::wstring lastDir;
   std::wstring extractDir;
@@ -52,7 +52,7 @@ struct Settings {
   bool showTree = true;
   int listSortColumn = 0;
   bool listSortAsc = true;
-  int winX = -1, winY = -1, winW = -1, winH = -1;   // -1 = 未设置
+  int winW = -1, winH = -1;                        // -1 = 未设置；坐标不持久化，启动居中
   bool winMax = false;
 };
 Settings LoadSettings();

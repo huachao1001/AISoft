@@ -538,9 +538,8 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
       wp.length = sizeof(wp);
       if (::GetWindowPlacement(hwnd, &wp)) {
         g_app.settings.winMax = (wp.showCmd == SW_SHOWMAXIMIZED);
+        // 只记尺寸：启动位置固定居中，换显示器后旧坐标可能落到屏幕外
         if (!g_app.settings.winMax) {
-          g_app.settings.winX = wp.rcNormalPosition.left;
-          g_app.settings.winY = wp.rcNormalPosition.top;
           g_app.settings.winW = wp.rcNormalPosition.right - wp.rcNormalPosition.left;
           g_app.settings.winH = wp.rcNormalPosition.bottom - wp.rcNormalPosition.top;
         }
