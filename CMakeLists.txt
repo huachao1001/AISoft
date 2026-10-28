@@ -25,14 +25,11 @@ add_executable(AIZip WIN32
   src/archive.cpp
   src/sevenzip_loader.cpp
   src/ui.cpp
-  src/ui_main.cpp
-  src/ui_list.cpp
-  src/ui_tree.cpp
-  src/ui_toolbar.cpp
   src/dlg_compress.cpp
   src/dlg_extract.cpp
   src/dlg_input.cpp
   src/dlg_progress.cpp
+  src/shell_menu.cpp
   src/util.cpp
   src/res/aizip.rc
 )

@@ -349,10 +349,12 @@ void OnOk(HWND hwnd, DlgState& st) {
     }
   }
 
+  // 先记下父窗口：下面要销毁对话框，进度框不能再拿它当 owner
+  HWND owner = ::GetParent(hwnd);
   ::DestroyWindow(hwnd);
 
   std::wstring err;
-  const bool ok = ShowProgressDialog(g_app.mainWnd, L"正在压缩", [&](const arc::ProgressFn& prog) {
+  const bool ok = ShowProgressDialog(owner, L"正在压缩", [&](const arc::ProgressFn& prog) {
     for (auto& job : jobs) {
       arc::CompressOptions o = opts;
       o.archivePath = job.first;
@@ -363,7 +365,7 @@ void OnOk(HWND hwnd, DlgState& st) {
 
   if (!ok) {
     if (!err.empty()) {
-      ::MessageBoxW(g_app.mainWnd, (L"压缩失败：\n" + err).c_str(), L"AIZip", MB_OK | MB_ICONERROR);
+      ::MessageBoxW(nullptr, (L"压缩失败：\n" + err).c_str(), L"AIZip", MB_OK | MB_ICONERROR);
     }
     return;
   }
@@ -386,14 +388,12 @@ void OnOk(HWND hwnd, DlgState& st) {
     }
   }
 
-  AppRefreshView();
-
   if (testAfter) {
     // 简单校验：重新打开并枚举
     arc::Archive check;
     const auto r = check.Open(outPath);
     if (!r.ok) {
-      ::MessageBoxW(g_app.mainWnd, L"压缩包测试失败。", L"AIZip", MB_OK | MB_ICONWARNING);
+      ::MessageBoxW(nullptr, L"压缩包测试失败。", L"AIZip", MB_OK | MB_ICONWARNING);
     }
   }
 }
@@ -527,7 +527,7 @@ void ShowCompressDialog(HWND owner, const std::vector<std::wstring>& sourcesIn) 
 
   DlgState st;
   st.sources = sourcesIn;
-  if (st.sources.empty() && !g_app.archiveMode) st.sources.push_back(g_app.curDir);
+  // 没有浏览窗口，来源必须由调用方给出
   if (st.sources.empty()) {
     ::MessageBoxW(owner, L"没有可压缩的内容。", L"AIZip", MB_OK | MB_ICONINFORMATION);
     return;

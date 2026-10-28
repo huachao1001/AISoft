@@ -6,7 +6,6 @@
 #include "dlg_input.h"
 #include "dlg_progress.h"
 #include "ui.h"
-#include "ui_list.h"
 #include "util.h"
 
 #include <commctrl.h>
@@ -44,7 +43,6 @@ constexpr int kIdOk = IDOK;
 constexpr int kIdCancel = IDCANCEL;
 
 struct DlgState {
-  std::vector<int> selected;
   std::wstring targetDir;
   int updateIndex = 0;
   int overwriteIndex = 1;  // 默认覆盖
@@ -56,7 +54,7 @@ struct DlgState {
 DlgState* g_state = nullptr;
 
 std::wstring DefaultTargetDir() {
-  if (g_app.archiveMode) {
+  if (!g_app.archivePath.empty()) {
     const std::wstring dir = util::DirName(g_app.archivePath);
     const std::wstring stem = util::FileStem(g_app.archivePath);
     return util::JoinPath(dir, stem);
@@ -190,26 +188,8 @@ void OnOk(HWND hwnd) {
     opts.overwrite = arc::ExtractOptions::Overwrite::kOverwrite;
   }
 
-  // 收集要解压的成员下标
-  std::vector<uint32_t> indices;
-  for (int row : g_state->selected) {
-    if (row < 0 || row >= static_cast<int>(g_app.items.size())) continue;
-    const Item& it = g_app.items[row];
-    const std::wstring prefix =
-        g_app.innerPath.empty() ? it.name : g_app.innerPath + L"\\" + it.name;
-    if (it.isDir) {
-      // 目录：带上其下全部成员
-      for (size_t i = 0; i < g_app.archive.Entries().size(); ++i) {
-        const std::wstring& p = g_app.archive.Entries()[i].path;
-        if (::CompareStringOrdinal(p.c_str(), static_cast<int>(prefix.size()), prefix.c_str(),
-                                   static_cast<int>(prefix.size()), TRUE) == CSTR_EQUAL) {
-          indices.push_back(static_cast<uint32_t>(i));
-        }
-      }
-    } else if (it.entryIndex >= 0) {
-      indices.push_back(static_cast<uint32_t>(it.entryIndex));
-    }
-  }
+  // 没有浏览窗口，解压始终是整包
+  const std::vector<uint32_t> indices;
 
   g_app.settings.extractDir = target;
   g_app.settings.openAfterExtract = openAfter;
@@ -218,14 +198,14 @@ void OnOk(HWND hwnd) {
 
   std::wstring err;
   const bool ok = ShowProgressDialog(
-      g_app.mainWnd, L"正在解压", [&](const arc::ProgressFn& prog) {
+      nullptr, L"正在解压", [&](const arc::ProgressFn& prog) {
         return g_app.archive.Extract(
             indices, opts, prog,
             [](const std::wstring& path) -> int {
               int result = 1;
               RunOnUiThread([&]() {
                 const std::wstring msg = L"文件已存在：\n\n" + path + L"\n\n是否覆盖？";
-                const int r = ::MessageBoxW(g_app.mainWnd, msg.c_str(), L"AIZip",
+                const int r = ::MessageBoxW(nullptr, msg.c_str(), L"AIZip",
                                             MB_YESNO | MB_ICONWARNING);
                 result = (r == IDYES) ? 1 : 0;
               });
@@ -235,7 +215,7 @@ void OnOk(HWND hwnd) {
               bool accepted = false;
               RunOnUiThread([&]() {
                 std::wstring pwd;
-                accepted = PromptText(g_app.mainWnd, L"输入密码",
+                accepted = PromptText(nullptr, L"输入密码",
                                       L"压缩包已加密，请输入密码：", pwd, true);
                 if (accepted) out = pwd;
               });
@@ -246,7 +226,7 @@ void OnOk(HWND hwnd) {
 
   if (!ok) {
     if (!err.empty()) {
-      ::MessageBoxW(g_app.mainWnd, (L"解压失败：\n" + err).c_str(), L"AIZip",
+      ::MessageBoxW(nullptr, (L"解压失败：\n" + err).c_str(), L"AIZip",
                     MB_OK | MB_ICONERROR);
     }
     return;
@@ -255,15 +235,13 @@ void OnOk(HWND hwnd) {
   if (deleteAfter && !g_app.archivePath.empty()) {
     const std::wstring arcPath = g_app.archivePath;
     g_app.archive.Close();
-    g_app.archiveMode = false;
+    g_app.archivePath.clear();
     ::DeleteFileW(arcPath.c_str());
-    AppNavigateTo(util::DirName(arcPath));
-  } else {
-    AppRefreshView();
   }
 
-  if (openAfter) ::ShellExecuteW(g_app.mainWnd, L"open", target.c_str(), nullptr, nullptr,
-                                 SW_SHOWNORMAL);
+  if (openAfter) {
+    ::ShellExecuteW(nullptr, L"open", target.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+  }
 }
 
 LRESULT CALLBACK Proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -341,7 +319,7 @@ LRESULT CALLBACK Proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
 }  // namespace
 
-void ShowExtractDialog(HWND owner, const std::vector<int>& selected) {
+void ShowExtractDialog(HWND owner) {
   static bool registered = false;
   if (!registered) {
     registered = RegisterWindowClass(kClass, Proc, g_app.instance, CS_HREDRAW | CS_VREDRAW,
@@ -349,7 +327,6 @@ void ShowExtractDialog(HWND owner, const std::vector<int>& selected) {
   }
 
   DlgState st;
-  st.selected = selected;
   st.targetDir = DefaultTargetDir();
 
   const int w = g_app.px(496);

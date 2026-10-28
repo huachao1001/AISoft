@@ -2,12 +2,10 @@
 #pragma once
 
 #include <windows.h>
-#include <string>
-#include <vector>
 
 namespace ui {
 
-// selected 为列表行号；空表示全部
-void ShowExtractDialog(HWND owner, const std::vector<int>& selected);
+// 打开解压对话框；压缩包通过 g_app.archive 传入（固定解压整包）
+void ShowExtractDialog(HWND owner);
 
 }  // namespace ui
