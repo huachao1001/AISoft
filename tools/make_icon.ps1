@@ -52,34 +52,66 @@ public class AIZipIcon {
     tile.Dispose();
   }
 
-  // 白色 Z + 右侧竖拉链
-  static void Glyph(Graphics g, float u) {
-    using (var br = new SolidBrush(Color.White)) {
-      var p = new GraphicsPath();
-      float L = 196 * u, R = 596 * u, T = 286 * u, B = 738 * u, th = 140 * u;
-      p.AddRectangle(new RectangleF(L, T, R - L, th));
-      p.AddRectangle(new RectangleF(L, B - th, R - L, th));
-      p.AddPolygon(new PointF[] {
-        new PointF(R - th * 1.35f, T + th), new PointF(R, T + th),
-        new PointF(L + th * 1.35f, B - th), new PointF(L, B - th) });
-      g.FillPath(br, p);
-      p.Dispose();
+  // 白色 A：两条斜边 + 横梁，全部圆头圆角
+  static void DrawA(Graphics g, float u) {
+    var pen = new Pen(Color.White, 128 * u);
+    pen.StartCap = LineCap.Round;
+    pen.EndCap = LineCap.Round;
+    pen.LineJoin = LineJoin.Round;
 
-      // 拉链齿：只留 3 段粗齿，小尺寸下也不会糊成一条
-      float zx = 664 * u, zw = 118 * u;
-      for (int i = 0; i < 3; i++) {
-        var t = Rounded(new RectangleF(zx, (376 + i * 116) * u, zw, 82 * u), 16 * u);
-        g.FillPath(br, t); t.Dispose();
+    // Λ 两笔：顶点在上，两脚落地
+    g.DrawLines(pen, new PointF[] {
+      new PointF(82 * u, 780 * u),
+      new PointF(296 * u, 246 * u),
+      new PointF(506 * u, 780 * u) });
+    pen.Dispose();
+
+    // 横梁：左右各内缩半个笔画，避免戳出斜边外沿
+    var bar = new Pen(Color.White, 128 * u);
+    bar.StartCap = LineCap.Round;
+    bar.EndCap = LineCap.Round;
+    g.DrawLine(bar, 160 * u, 566 * u, 428 * u, 566 * u);
+    bar.Dispose();
+  }
+
+  // 白色 I：等宽竖条当大写 I，内部挖指孔 + 交错齿槽，读作拉链
+  static void DrawI(Graphics g, float u, bool detail) {
+    float cx = 736, top = 252, bot = 780, w = 140;
+
+    var path = new GraphicsPath();
+    path.AddPath(Rounded(new RectangleF((cx - w / 2) * u, top * u, w * u, (bot - top) * u), w * 0.30f * u), true);
+    path.FillMode = FillMode.Alternate;
+
+    // 拉头指孔
+    float hd = w * 0.30f;
+    var hole = new GraphicsPath();
+    hole.AddEllipse((cx - hd / 2) * u, (top + w * 0.34f) * u, hd * u, hd * u);
+    path.AddPath(hole, false);
+    hole.Dispose();
+
+    // 齿槽：左右交错，小尺寸下省略避免糊成一片
+    if (detail) {
+      int teeth = 5;
+      float t0 = top + w * 1.05f;
+      float span = bot - t0 - w * 0.42f;
+      float step = span / teeth;
+      float sh = step * 0.50f, sw = w * 0.30f;
+      for (int i = 0; i < teeth; i++) {
+        float sy = t0 + step * i + step * 0.5f - sh / 2;
+        float sx = (i % 2 == 0) ? (cx - w / 2 - 2) : (cx + w / 2 - sw + 2);
+        var s = Rounded(new RectangleF(sx * u, sy * u, sw * u, sh * u), sh * 0.34f * u);
+        path.AddPath(s, false);
+        s.Dispose();
       }
-
-      // 拉头：圆角方环，中间挖长孔
-      var pull = Rounded(new RectangleF(640 * u, 214 * u, 166 * u, 108 * u), 50 * u);
-      var hole = Rounded(new RectangleF(682 * u, 254 * u, 82 * u, 30 * u), 15 * u);
-      pull.FillMode = FillMode.Alternate;
-      pull.AddPath(hole, false);
-      g.FillPath(br, pull);
-      pull.Dispose(); hole.Dispose();
     }
+
+    using (var br = new SolidBrush(Color.White)) g.FillPath(br, path);
+    path.Dispose();
+  }
+
+  static void Glyph(Graphics g, float u, bool detail) {
+    DrawA(g, u);
+    DrawI(g, u, detail);
   }
 
   public static Bitmap Render(int S) {
@@ -93,7 +125,7 @@ public class AIZipIcon {
       g.Clear(Color.Transparent);
       float u = big / 1024f;
       Tile(g, big, u);
-      Glyph(g, u);
+      Glyph(g, u, S >= 40);
     }
     var outBmp = new Bitmap(S, S, PixelFormat.Format32bppArgb);
     using (var g2 = Graphics.FromImage(outBmp)) {
