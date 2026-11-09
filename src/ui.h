@@ -23,8 +23,6 @@ constexpr COLORREF kDialogBg = RGB(240, 247, 252);
 constexpr int kToolbarHeight = 76;
 constexpr int kAddressHeight = 28;
 constexpr int kStatusHeight = 24;
-constexpr int kSplitterWidth = 5;
-constexpr int kTreeDefaultWidth = 210;
 
 // 注意：不能把成员命名为 small —— rpcndr.h 把 small 定义成了宏
 struct Fonts {
@@ -69,7 +67,6 @@ enum class IconId {
   kAdd,
   kExtract,
   kDelete,
-  kFolder,
   kArrowBack,
   kArrowForward,
   kArrowUp,

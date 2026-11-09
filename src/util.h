@@ -49,7 +49,6 @@ struct Settings {
   int compressLevel = 5;
   bool solid = true;
   bool openAfterExtract = true;
-  bool showTree = true;
   int listSortColumn = 0;
   bool listSortAsc = true;
   int winW = -1, winH = -1;                        // -1 = 未设置；坐标不持久化，启动居中

@@ -280,14 +280,6 @@ void DrawIconShape(HDC dc, IconId id, const RECT& rc, bool enabled, COLORREF ink
       FillPill(dc, cx + u * 4 - slotW, cy, slotW, u * 10, C(214, 72, 64));
       break;
     }
-    case IconId::kFolder: {
-      RECT body{cx - s / 2 + 2, cy - s / 4, cx + s / 2 - 2, cy + s / 3};
-      FillRoundRect(dc, body, C(250, 200, 96), s / 12);
-      RECT tab{cx - s / 2 + 2, cy - s / 3, cx - 2, cy - s / 4};
-      FillRoundRect(dc, tab, C(232, 176, 72), s / 12);
-      DrawHLine(dc, cx - s / 2 + 2, cx + s / 2 - 2, cy - s / 4, C(216, 158, 56));
-      break;
-    }
     case IconId::kArrowBack: {
       POINT pts[3] = {{cx + arrowHalfW, cy - arrowHalfH},
                       {cx - arrowHalfW, cy},

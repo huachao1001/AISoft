@@ -1,4 +1,4 @@
-﻿// 主窗口：工具栏 + 地址栏 + 树 + 列表 + 状态栏
+﻿// 主窗口：工具栏 + 地址栏 + 文件列表 + 状态栏
 #pragma once
 
 #include <windows.h>
@@ -11,15 +11,11 @@ void UpdateMainTitle(HWND hwnd);
 void RefreshAddressBar(HWND hwnd);
 void RefreshStatusBar(HWND hwnd);
 
-// 压缩包模式会隐藏左侧树，进出该模式后需要重排一次
-void RelayoutMain();
-
 // 地址栏回车/Esc：由消息循环在 IsDialogMessage 之前调用
 bool HandleMainKeyMessage(MSG* msg);
 
 constexpr int kToolbarId = 1001;
 constexpr int kListId = 1003;
-constexpr int kTreeId = 1004;
 constexpr int kStatusId = 1005;
 constexpr int kPathEditId = 1006;
 constexpr int kSearchId = 1007;
@@ -28,7 +24,6 @@ constexpr int kBackBtnId = 1008;
 struct MainParts {
   HWND toolbar = nullptr;
   HWND list = nullptr;
-  HWND tree = nullptr;
   HWND status = nullptr;
   HWND pathEdit = nullptr;
   HWND search = nullptr;

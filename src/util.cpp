@@ -311,7 +311,6 @@ Settings LoadSettings() {
   s.compressLevel = IntOf(m, L"Level", s.compressLevel);
   s.solid = IntOf(m, L"Solid", s.solid ? 1 : 0) != 0;
   s.openAfterExtract = IntOf(m, L"OpenAfterExtract", s.openAfterExtract ? 1 : 0) != 0;
-  s.showTree = IntOf(m, L"ShowTree", s.showTree ? 1 : 0) != 0;
   s.listSortColumn = IntOf(m, L"SortColumn", s.listSortColumn);
   s.listSortAsc = IntOf(m, L"SortAsc", s.listSortAsc ? 1 : 0) != 0;
   s.winW = IntOf(m, L"WinW", s.winW);
@@ -339,7 +338,6 @@ void SaveSettings(const Settings& s) {
   text += key(L"Level", std::to_wstring(s.compressLevel));
   text += key(L"Solid", std::to_wstring(s.solid ? 1 : 0));
   text += key(L"OpenAfterExtract", std::to_wstring(s.openAfterExtract ? 1 : 0));
-  text += key(L"ShowTree", std::to_wstring(s.showTree ? 1 : 0));
   text += key(L"SortColumn", std::to_wstring(s.listSortColumn));
   text += key(L"SortAsc", std::to_wstring(s.listSortAsc ? 1 : 0));
   text += key(L"WinW", std::to_wstring(s.winW));

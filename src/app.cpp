@@ -7,7 +7,6 @@
 #include "ui.h"
 #include "ui_list.h"
 #include "ui_main.h"
-#include "ui_tree.h"
 #include "util.h"
 
 #include <shellapi.h>
@@ -166,12 +165,9 @@ void AppRefreshView() {
   } else {
     LoadDirectoryItems(g_app.curDir);
   }
-  // 树只在文件系统模式显示：进出压缩包都要重排，否则会留一条空栏
-  ui::RelayoutMain();
   ui::RefreshFileList();
   ui::RefreshAddressBar(g_app.mainWnd);
   ui::RefreshStatusBar(g_app.mainWnd);
-  if (!g_app.archiveMode) ui::SyncTreeToCurrentDir();
 }
 
 void AppNavigateTo(const std::wstring& dirIn) {

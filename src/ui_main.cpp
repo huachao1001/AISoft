@@ -1,4 +1,4 @@
-﻿// 主窗口：工具栏 + 地址栏 + 树 + 列表 + 状态栏
+﻿// 主窗口：工具栏 + 地址栏 + 文件列表 + 状态栏
 #include "ui_main.h"
 
 #include "app.h"
@@ -8,7 +8,6 @@
 #include "ui.h"
 #include "ui_list.h"
 #include "ui_toolbar.h"
-#include "ui_tree.h"
 #include "util.h"
 
 // 拖放转发需要 SetWindowSubclass/DefSubclassProc（comctl32 v6），
@@ -26,7 +25,6 @@ constexpr const wchar_t* kMainClass = L"AIZipMainWindow";
 constexpr const wchar_t* kNavClass = L"AIZipNavBar";
 constexpr int kMinWidth = 720;
 constexpr int kMinHeight = 460;
-int g_treeWidth = kTreeDefaultWidth;
 
 // 地址栏内的导航按钮尺寸
 constexpr int kNavBtnW = 26;
@@ -236,14 +234,13 @@ void CreateChildren(HWND hwnd) {
   ::SendMessageW(g_parts.search, EM_SETCUEBANNER, TRUE,
                  reinterpret_cast<LPARAM>(L"在当前目录中查找"));
 
-  g_parts.tree = CreateTreeView(hwnd, inst, kTreeId);
   g_parts.list = CreateFileList(hwnd, inst, kListId);
   g_parts.status = ::CreateWindowExW(0, STATUSCLASSNAMEW, L"",
                                      WS_CHILD | WS_VISIBLE | SBARS_SIZEGRIP, 0, 0, 0, 0, hwnd,
                                      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStatusId)), inst,
                                      nullptr);
 
-  for (HWND c : {g_parts.list, g_parts.tree, g_parts.pathEdit, g_parts.search}) {
+  for (HWND c : {g_parts.list, g_parts.pathEdit, g_parts.search}) {
     ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(fonts.ui), TRUE);
   }
   ::SendMessageW(g_parts.status, WM_SETFONT, reinterpret_cast<WPARAM>(fonts.ui), TRUE);
@@ -259,7 +256,7 @@ void CreateChildren(HWND hwnd) {
 
   // 贴边一圈的子窗口要让出命中，否则主窗口收不到缩放
   for (HWND c : {g_parts.toolbar, g_parts.navBar, g_parts.pathEdit, g_parts.search,
-                 g_parts.tree, g_parts.list, g_parts.status}) {
+                 g_parts.list, g_parts.status}) {
     ::SetWindowSubclass(c, EdgePassThroughProc, static_cast<UINT_PTR>(subId++), 0);
   }
 }
@@ -301,15 +298,8 @@ void OnSize(HWND hwnd, int cx, int cy) {
   const int statusTop = cy - statusH;
   const int contentH = statusTop - contentY;
   if (contentH > 0) {
-    // 压缩包模式下列表已经带「路径」列，树再留着只会误导：
-    // 点一下就会把用户踢回文件系统。此时让列表独占整行。
-    const bool showTree = g_app.settings.showTree && !g_app.archiveMode;
-    const int treeW = showTree ? g_app.px(g_treeWidth) : 0;
-    ::ShowWindow(g_parts.tree, showTree ? SW_SHOW : SW_HIDE);
-    if (showTree) ::MoveWindow(g_parts.tree, 0, contentY, treeW, contentH, TRUE);
-
-    const int listX = showTree ? treeW + g_app.px(kSplitterWidth) : 0;
-    ::MoveWindow(g_parts.list, listX, contentY, cx - listX, contentH, TRUE);
+    // 列表独占整行：没有左侧树，横向空间全部给文件列表
+    ::MoveWindow(g_parts.list, 0, contentY, cx, contentH, TRUE);
     // 窗口尺寸变化后名称列需要重新撑满剩余宽度
     ui::LayoutFileList(g_parts.list);
   }
@@ -319,7 +309,6 @@ void OnSize(HWND hwnd, int cx, int cy) {
 
 void OnCreate(HWND hwnd) {
   CreateChildren(hwnd);
-  PopulateTree(g_parts.tree);
   RECT rc;
   ::GetClientRect(hwnd, &rc);
   OnSize(hwnd, rc.right, rc.bottom);
@@ -380,7 +369,6 @@ void OnCommand(HWND hwnd, int id, int code) {
 
 LRESULT OnNotify(HWND hwnd, NMHDR* hdr) {
   if (!hdr) return 0;
-  if (hdr->hwndFrom == g_parts.tree) return HandleTreeNotify(hwnd, hdr);
   if (hdr->hwndFrom == g_parts.list) return HandleListNotify(hwnd, hdr);
   return 0;
 }
@@ -558,14 +546,6 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 }
 
 }  // namespace
-
-// 压缩包模式会隐藏左侧树，进出该模式后需要按当前客户区重排一次
-void RelayoutMain() {
-  if (!g_app.mainWnd) return;
-  RECT rc;
-  ::GetClientRect(g_app.mainWnd, &rc);
-  OnSize(g_app.mainWnd, rc.right, rc.bottom);
-}
 
 bool RegisterMainWindow(HINSTANCE inst) {
   // 必须给背景刷：窗口移动/缩放时新露出的区域要靠它填，否则会闪黑条
