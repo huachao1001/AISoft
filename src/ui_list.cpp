@@ -560,8 +560,22 @@ void SetFilterFromEdit(HWND edit) {
 
 void SetListHotRow(int row) {
   if (row == g_hotRow) return;
+  const int prev = g_hotRow;
   g_hotRow = row;
-  if (g_list) ::InvalidateRect(g_list, nullptr, FALSE);
+  if (!g_list) return;
+  // 只重画换掉的那两行，避免每次鼠标换行都整表刷新
+  const int rows[] = {prev, row};
+  for (int r : rows) {
+    if (r < 0 || r >= static_cast<int>(g_rows.size())) continue;
+    RECT rc{};
+    rc.left = LVIR_BOUNDS;
+    if (!::SendMessageW(g_list, LVM_GETSUBITEMRECT, static_cast<WPARAM>(r),
+                        reinterpret_cast<LPARAM>(&rc)))
+      continue;
+    rc.left = 0;
+    rc.right = ClientRight();
+    ::InvalidateRect(g_list, &rc, FALSE);
+  }
 }
 
 // 悬停行：ListView 自己不会通知行悬停，用子类化跟踪鼠标

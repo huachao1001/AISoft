@@ -160,10 +160,12 @@ void DrawTextCenter(HDC dc, const RECT& rc, const std::wstring& text, COLORREF c
 void DrawTextEllipsis(HDC dc, const RECT& rc, const std::wstring& text, COLORREF color,
                       HFONT font) {
   HFONT old = static_cast<HFONT>(::SelectObject(dc, font ? font : fonts.ui));
+  const int oldBk = ::SetBkMode(dc, TRANSPARENT);  // 默认不透明会用白底盖住行底色
   ::SetTextColor(dc, color);
   RECT r = rc;
   ::DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &r,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+  ::SetBkMode(dc, oldBk);
   ::SelectObject(dc, old);
 }
 
