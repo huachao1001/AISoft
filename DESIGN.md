@@ -98,7 +98,7 @@ AIZip/
 │  ├─ ui_list.h/.cpp      文件列表（虚拟列表、排序、行自绘、表头自绘）
 │  ├─ ui_toolbar.h/.cpp   工具按钮条（自绘，标题栏与边框用系统原生）
 │  ├─ ui_crumb.h/.cpp     面包屑导航 + 可编辑地址栏 + 搜索框宿主
-│  ├─ ui_tree.h/.cpp      左侧文件夹树（自绘、懒加载）
+│  ├─ ui_tree.h/.cpp      左侧文件夹树（自绘、懒加载，单击已选中项折叠）
 │  ├─ ui_status.h/.cpp    底部状态栏（自绘）
 │  ├─ ui_search.h/.cpp    圆角搜索框（自绘边框 + 内嵌 EDIT）
 │  ├─ ui_theme.h          配色与尺寸常量

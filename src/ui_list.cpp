@@ -195,7 +195,8 @@ void OnRightClick(HWND mainWnd) {
   const bool hasSel = !sel.empty();
 
   HMENU menu = ::CreatePopupMenu();
-  ::AppendMenuW(menu, MF_STRING | (hasSel ? 0 : MF_GRAYED), 1, L"解压到...");
+  const bool canExtract = CanExtractSelected();
+  ::AppendMenuW(menu, MF_STRING | (canExtract ? 0 : MF_GRAYED), 1, L"解压到...");
   ::AppendMenuW(menu, MF_STRING, 2, L"压缩为...");
   ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   ::AppendMenuW(menu, MF_STRING | (hasSel ? 0 : MF_GRAYED), 3, L"删除");
@@ -211,7 +212,11 @@ void OnRightClick(HWND mainWnd) {
 
   switch (cmd) {
     case 1:
-      ShowExtractDialog(mainWnd, sel);
+      if (g_app.archiveMode) {
+        ShowExtractDialog(mainWnd, sel);
+      } else if (sel.size() == 1) {
+        AppExtractArchive(mainWnd, g_app.items[sel[0]].fullPath);
+      }
       break;
     case 2: {
       if (g_app.archiveMode) {
@@ -465,6 +470,18 @@ std::vector<int> GetSelectedItems() {
     if (row >= 0 && row < static_cast<int>(g_rows.size())) out.push_back(g_rows[row]);
   }
   return out;
+}
+
+// 包内模式天然可解压；文件系统下只认单个受支持的压缩包，多选或普通文件一律不可
+bool CanExtractSelected() {
+  const auto sel = GetSelectedItems();
+  if (sel.empty()) return false;
+  if (g_app.archiveMode) return true;
+  if (sel.size() != 1) return false;
+  const int idx = sel[0];
+  if (idx < 0 || idx >= static_cast<int>(g_app.items.size())) return false;
+  const Item& it = g_app.items[idx];
+  return !it.isDir && arc::Archive::IsArchiveFile(it.fullPath);
 }
 
 const std::vector<int>& VisibleRows() { return g_rows; }

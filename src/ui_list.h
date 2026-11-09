@@ -16,6 +16,8 @@ LRESULT HandleListNotify(HWND mainWnd, NMHDR* hdr);
 std::vector<int> GetSelectedItems();
 // 过滤后的可见行（g_app.items 的下标）
 const std::vector<int>& VisibleRows();
+// 选中项能否解压：包内模式任意选中项可提取；文件系统下只允许单个受支持的压缩包
+bool CanExtractSelected();
 
 void SetFilterFromEdit(HWND edit);
 // 悬停行高亮由主窗口转发的鼠标位置驱动

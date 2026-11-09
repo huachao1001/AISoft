@@ -65,8 +65,8 @@ enum class IconId {
   kTrash,       // 删除
   kArrowBack,
   kChevron,     // 面包屑分隔
-  kChevronDown, // 展开 / 降序
-  kChevronUp,   // 折叠 / 升序
+  kChevronUp,   // 表头升序
+  kChevronDown, // 表头降序
   kHome,
   kFolder,
   kFile,

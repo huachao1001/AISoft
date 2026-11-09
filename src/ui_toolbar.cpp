@@ -101,13 +101,14 @@ int HitTest(POINT pt) {
   return 0;
 }
 
-// 按钮可用性：无选中时“提取选中/删除选中”置灰；压缩包模式下“添加文件”置灰
+// 按钮可用性：提取选中要选中受支持的压缩包；删除选中要选中任意项；包内模式不能添加文件
 bool BtnEnabled(int idx) {
   switch (kButtons[idx].id) {
     case kBtnRefresh:
     case kBtnExtractAll:
       return true;
     case kBtnExtractSel:
+      return CanExtractSelected();
     case kBtnDelete:
       return !GetSelectedItems().empty();
     case kBtnAdd:
@@ -171,8 +172,19 @@ void RunButton(HWND hwnd, int hit) {
       AppRefreshView();
       break;
     case kBtnExtractSel: {
+      if (g_app.archiveMode) {
+        // 包内：解压选中的成员
+        ShowExtractDialog(main, GetSelectedItems());
+        break;
+      }
+      // 文件系统：选中项是压缩包，先打开再解压整包
       const auto sel = GetSelectedItems();
-      ShowExtractDialog(main, sel);
+      if (sel.size() == 1) {
+        const int idx = sel[0];
+        if (idx >= 0 && idx < static_cast<int>(g_app.items.size())) {
+          AppExtractArchive(main, g_app.items[idx].fullPath);
+        }
+      }
       break;
     }
     case kBtnExtractAll:

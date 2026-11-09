@@ -23,7 +23,6 @@ constexpr int kRowH = 30;      // 每行高度
 constexpr int kIndent = 18;    // 每层缩进
 constexpr int kPadL = 14;      // 树的内边距
 constexpr int kIconSz = 16;
-constexpr int kArrowW = 14;
 
 struct Node {
   std::wstring label;
@@ -306,14 +305,6 @@ void PaintTree(HWND hwnd) {
     int x = g_app.px(kPadL) + n->depth * g_app.px(kIndent);
     const int cy = (rr.top + rr.bottom) / 2;
 
-    // 展开箭头
-    if (n->hasChildren) {
-      const int as = g_app.px(12);
-      RECT ar{x, cy - as / 2, x + as, cy + as / 2};
-      DrawIcon(dc, n->expanded ? IconId::kChevronDown : IconId::kChevron, ar, kTextMuted);
-    }
-    x += g_app.px(kArrowW);
-
     // 图标
     const int is = g_app.px(kIconSz);
     RECT ir{x, cy - is / 2, x + is, cy + is / 2};
@@ -337,16 +328,15 @@ int HitRow(POINT pt) {
   return idx;
 }
 
-// 箭头热区：行左侧 14px
-bool HitArrow(POINT pt, Node* n) {
-  if (!n || !n->hasChildren) return false;
-  const int left = g_app.px(kPadL) + n->depth * g_app.px(kIndent);
-  return pt.x >= left && pt.x < left + g_app.px(kArrowW);
-}
-
 void ActivateNode(Node* n) {
   if (!n) return;
   g_active = n;
+  // 选中目录时展开，才能看到下级
+  if (n->hasChildren && !n->expanded) {
+    n->expanded = true;
+    LoadChildren(n);
+    Rebuild();
+  }
   if (g_app.archiveMode) {
     if (::CompareStringOrdinal(n->path.c_str(), -1, g_app.innerPath.c_str(), -1, TRUE) !=
         CSTR_EQUAL) {
@@ -410,9 +400,10 @@ LRESULT CALLBACK TreeProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
       const int hit = HitRow(pt);
       if (hit < 0) return 0;
       Node* n = g_rows[hit];
-      if (HitArrow(pt, n)) {
-        n->expanded = !n->expanded;
-        if (n->expanded) LoadChildren(n);
+
+      // 箭头已移除：单击已选中的目录即折叠，其余情况照常导航并展开
+      if (n == g_active && n->hasChildren && n->expanded) {
+        n->expanded = false;
         Rebuild();
         UpdateScrollBar();
         ::InvalidateRect(hwnd, nullptr, FALSE);

@@ -223,6 +223,29 @@ void AppOpenArchive(const std::wstring& path) {
   AppRefreshView();
 }
 
+bool AppExtractArchive(HWND owner, const std::wstring& path) {
+  if (!arc::Archive::IsArchiveFile(path) || !util::PathExists(path)) {
+    ::MessageBoxW(owner, (L"不是可识别的压缩包：\n" + path).c_str(), L"AIZip",
+                  MB_OK | MB_ICONWARNING);
+    return false;
+  }
+
+  arc::OpenResult r;
+  if (!OpenArchiveWithPassword(g_app.archive, path, owner, r)) {
+    if (!r.error.empty()) {
+      ::MessageBoxW(owner, (L"无法打开压缩包：\n" + path + L"\n\n" + r.error).c_str(), L"AIZip",
+                    MB_OK | MB_ICONERROR);
+    }
+    return false;
+  }
+  g_app.archivePath = path;
+  // 解压对话框靠 archivePath 推默认目标目录，这里不进入浏览模式
+  g_app.archiveMode = false;
+  g_app.innerPath.clear();
+  ui::ShowExtractDialog(owner);
+  return true;
+}
+
 void AppGoUp() {
   if (g_app.archiveMode) {
     if (!g_app.innerPath.empty()) {
@@ -432,25 +455,7 @@ void AppDispatchLaunch(const LaunchRequest& req) {
     return;
   }
   const std::wstring& path = req.paths[0];
-  if (!arc::Archive::IsArchiveFile(path) || !util::PathExists(path)) {
-    ::MessageBoxW(owner, (L"不是可识别的压缩包：\n" + path).c_str(), L"AIZip",
-                  MB_OK | MB_ICONWARNING);
-    return;
-  }
-
-  arc::OpenResult r;
-  if (!OpenArchiveWithPassword(g_app.archive, path, owner, r)) {
-    if (!r.error.empty()) {
-      ::MessageBoxW(owner, (L"无法打开压缩包：\n" + path + L"\n\n" + r.error).c_str(), L"AIZip",
-                    MB_OK | MB_ICONERROR);
-    }
-    return;
-  }
-  g_app.archivePath = path;
-  // 解压对话框靠 archivePath 推默认目标目录，这里不进入浏览模式
-  g_app.archiveMode = false;
-  g_app.innerPath.clear();
-  ui::ShowExtractDialog(owner);
+  AppExtractArchive(owner, path);
 }
 
 void AppQuickZip(const std::vector<std::wstring>& paths) {

@@ -56,6 +56,8 @@ void AppGoBack();
 void AppGoForward();
 bool AppCanBack();
 bool AppCanForward();
+// 打开指定压缩包并弹出解压对话框（不进入包内浏览）
+bool AppExtractArchive(HWND owner, const std::wstring& path);
 
 // 外部发起的一次操作（资源管理器右键菜单、单实例转发、命令行）
 struct LaunchRequest {
