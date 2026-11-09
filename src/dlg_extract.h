@@ -3,9 +3,11 @@
 
 #include <windows.h>
 
+#include <vector>
+
 namespace ui {
 
-// 打开解压对话框；压缩包通过 g_app.archive 传入（固定解压整包）
-void ShowExtractDialog(HWND owner);
+// selected 为 g_app.items 的下标；空表示解压整包
+void ShowExtractDialog(HWND owner, const std::vector<int>& selected = {});
 
 }  // namespace ui

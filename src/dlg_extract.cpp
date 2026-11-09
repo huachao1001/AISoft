@@ -43,6 +43,7 @@ constexpr int kIdOk = IDOK;
 constexpr int kIdCancel = IDCANCEL;
 
 struct DlgState {
+  std::vector<int> selected;  // g_app.items 下标；空表示整包
   std::wstring targetDir;
   int updateIndex = 0;
   int overwriteIndex = 1;  // 默认覆盖
@@ -71,11 +72,11 @@ void CreateControls(HWND hwnd) {
 
   make(L"STATIC", L"目标路径(T)", SS_LEFT, 12, 12, 160, 16, 0);
   make(L"EDIT", g_state->targetDir.c_str(), WS_BORDER | ES_AUTOHSCROLL, 12, 30, 380, 22, kIdTarget);
-  make(L"BUTTON", L"浏览(B)...", BS_PUSHBUTTON | WS_TABSTOP, 398, 29, 84, 24, kIdBrowse);
-  make(L"BUTTON", L"新建文件夹(N)", BS_PUSHBUTTON | WS_TABSTOP, 398, 57, 84, 24, kIdNewFolder);
+  make(L"BUTTON", L"浏览(B)...", BS_PUSHBUTTON | WS_TABSTOP, 398, 29, 104, 24, kIdBrowse);
+  make(L"BUTTON", L"新建文件夹(N)", BS_PUSHBUTTON | WS_TABSTOP, 398, 57, 104, 24, kIdNewFolder);
 
   // 更新方式
-  make(L"BUTTON", L"更新方式", BS_GROUPBOX, 12, 72, 380, 74, kIdGroupUpdate);
+  make(L"BUTTON", L"更新方式", BS_GROUPBOX, 12, 72, 380, 84, kIdGroupUpdate);
   make(L"BUTTON", L"解压并替换文件(R)", BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP, 22, 92, 350,
        18, kIdUpdate1);
   make(L"BUTTON", L"解压并更新文件(U)", BS_AUTORADIOBUTTON | WS_TABSTOP, 22, 112, 350, 18,
@@ -85,29 +86,29 @@ void CreateControls(HWND hwnd) {
   ::SendMessageW(::GetDlgItem(hwnd, kIdUpdate1), BM_SETCHECK, BST_CHECKED, 0);
 
   // 覆盖方式
-  make(L"BUTTON", L"覆盖方式", BS_GROUPBOX, 12, 152, 380, 100, kIdGroupOver);
-  make(L"BUTTON", L"覆盖前询问(A)", BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP, 22, 172, 350, 18,
+  make(L"BUTTON", L"覆盖方式", BS_GROUPBOX, 12, 162, 380, 100, kIdGroupOver);
+  make(L"BUTTON", L"覆盖前询问(A)", BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP, 22, 182, 350, 18,
        kIdOver1);
-  make(L"BUTTON", L"直接覆盖，不询问(W)", BS_AUTORADIOBUTTON | WS_TABSTOP, 22, 192, 350, 18,
+  make(L"BUTTON", L"直接覆盖，不询问(W)", BS_AUTORADIOBUTTON | WS_TABSTOP, 22, 202, 350, 18,
        kIdOver2);
-  make(L"BUTTON", L"跳过已存在的文件(S)", BS_AUTORADIOBUTTON | WS_TABSTOP, 22, 212, 350, 18,
+  make(L"BUTTON", L"跳过已存在的文件(S)", BS_AUTORADIOBUTTON | WS_TABSTOP, 22, 222, 350, 18,
        kIdOver3);
-  make(L"BUTTON", L"自动重命名已存在的文件(R)", BS_AUTORADIOBUTTON | WS_TABSTOP, 22, 232, 350, 18,
+  make(L"BUTTON", L"自动重命名已存在的文件(R)", BS_AUTORADIOBUTTON | WS_TABSTOP, 22, 242, 350, 18,
        kIdOver4);
   ::SendMessageW(::GetDlgItem(hwnd, kIdOver2), BM_SETCHECK, BST_CHECKED, 0);
 
   // 其他选项
-  make(L"BUTTON", L"其他选项", BS_GROUPBOX, 12, 258, 380, 84, kIdGroupOther);
+  make(L"BUTTON", L"其他选项", BS_GROUPBOX, 12, 268, 380, 82, kIdGroupOther);
   HWND openChk = make(L"BUTTON", L"解压完成后打开目标文件夹(O)", BS_AUTOCHECKBOX | WS_TABSTOP, 22,
-                      276, 350, 18, kIdOptOpen);
+                      284, 350, 18, kIdOptOpen);
   ::SendMessageW(openChk, BM_SETCHECK, BST_CHECKED, 0);
-  make(L"BUTTON", L"解压完成后删除压缩包(D)", BS_AUTOCHECKBOX | WS_TABSTOP, 22, 296, 350, 18,
+  make(L"BUTTON", L"解压完成后删除压缩包(D)", BS_AUTOCHECKBOX | WS_TABSTOP, 22, 304, 350, 18,
        kIdOptDelete);
-  make(L"BUTTON", L"密码(P)...", BS_PUSHBUTTON | WS_TABSTOP, 22, 314, 84, 22, kIdPassword);
+  make(L"BUTTON", L"密码(P)...", BS_PUSHBUTTON | WS_TABSTOP, 22, 322, 84, 22, kIdPassword);
 
-  make(L"BUTTON", L"保存为默认(S)", BS_PUSHBUTTON | WS_TABSTOP, 12, 354, 110, 24, kIdSaveDefault);
-  make(L"BUTTON", L"确定(O)", BS_DEFPUSHBUTTON | WS_TABSTOP, 320, 354, 68, 26, kIdOk);
-  make(L"BUTTON", L"取消(C)", BS_PUSHBUTTON | WS_TABSTOP, 394, 354, 68, 26, kIdCancel);
+  make(L"BUTTON", L"保存为默认(S)", BS_PUSHBUTTON | WS_TABSTOP, 12, 362, 110, 24, kIdSaveDefault);
+  make(L"BUTTON", L"确定(O)", BS_DEFPUSHBUTTON | WS_TABSTOP, 320, 360, 68, 26, kIdOk);
+  make(L"BUTTON", L"取消(C)", BS_PUSHBUTTON | WS_TABSTOP, 394, 360, 68, 26, kIdCancel);
 
   for (HWND c = ::GetWindow(hwnd, GW_CHILD); c; c = ::GetWindow(c, GW_HWNDNEXT)) {
     ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(fonts.ui), TRUE);
@@ -188,46 +189,62 @@ void OnOk(HWND hwnd) {
     opts.overwrite = arc::ExtractOptions::Overwrite::kOverwrite;
   }
 
-  // 没有浏览窗口，解压始终是整包
-  const std::vector<uint32_t> indices;
+  // 收集要解压的成员下标；没有选中项就是整包
+  std::vector<uint32_t> indices;
+  for (int row : g_state->selected) {
+    if (row < 0 || row >= static_cast<int>(g_app.items.size())) continue;
+    const Item& it = g_app.items[row];
+    const std::wstring prefix =
+        g_app.innerPath.empty() ? it.name : g_app.innerPath + L"\\" + it.name;
+    if (it.isDir) {
+      // 目录：带上其下全部成员
+      for (size_t i = 0; i < g_app.archive.Entries().size(); ++i) {
+        const std::wstring& p = g_app.archive.Entries()[i].path;
+        if (::CompareStringOrdinal(p.c_str(), static_cast<int>(prefix.size()), prefix.c_str(),
+                                   static_cast<int>(prefix.size()), TRUE) == CSTR_EQUAL) {
+          indices.push_back(static_cast<uint32_t>(i));
+        }
+      }
+    } else if (it.entryIndex >= 0) {
+      indices.push_back(static_cast<uint32_t>(it.entryIndex));
+    }
+  }
 
   g_app.settings.extractDir = target;
   g_app.settings.openAfterExtract = openAfter;
 
+  // 先记下父窗口：下面要销毁对话框，进度框不能再拿它当 owner
+  HWND owner = ::GetParent(hwnd);
   ::DestroyWindow(hwnd);
 
   std::wstring err;
-  const bool ok = ShowProgressDialog(
-      nullptr, L"正在解压", [&](const arc::ProgressFn& prog) {
-        return g_app.archive.Extract(
-            indices, opts, prog,
-            [](const std::wstring& path) -> int {
-              int result = 1;
-              RunOnUiThread([&]() {
-                const std::wstring msg = L"文件已存在：\n\n" + path + L"\n\n是否覆盖？";
-                const int r = ::MessageBoxW(nullptr, msg.c_str(), L"AIZip",
-                                            MB_YESNO | MB_ICONWARNING);
-                result = (r == IDYES) ? 1 : 0;
-              });
-              return result;
-            },
-            [&](std::wstring& out) -> bool {
-              bool accepted = false;
-              RunOnUiThread([&]() {
-                std::wstring pwd;
-                accepted = PromptText(nullptr, L"输入密码",
-                                      L"压缩包已加密，请输入密码：", pwd, true);
-                if (accepted) out = pwd;
-              });
-              return accepted;
-            },
-            err);
-      });
+  const bool ok = ShowProgressDialog(owner, L"正在解压", [&](const arc::ProgressFn& prog) {
+    return g_app.archive.Extract(
+        indices, opts, prog,
+        [owner](const std::wstring& path) -> int {
+          int result = 1;
+          RunOnUiThread([&]() {
+            const std::wstring msg = L"文件已存在：\n\n" + path + L"\n\n是否覆盖？";
+            const int r = ::MessageBoxW(owner, msg.c_str(), L"AIZip", MB_YESNO | MB_ICONWARNING);
+            result = (r == IDYES) ? 1 : 0;
+          });
+          return result;
+        },
+        [owner](std::wstring& out) -> bool {
+          bool accepted = false;
+          RunOnUiThread([&]() {
+            std::wstring pwd;
+            accepted = PromptText(owner, L"输入密码", L"压缩包已加密，请输入密码：", pwd, true);
+            if (accepted) out = pwd;
+          });
+          return accepted;
+        },
+        err);
+  });
 
   if (!ok) {
     if (!err.empty()) {
-      ::MessageBoxW(nullptr, (L"解压失败：\n" + err).c_str(), L"AIZip",
-                    MB_OK | MB_ICONERROR);
+      ::MessageBoxW(owner, (L"解压失败：\n" + err).c_str(), L"AIZip", MB_OK | MB_ICONERROR);
     }
     return;
   }
@@ -235,12 +252,18 @@ void OnOk(HWND hwnd) {
   if (deleteAfter && !g_app.archivePath.empty()) {
     const std::wstring arcPath = g_app.archivePath;
     g_app.archive.Close();
-    g_app.archivePath.clear();
     ::DeleteFileW(arcPath.c_str());
+    if (g_app.archiveMode) {
+      g_app.archiveMode = false;
+      g_app.archivePath.clear();
+      AppNavigateTo(util::DirName(arcPath));
+    }
+  } else if (g_app.mainWnd) {
+    AppRefreshView();
   }
 
   if (openAfter) {
-    ::ShellExecuteW(nullptr, L"open", target.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    ::ShellExecuteW(owner, L"open", target.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
   }
 }
 
@@ -319,7 +342,7 @@ LRESULT CALLBACK Proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
 }  // namespace
 
-void ShowExtractDialog(HWND owner) {
+void ShowExtractDialog(HWND owner, const std::vector<int>& selected) {
   static bool registered = false;
   if (!registered) {
     registered = RegisterWindowClass(kClass, Proc, g_app.instance, CS_HREDRAW | CS_VREDRAW,
@@ -327,10 +350,11 @@ void ShowExtractDialog(HWND owner) {
   }
 
   DlgState st;
+  st.selected = selected;
   st.targetDir = DefaultTargetDir();
 
-  const int w = g_app.px(496);
-  const int h = g_app.px(434);
+  const int w = g_app.px(512);
+  const int h = g_app.px(448);
   const RECT dr = DialogRect(owner, w, h);
 
   HWND dlg = ::CreateWindowExW(WS_EX_DLGMODALFRAME, kClass, L"解压",
