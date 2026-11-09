@@ -1,158 +1,101 @@
-# 生成 AIZip 图标（src/res/aizip.ico）。用法见 tools/README.md
+# 由 logo.svg 生成 AIZip 图标（src/res/aizip.ico）。用法见 tools/README.md
+#
+# 用 Chrome/Edge 无头模式把 SVG 栅格化成 PNG，再打包成多尺寸 ICO。
+# logo.svg 自身留白较大（viewBox 40x40，图形只占中间一条），
+# 所以渲染前用 JS 按实际 bbox 收紧 viewBox，让图形占满画布。
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Drawing
 
-$src = @"
-using System;
-using System.Drawing;
-using System.Drawing.Drawing2D;
-using System.Drawing.Imaging;
-
-public class AIZipIcon {
-  static GraphicsPath Rounded(RectangleF r, float rad) {
-    var p = new GraphicsPath();
-    float d = Math.Min(rad * 2, Math.Min(r.Width, r.Height));
-    p.AddArc(r.X, r.Y, d, d, 180, 90);
-    p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
-    p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
-    p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
-    p.CloseFigure();
-    return p;
-  }
-
-  // 青绿 -> 青 -> 蓝紫，对角三色渐变
-  static LinearGradientBrush Grad(float S) {
-    var b = new LinearGradientBrush(new PointF(0, 0), new PointF(S, S),
-        Color.FromArgb(255, 0, 232, 176), Color.FromArgb(255, 118, 76, 255));
-    var cb = new ColorBlend(3);
-    cb.Colors = new Color[] {
-      Color.FromArgb(255, 0, 232, 176),
-      Color.FromArgb(255, 40, 200, 245),
-      Color.FromArgb(255, 118, 76, 255) };
-    cb.Positions = new float[] { 0f, 0.46f, 1f };
-    b.InterpolationColors = cb;
-    return b;
-  }
-
-  static void Tile(Graphics g, float S, float u) {
-    var tile = Rounded(new RectangleF(20 * u, 20 * u, 984 * u, 984 * u), 226 * u);
-    using (var br = Grad(S)) g.FillPath(br, tile);
-
-    // 左上柔光，避免整块平渐变
-    var sheen = new GraphicsPath();
-    sheen.AddEllipse(-340 * u, -420 * u, 1180 * u, 980 * u);
-    using (var pgb = new PathGradientBrush(sheen)) {
-      pgb.CenterColor = Color.FromArgb(80, 255, 255, 255);
-      pgb.SurroundColors = new Color[] { Color.FromArgb(0, 255, 255, 255) };
-      g.FillPath(pgb, sheen);
-    }
-    sheen.Dispose();
-
-    using (var pen = new Pen(Color.FromArgb(46, 255, 255, 255), 7 * u)) g.DrawPath(pen, tile);
-    tile.Dispose();
-  }
-
-  // 白色 A：两条斜边 + 横梁，全部圆头圆角
-  static void DrawA(Graphics g, float u) {
-    var pen = new Pen(Color.White, 128 * u);
-    pen.StartCap = LineCap.Round;
-    pen.EndCap = LineCap.Round;
-    pen.LineJoin = LineJoin.Round;
-
-    // Λ 两笔：顶点在上，两脚落地
-    g.DrawLines(pen, new PointF[] {
-      new PointF(82 * u, 780 * u),
-      new PointF(296 * u, 246 * u),
-      new PointF(506 * u, 780 * u) });
-    pen.Dispose();
-
-    // 横梁：左右各内缩半个笔画，避免戳出斜边外沿
-    var bar = new Pen(Color.White, 128 * u);
-    bar.StartCap = LineCap.Round;
-    bar.EndCap = LineCap.Round;
-    g.DrawLine(bar, 160 * u, 566 * u, 428 * u, 566 * u);
-    bar.Dispose();
-  }
-
-  // 白色 I：等宽竖条当大写 I，内部挖指孔 + 交错齿槽，读作拉链
-  static void DrawI(Graphics g, float u, bool detail) {
-    float cx = 736, top = 252, bot = 780, w = 140;
-
-    var path = new GraphicsPath();
-    path.AddPath(Rounded(new RectangleF((cx - w / 2) * u, top * u, w * u, (bot - top) * u), w * 0.30f * u), true);
-    path.FillMode = FillMode.Alternate;
-
-    // 拉头指孔
-    float hd = w * 0.30f;
-    var hole = new GraphicsPath();
-    hole.AddEllipse((cx - hd / 2) * u, (top + w * 0.34f) * u, hd * u, hd * u);
-    path.AddPath(hole, false);
-    hole.Dispose();
-
-    // 齿槽：左右交错，小尺寸下省略避免糊成一片
-    if (detail) {
-      int teeth = 5;
-      float t0 = top + w * 1.05f;
-      float span = bot - t0 - w * 0.42f;
-      float step = span / teeth;
-      float sh = step * 0.50f, sw = w * 0.30f;
-      for (int i = 0; i < teeth; i++) {
-        float sy = t0 + step * i + step * 0.5f - sh / 2;
-        float sx = (i % 2 == 0) ? (cx - w / 2 - 2) : (cx + w / 2 - sw + 2);
-        var s = Rounded(new RectangleF(sx * u, sy * u, sw * u, sh * u), sh * 0.34f * u);
-        path.AddPath(s, false);
-        s.Dispose();
-      }
-    }
-
-    using (var br = new SolidBrush(Color.White)) g.FillPath(br, path);
-    path.Dispose();
-  }
-
-  static void Glyph(Graphics g, float u, bool detail) {
-    DrawA(g, u);
-    DrawI(g, u, detail);
-  }
-
-  public static Bitmap Render(int S) {
-    // 小尺寸用更高倍数超采样，边缘更干净
-    int big = S < 64 ? S * 8 : S * 4;
-    var hi = new Bitmap(big, big, PixelFormat.Format32bppArgb);
-    using (var g = Graphics.FromImage(hi)) {
-      g.SmoothingMode = SmoothingMode.AntiAlias;
-      g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-      g.CompositingQuality = CompositingQuality.HighQuality;
-      g.Clear(Color.Transparent);
-      float u = big / 1024f;
-      Tile(g, big, u);
-      Glyph(g, u, S >= 40);
-    }
-    var outBmp = new Bitmap(S, S, PixelFormat.Format32bppArgb);
-    using (var g2 = Graphics.FromImage(outBmp)) {
-      g2.SmoothingMode = SmoothingMode.HighQuality;
-      g2.InterpolationMode = InterpolationMode.HighQualityBicubic;
-      g2.PixelOffsetMode = PixelOffsetMode.HighQuality;
-      g2.DrawImage(hi, new Rectangle(0, 0, S, S));
-    }
-    hi.Dispose();
-    return outBmp;
-  }
-}
-"@
-Add-Type -TypeDefinition $src -ReferencedAssemblies System.Drawing
-
 $root = Split-Path -Parent $PSScriptRoot
+$svgPath = Join-Path $root "logo.svg"
 $outIco = Join-Path $root "src\res\aizip.ico"
 
+if (-not (Test-Path $svgPath)) { throw "找不到 $svgPath" }
+
+function Find-Browser {
+  $candidates = @(
+    "C:\Program Files\Google\Chrome\Application\chrome.exe",
+    "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe",
+    "C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+    "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+  )
+  foreach ($c in $candidates) { if (Test-Path $c) { return $c } }
+  throw "需要 Chrome 或 Edge 来栅格化 SVG"
+}
+
+$browser = Find-Browser
+$svg = [System.IO.File]::ReadAllText($svgPath)
+$work = Join-Path $env:TEMP ("aizip_icon_" + [Guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $work | Out-Null
+
+function Render-Svg([int]$px, [string]$outFile) {
+  $page = Join-Path $work "page_$px.html"
+  # 收紧 viewBox：取图形实际 bbox 的最长边，四周留 5% 余量
+  $script = @"
+<script>
+const s = document.querySelector('svg');
+const b = s.getBBox();
+const side = Math.max(b.width, b.height) * 1.10;
+s.setAttribute('viewBox', (b.x + b.width / 2 - side / 2) + ' ' +
+                          (b.y + b.height / 2 - side / 2) + ' ' + side + ' ' + side);
+</script>
+"@
+  $html = @"
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+html,body{margin:0;padding:0;background:transparent;overflow:hidden}
+svg{display:block;width:${px}px;height:${px}px}
+</style></head><body>
+$svg
+$script
+</body></html>
+"@
+  [System.IO.File]::WriteAllText($page, $html, (New-Object System.Text.UTF8Encoding($false)))
+
+  $prof = Join-Path $work "prof_$px"
+  $url = "file:///" + ($page -replace '\\', '/')
+  $errFile = Join-Path $work "err_$px.txt"
+  # Chrome 会把扩展加载告警写到 stderr，用 Start-Process 隔离，
+  # 否则 $ErrorActionPreference=Stop 会把它当成致命错误。
+  $args = @(
+    "--headless", "--disable-gpu", "--hide-scrollbars", "--force-device-scale-factor=1",
+    "--default-background-color=00000000", "--virtual-time-budget=3000",
+    "--user-data-dir=$prof", "--window-size=$px,$px", "--screenshot=$outFile", $url
+  )
+  $proc = Start-Process -FilePath $browser -ArgumentList $args -NoNewWindow -Wait -PassThru `
+    -RedirectStandardError $errFile -RedirectStandardOutput "$errFile.out"
+  Remove-Item $errFile, "$errFile.out" -Force -ErrorAction SilentlyContinue
+
+  if (-not (Test-Path $outFile)) { throw "渲染 $px px 失败（退出码 $($proc.ExitCode)）" }
+}
+
+# 小尺寸用更高倍数超采样，边缘更干净
 $sizes = @(16, 20, 24, 32, 40, 48, 64, 96, 128, 256)
 $datas = @()
+
 foreach ($sz in $sizes) {
-  $b = [AIZipIcon]::Render($sz)
+  $big = if ($sz -lt 64) { $sz * 8 } else { $sz * 4 }
+  $raw = Join-Path $work "raw_$sz.png"
+  Render-Svg $big $raw
+
+  $src = [System.Drawing.Image]::FromFile($raw)
+  $bmp = New-Object System.Drawing.Bitmap($sz, $sz, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+  $g = [System.Drawing.Graphics]::FromImage($bmp)
+  $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+  $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+  $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+  $g.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
+  $g.Clear([System.Drawing.Color]::Transparent)
+  $g.DrawImage($src, (New-Object System.Drawing.Rectangle(0, 0, $sz, $sz)))
+  $g.Dispose()
+  $src.Dispose()
+
   $ms = New-Object System.IO.MemoryStream
-  $b.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+  $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
   $datas += , $ms.ToArray()
   $ms.Dispose()
-  $b.Dispose()
+  $bmp.Dispose()
 }
 
 # 组装 ICO（每帧存 PNG 数据）
@@ -181,5 +124,6 @@ $bw.Flush()
 
 [System.IO.File]::WriteAllBytes($outIco, $out.ToArray())
 $bw.Dispose(); $out.Dispose()
+Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
 
 Write-Host ("  {0}  {1:N0} B  {2} frames" -f $outIco, (Get-Item $outIco).Length, $sizes.Count)
