@@ -1,18 +1,19 @@
 * text=auto eol=lf
 
 # 本仓库自有源码统一 LF
-/src/**      text eol=lf
-/tools/**    text eol=lf
-/*.md        text eol=lf
-/*.txt       text eol=lf
-/.gitignore  text eol=lf
-/.gitattributes text eol=lf
+# 不写前导斜杠：本仓库作为子目录被引用（如 AISoft/AIZip）时规则同样生效
+src/**         text eol=lf
+tools/**       text eol=lf
+*.md           text eol=lf
+*.txt          text eol=lf
+.gitignore     text eol=lf
+.gitattributes text eol=lf
 
 # 第三方源码保持上游原样，不做换行规范化
-/third_party/** -text
+third_party/** -text
 
 # 例外：我们自己写的构建配置，需要正常 diff
-/third_party/7z/build-cmake/** text eol=lf
+third_party/7z/build-cmake/** text eol=lf
 
 # 二进制
 *.ico binary
