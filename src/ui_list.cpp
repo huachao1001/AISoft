@@ -382,6 +382,53 @@ void HookListHeader() {
   ::SetWindowSubclass(header, HeaderProc, 1, 0);
 }
 
+// 整行绘制：一次画完底色 + 图标 + 文字，坐标是列表客户区绝对坐标
+void DrawRow(HDC dc, int row, bool selected, bool hot, const RECT& rowRc) {
+  const Item& it = g_app.items[g_rows[row]];
+
+  FillRect(dc, rowRc, selected ? kSelBg : (hot ? kRowHover : kPaneBg));
+
+  for (int sub = 0; sub < static_cast<int>(g_colMap.size()); ++sub) {
+    RECT cell{};
+    cell.left = LVIR_BOUNDS;
+    cell.top = sub;
+    if (!::SendMessageW(g_list, LVM_GETSUBITEMRECT, static_cast<WPARAM>(row),
+                        reinterpret_cast<LPARAM>(&cell)))
+      continue;
+
+    RECT tr = cell;
+    // 子项矩形和整行矩形在虚拟列表里不一定对齐，统一裁到行内
+    tr.top = rowRc.top;
+    tr.bottom = rowRc.bottom;
+    const int padX = g_app.px(16);
+    tr.left += padX;
+    tr.right -= padX;
+
+    if (sub == 0) {
+      // 名称列：图标 + 文本。文件夹用自绘图标，文件用系统图标
+      const int iconSide = g_app.px(18);
+      const int iconTop = (tr.top + tr.bottom - iconSide) / 2;
+      RECT ir{cell.left + padX, iconTop, cell.left + padX + iconSide, iconTop + iconSide};
+      DrawFileGlyph(dc, it, ir);
+      tr.left = ir.right + g_app.px(8);
+      DrawTextEllipsis(dc, tr, it.name, kText, fonts.ui);
+    } else {
+      const bool rightAligned = kCols[g_colMap[sub]].format == LVCFMT_RIGHT;
+      HFONT old = static_cast<HFONT>(::SelectObject(dc, fonts.ui));
+      ::SetBkMode(dc, TRANSPARENT);
+      ::SetTextColor(dc, kText);
+      const std::wstring text = ItemText(g_colMap[sub], it);
+      ::DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &tr,
+                  (rightAligned ? DT_RIGHT : DT_LEFT) | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX |
+                      DT_END_ELLIPSIS);
+      ::SelectObject(dc, old);
+    }
+  }
+
+  // 行底部分隔线
+  DrawHLine(dc, rowRc.left, rowRc.right, rowRc.bottom - 1, kLineSoft);
+}
+
 // 行自绘：白底 / 悬停浅灰 / 选中淡蓝，底部一条极浅分隔线
 LRESULT RowCustomDraw(LPNMLVCUSTOMDRAW cd) {
   switch (cd->nmcd.dwDrawStage) {
@@ -393,7 +440,6 @@ LRESULT RowCustomDraw(LPNMLVCUSTOMDRAW cd) {
       if (row < 0 || row >= static_cast<int>(g_rows.size())) return CDRF_DODEFAULT;
       const int idx = g_rows[row];
       if (idx < 0 || idx >= static_cast<int>(g_app.items.size())) return CDRF_DODEFAULT;
-      const Item& it = g_app.items[idx];
 
       // nmcd.uItemState 在这个阶段不一定已同步，直接问列表要选中状态
       const bool selected =
@@ -411,47 +457,11 @@ LRESULT RowCustomDraw(LPNMLVCUSTOMDRAW cd) {
       rowRc.left = 0;
       rowRc.right = ClientRight();
 
-      FillRect(cd->nmcd.hdc, rowRc, selected ? kSelBg : (hot ? kRowHover : kPaneBg));
-
-      for (int sub = 0; sub < static_cast<int>(g_colMap.size()); ++sub) {
-        RECT cell{};
-        cell.left = LVIR_BOUNDS;
-        cell.top = sub;
-        if (!::SendMessageW(g_list, LVM_GETSUBITEMRECT, static_cast<WPARAM>(row),
-                            reinterpret_cast<LPARAM>(&cell)))
-          continue;
-
-        RECT tr = cell;
-        // 子项矩形和整行矩形在虚拟列表里不一定对齐，统一裁到行内
-        tr.top = rowRc.top;
-        tr.bottom = rowRc.bottom;
-        const int padX = g_app.px(16);
-        tr.left += padX;
-        tr.right -= padX;
-
-        if (sub == 0) {
-          // 名称列：图标 + 文本。文件夹用自绘图标，文件用系统图标
-          const int iconSide = g_app.px(18);
-          const int iconTop = (tr.top + tr.bottom - iconSide) / 2;
-          RECT ir{cell.left + padX, iconTop, cell.left + padX + iconSide, iconTop + iconSide};
-          DrawFileGlyph(cd->nmcd.hdc, it, ir);
-          tr.left = ir.right + g_app.px(8);
-          DrawTextEllipsis(cd->nmcd.hdc, tr, it.name, kText, fonts.ui);
-        } else {
-          const bool rightAligned = kCols[g_colMap[sub]].format == LVCFMT_RIGHT;
-          HFONT old = static_cast<HFONT>(::SelectObject(cd->nmcd.hdc, fonts.ui));
-          ::SetBkMode(cd->nmcd.hdc, TRANSPARENT);
-          ::SetTextColor(cd->nmcd.hdc, kText);
-          const std::wstring text = ItemText(g_colMap[sub], it);
-          ::DrawTextW(cd->nmcd.hdc, text.c_str(), static_cast<int>(text.size()), &tr,
-                      (rightAligned ? DT_RIGHT : DT_LEFT) | DT_VCENTER | DT_SINGLELINE |
-                          DT_NOPREFIX | DT_END_ELLIPSIS);
-          ::SelectObject(cd->nmcd.hdc, old);
-        }
-      }
-
-      // 行底部分隔线
-      DrawHLine(cd->nmcd.hdc, rowRc.left, rowRc.right, rowRc.bottom - 1, kLineSoft);
+      // 先画进离屏位图再整体贴回：直接画会把“刷底色”和“画文字”分成两次提交，
+      // 悬停换行时桌面会短暂看到只有底色、没有文字的一帧。
+      MemDC mem(cd->nmcd.hdc, rowRc);
+      DrawRow(mem.dc(), row, selected, hot, rowRc);
+      mem.Commit();
       return CDRF_SKIPDEFAULT;
     }
 
@@ -558,24 +568,20 @@ void SetFilterFromEdit(HWND edit) {
   RefreshStatusBar(g_app.mainWnd);
 }
 
+namespace {
+// 重画单行时走 ListView 自己的绘制路径，避免手动失效区域
+void RedrawListRow(int row) {
+  if (!g_list || row < 0 || row >= static_cast<int>(g_rows.size())) return;
+  ::SendMessageW(g_list, LVM_REDRAWITEMS, static_cast<WPARAM>(row), static_cast<LPARAM>(row));
+}
+}  // namespace
+
 void SetListHotRow(int row) {
   if (row == g_hotRow) return;
   const int prev = g_hotRow;
   g_hotRow = row;
-  if (!g_list) return;
-  // 只重画换掉的那两行，避免每次鼠标换行都整表刷新
-  const int rows[] = {prev, row};
-  for (int r : rows) {
-    if (r < 0 || r >= static_cast<int>(g_rows.size())) continue;
-    RECT rc{};
-    rc.left = LVIR_BOUNDS;
-    if (!::SendMessageW(g_list, LVM_GETSUBITEMRECT, static_cast<WPARAM>(r),
-                        reinterpret_cast<LPARAM>(&rc)))
-      continue;
-    rc.left = 0;
-    rc.right = ClientRight();
-    ::InvalidateRect(g_list, &rc, FALSE);
-  }
+  RedrawListRow(prev);
+  RedrawListRow(row);
 }
 
 // 悬停行：ListView 自己不会通知行悬停，用子类化跟踪鼠标

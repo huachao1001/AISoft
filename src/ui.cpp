@@ -44,6 +44,8 @@ MemDC::MemDC(HDC target, const RECT& rc) : target_(target), rc_(rc) {
   bmp_ = ::CreateCompatibleBitmap(target, rc.right - rc.left, rc.bottom - rc.top);
   if (bmp_) oldBmp_ = static_cast<HBITMAP>(::SelectObject(mem_, bmp_));
   ::SetBkMode(mem_, TRANSPARENT);
+  // 允许调用方继续用客户区绝对坐标绘制，位图内部只装 rc 这一块
+  if (rc.left || rc.top) ::SetViewportOrgEx(mem_, -rc.left, -rc.top, nullptr);
 }
 
 MemDC::~MemDC() {
@@ -55,6 +57,8 @@ MemDC::~MemDC() {
 }
 
 void MemDC::Commit() {
+  // BitBlt 的源坐标同样受视口原点影响，贴回前先还原
+  ::SetViewportOrgEx(mem_, 0, 0, nullptr);
   ::BitBlt(target_, rc_.left, rc_.top, rc_.right - rc_.left, rc_.bottom - rc_.top, mem_, 0, 0,
            SRCCOPY);
 }
