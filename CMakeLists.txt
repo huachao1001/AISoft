@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+﻿cmake_minimum_required(VERSION 3.20)
 project(AIZip CXX C ASM_MASM)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -28,6 +28,10 @@ add_executable(AIZip WIN32
   src/ui_main.cpp
   src/ui_list.cpp
   src/ui_toolbar.cpp
+  src/ui_tree.cpp
+  src/ui_crumb.cpp
+  src/ui_status.cpp
+  src/ui_search.cpp
   src/dlg_compress.cpp
   src/dlg_extract.cpp
   src/dlg_input.cpp

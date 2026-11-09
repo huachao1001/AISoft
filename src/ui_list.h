@@ -17,8 +17,9 @@ std::vector<int> GetSelectedItems();
 // 过滤后的可见行（g_app.items 的下标）
 const std::vector<int>& VisibleRows();
 
-// 搜索框内容变化时调用
 void SetFilterFromEdit(HWND edit);
+// 悬停行高亮由主窗口转发的鼠标位置驱动
+void SetListHotRow(int row);
 
 void DeleteItems(HWND mainWnd, const std::vector<int>& indices);
 

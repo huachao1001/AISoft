@@ -158,7 +158,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
       ::DispatchMessageW(&msg);
       continue;
     }
-    if (!::IsDialogMessageW(mainWnd, &msg)) {
+    // 编辑框的按键直接派发，别让 IsDialogMessage 把回车吃掉
+    if (ui::IsEditKeystroke(&msg) || !::IsDialogMessageW(mainWnd, &msg)) {
       ::TranslateMessage(&msg);
       ::DispatchMessageW(&msg);
     }

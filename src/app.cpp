@@ -1,4 +1,4 @@
-#include "app.h"
+﻿#include "app.h"
 
 #include "dlg_compress.h"
 #include "dlg_extract.h"
@@ -49,7 +49,6 @@ void LoadDirectoryItems(const std::wstring& dir) {
     it.packSize = it.size;
     it.mtime = fd.ftLastWriteTime;
     it.typeName = TypeNameFor(it.name, it.isDir);
-    it.iconIndex = ui::ShellIconIndex(it.fullPath, it.isDir);
     g_app.items.push_back(std::move(it));
   } while (::FindNextFileW(h, &fd));
   ::FindClose(h);
@@ -87,7 +86,6 @@ void LoadArchiveItems() {
         d.name = dirName;
         d.typeName = L"文件夹";
         d.isDir = true;
-        d.iconIndex = ui::ShellIconIndex(L"", true);
         dirIndex[dirName] = dirItems.size();
         dirItems.push_back(std::move(d));
       }
@@ -106,7 +104,6 @@ void LoadArchiveItems() {
         d.typeName = L"文件夹";
         d.isDir = true;
         d.mtime = e.mtime;
-        d.iconIndex = ui::ShellIconIndex(L"", true);
         dirIndex[rel] = dirItems.size();
         dirItems.push_back(std::move(d));
       }
@@ -124,7 +121,6 @@ void LoadArchiveItems() {
     it.method = e.method;
     it.encrypted = e.encrypted;
     it.entryIndex = static_cast<int>(i);
-    it.iconIndex = ui::ShellIconIndex(L"x" + util::FileExtension(rel), false);
     g_app.items.push_back(std::move(it));
   }
 
@@ -168,6 +164,7 @@ void AppRefreshView() {
   ui::RefreshFileList();
   ui::RefreshAddressBar(g_app.mainWnd);
   ui::RefreshStatusBar(g_app.mainWnd);
+  ui::RefreshToolbarState();
 }
 
 void AppNavigateTo(const std::wstring& dirIn) {

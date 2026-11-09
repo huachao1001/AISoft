@@ -21,7 +21,6 @@ struct Item {
   uint32_t crc = 0;
   bool hasCrc = false;
   FILETIME mtime{};
-  int iconIndex = 0;
   int entryIndex = -1;   // 压缩包模式下的成员下标
 };
 

@@ -95,9 +95,14 @@ AIZip/
 │  ├─ main.cpp            程序入口、单实例、命令行分发
 │  ├─ app.h/.cpp          应用状态、视图/导航编排、启动请求分发
 │  ├─ archive.h/.cpp      7-Zip 封装：打开/枚举/解压/压缩
-│  ├─ ui_main.h/.cpp      主窗口
-│  ├─ ui_list.h/.cpp      文件列表（虚拟列表、排序、图标）
-│  ├─ ui_toolbar.h/.cpp   工具栏（自绘按钮）
+│  ├─ ui_main.h/.cpp      主窗口：布局、拖放、子窗口编排
+│  ├─ ui_list.h/.cpp      文件列表（虚拟列表、排序、行自绘、表头自绘）
+│  ├─ ui_toolbar.h/.cpp   标题栏与工具按钮条（自绘）
+│  ├─ ui_crumb.h/.cpp     面包屑导航 + 可编辑地址栏 + 搜索框宿主
+│  ├─ ui_tree.h/.cpp      左侧文件夹树（自绘、懒加载）
+│  ├─ ui_status.h/.cpp    底部状态栏（自绘）
+│  ├─ ui_search.h/.cpp    圆角搜索框（自绘边框 + 内嵌 EDIT）
+│  ├─ ui_theme.h          配色与尺寸常量
 │  ├─ ui.h/.cpp           自绘工具、图标、Windows 资源管理器图标缓存
 │  ├─ dlg_compress.h/.cpp 压缩对话框
 │  ├─ dlg_extract.h/.cpp  解压对话框

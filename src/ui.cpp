@@ -23,12 +23,13 @@ void Fonts::Create(int dpi) {
     wcscpy_s(lf.lfFaceName, L"Microsoft YaHei UI");
     return ::CreateFontIndirectW(&lf);
   };
-  ui = make(9, FW_NORMAL);
-  uiBold = make(9, FW_SEMIBOLD);
+  ui = make(10, FW_NORMAL);
+  uiBold = make(10, FW_SEMIBOLD);
+  uiSmall = make(9, FW_NORMAL);
 }
 
 void Fonts::Destroy() {
-  for (HFONT* f : {&ui, &uiBold}) {
+  for (HFONT* f : {&ui, &uiBold, &uiSmall}) {
     if (*f) {
       ::DeleteObject(*f);
       *f = nullptr;
@@ -78,12 +79,12 @@ void FillRoundRect(HDC dc, const RECT& rc, COLORREF color, int radius) {
   ::DeleteObject(p);
 }
 
-// 圆角矩形描边（内部保持原样），用于让浅色块有边界、不糊成一片
 void StrokeRoundRect(HDC dc, const RECT& rc, COLORREF color, int radius, int width) {
   HPEN p = ::CreatePen(PS_SOLID, width, color);
   HBRUSH oldB = static_cast<HBRUSH>(::SelectObject(dc, ::GetStockObject(NULL_BRUSH)));
   HPEN oldP = static_cast<HPEN>(::SelectObject(dc, p));
-  ::RoundRect(dc, rc.left, rc.top, rc.right, rc.bottom, radius, radius);
+  // GDI 的描边以路径为中心，内缩半像素避免右侧/底边被裁掉
+  ::RoundRect(dc, rc.left, rc.top, rc.right - 1, rc.bottom - 1, radius, radius);
   ::SelectObject(dc, oldB);
   ::SelectObject(dc, oldP);
   ::DeleteObject(p);
@@ -91,7 +92,6 @@ void StrokeRoundRect(HDC dc, const RECT& rc, COLORREF color, int radius, int wid
 
 namespace {
 void GradientV(HDC dc, const RECT& rc, COLORREF top, COLORREF bottom) {
-  // TRIVERTEX 是 16 位定点色（8 位 << 8），高位会超 SHORT 正数范围，按位模式写
   auto ch16 = [](BYTE v) { return static_cast<USHORT>(static_cast<UINT>(v) << 8); };
   auto put = [&](TRIVERTEX& tv, LONG x, LONG y, COLORREF c) {
     tv.x = x;
@@ -99,17 +99,13 @@ void GradientV(HDC dc, const RECT& rc, COLORREF top, COLORREF bottom) {
     union {
       USHORT u;
       SHORT s;
-    } r{}, g{}, b{};
+    } r{}, g{}, b{}, a{};
     r.u = ch16(GetRValue(c));
     g.u = ch16(GetGValue(c));
     b.u = ch16(GetBValue(c));
     tv.Red = r.s;
     tv.Green = g.s;
     tv.Blue = b.s;
-    union {
-      USHORT u;
-      SHORT s;
-    } a{};
     a.u = 0xFF00;
     tv.Alpha = a.s;
   };
@@ -126,7 +122,6 @@ void FillGradientV(HDC dc, const RECT& rc, COLORREF top, COLORREF bottom) {
 }
 
 void FillGradientRoundRect(HDC dc, const RECT& rc, COLORREF top, COLORREF bottom, int radius) {
-  // 用圆角区域裁剪，再在裁剪区内画整块渐变，边缘自然是圆角
   HRGN rgn = ::CreateRoundRectRgn(rc.left, rc.top, rc.right + 1, rc.bottom + 1, radius, radius);
   ::SelectClipRgn(dc, rgn);
   GradientV(dc, rc, top, bottom);
@@ -139,11 +134,15 @@ void DrawHLine(HDC dc, int left, int right, int y, COLORREF color) {
   FillRect(dc, rc, color);
 }
 
+void DrawVLine(HDC dc, int top, int bottom, int x, COLORREF color) {
+  RECT rc{x, top, x + 1, bottom};
+  FillRect(dc, rc, color);
+}
+
 void DrawTextLeft(HDC dc, const RECT& rc, const std::wstring& text, COLORREF color, HFONT font) {
   HFONT old = static_cast<HFONT>(::SelectObject(dc, font ? font : fonts.ui));
   ::SetTextColor(dc, color);
   RECT r = rc;
-  r.left += 2;
   ::DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &r,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
   ::SelectObject(dc, old);
@@ -168,219 +167,229 @@ void DrawTextEllipsis(HDC dc, const RECT& rc, const std::wstring& text, COLORREF
   ::SelectObject(dc, old);
 }
 
-// ───────────────────────── 自绘图标 ─────────────────────────
+int TextWidth(HDC dc, const std::wstring& text, HFONT font) {
+  HFONT old = static_cast<HFONT>(::SelectObject(dc, font ? font : fonts.ui));
+  SIZE sz{};
+  ::GetTextExtentPoint32W(dc, text.c_str(), static_cast<int>(text.size()), &sz);
+  ::SelectObject(dc, old);
+  return sz.cx;
+}
 
+// ───────────────────────── 线描图标 ─────────────────────────
+// 全部按 24x24 网格描述，绘制时按目标尺寸等比缩放。
+// 与 ui.html 的 SVG 一致：1.8 单位线宽、圆头圆角、只描边不填充。
 namespace {
 
-// GDI 没有抗锯齿。这里先在放大 4 倍的离屏画布上绘制，再用 HALFTONE 缩回：
-// 先把目标区域放大复制过去当底图，降采样时边缘才能和真实背景混合
-// （GDI 无 alpha，直接画会在边缘留一圈白边）。
-constexpr int kIconSs = 4;
+constexpr double kGrid = 24.0;
+constexpr int kIconSs = 4;  // 超采样倍数，抵消 GDI 无抗锯齿
 
-void FillPoly(HDC dc, const POINT* pts, int count, COLORREF color) {
-  HBRUSH b = ::CreateSolidBrush(color);
-  HPEN p = ::CreatePen(PS_SOLID, 1, color);
-  HBRUSH oldB = static_cast<HBRUSH>(::SelectObject(dc, b));
-  HPEN oldP = static_cast<HPEN>(::SelectObject(dc, p));
-  ::Polygon(dc, pts, count);
-  ::SelectObject(dc, oldB);
-  ::SelectObject(dc, oldP);
-  ::DeleteObject(b);
-  ::DeleteObject(p);
-}
+struct GridPen {
+  HDC dc;
+  double ox, oy, u;
+  HPEN pen;
+  HGDIOBJ oldPen;
+  HGDIOBJ oldBrush;
 
-// 端头半圆的条块：拼加号、箭头杆、托盘、垃圾桶都用它，圆角自然
-void FillPill(HDC dc, int left, int top, int width, int height, COLORREF color) {
-  FillRoundRect(dc, RECT{left, top, left + width, top + height}, color,
-                width < height ? width : height);
-}
-
-// 折线描边，圆头圆角：垃圾桶外壳等“镂空”图形用
-void StrokePoly(HDC dc, const POINT* pts, int count, COLORREF color, int width, bool closed) {
-  LOGBRUSH lb{BS_SOLID, color, 0};
-  HPEN p = ::ExtCreatePen(PS_GEOMETRIC | PS_SOLID | PS_JOIN_ROUND | PS_ENDCAP_ROUND, width, &lb,
-                          0, nullptr);
-  HPEN oldP = static_cast<HPEN>(::SelectObject(dc, p));
-  HBRUSH oldB = static_cast<HBRUSH>(::SelectObject(dc, ::GetStockObject(NULL_BRUSH)));
-  ::Polyline(dc, pts, count);
-  if (closed) {
-    POINT tail[2] = {pts[count - 1], pts[0]};
-    ::Polyline(dc, tail, 2);
+  POINT P(double x, double y) const {
+    return POINT{static_cast<LONG>(std::lround(ox + x * u)),
+                 static_cast<LONG>(std::lround(oy + y * u))};
   }
-  ::SelectObject(dc, oldB);
-  ::SelectObject(dc, oldP);
-  ::DeleteObject(p);
-}
-
-void DrawIconShape(HDC dc, IconId id, const RECT& rc, bool enabled, COLORREF inkOverride) {
-  const int w = rc.right - rc.left;
-  const int h = rc.bottom - rc.top;
-  const int cx = (rc.left + rc.right) / 2;
-  const int cy = (rc.top + rc.bottom) / 2;
-  const int s = (w < h ? w : h);
-
-  // 禁用态去饱和并提亮，贴近系统禁用控件观感
-  auto C = [enabled](int r, int g, int b) {
-    if (enabled) return RGB(r, g, b);
-    const int y = (r * 30 + g * 59 + b * 11) / 100;
-    const int m = 255 - (255 - y) * 45 / 100;
-    return RGB(m, m, m);
-  };
-
-  const int arrowHalfW = s * 3 / 10;
-  const int arrowHalfH = s * 4 / 10;
-  const int stroke = (s + 12) / 24;
-
-  // 工具栏三个按钮共用一套底板与字形尺度，保证并排时视觉重量一致
-  const int inset = s / 24;
-  const RECT tile{rc.left + inset, rc.top + inset, rc.right - inset, rc.bottom - inset};
-  const int tileRadius = s * 5 / 16;
-  const int t = s / 8;  // 字形笔画粗细
-  const int u = s / 32;  // 字形网格单位；底板内可用范围约 ±14u
-  const COLORREF ink = C(255, 255, 255);
-  // 窗口按钮需要按背景反色（关闭键悬停转白），其余图标走固定配色
-  auto G = [&](int r, int g, int b) {
-    return inkOverride != CLR_INVALID ? inkOverride : C(r, g, b);
-  };
-
-  switch (id) {
-    case IconId::kAdd: {
-      FillGradientRoundRect(dc, tile, C(78, 158, 240), C(24, 106, 196), tileRadius);
-      StrokeRoundRect(dc, tile, C(18, 84, 164), tileRadius, stroke);
-      const int arm = u * 10;
-      FillPill(dc, cx - arm, cy - t / 2, arm * 2, t, ink);
-      FillPill(dc, cx - t / 2, cy - arm, t, arm * 2, ink);
-      break;
-    }
-    case IconId::kExtract: {
-      FillGradientRoundRect(dc, tile, C(250, 194, 88), C(224, 140, 22), tileRadius);
-      StrokeRoundRect(dc, tile, C(200, 122, 14), tileRadius, stroke);
-      // 箭头落入托盘：箭头 + 开口朝上的 U 形盘，托盘必须留在底板内（±14u）
-      FillPill(dc, cx - t / 2, cy - u * 13, t, u * 13, ink);
-      POINT head[3] = {{cx - u * 6, cy}, {cx + u * 6, cy}, {cx, cy + u * 6}};
-      FillPoly(dc, head, 3, ink);
-      POINT tray[4] = {{cx - u * 11, cy + u * 8},
-                       {cx - u * 11, cy + u * 13},
-                       {cx + u * 11, cy + u * 13},
-                       {cx + u * 11, cy + u * 8}};
-      StrokePoly(dc, tray, 4, ink, u * 3, false);
-      break;
-    }
-    case IconId::kDelete: {
-      FillGradientRoundRect(dc, tile, C(242, 112, 102), C(202, 56, 48), tileRadius);
-      StrokeRoundRect(dc, tile, C(180, 44, 38), tileRadius, stroke);
-      // 提手 + 桶盖
-      FillPill(dc, cx - u * 4, cy - u * 12, u * 8, u * 3, ink);
-      FillPill(dc, cx - u * 11, cy - u * 8, u * 22, u * 3, ink);
-      // 实心桶身 + 两道细缝，缝隙窄才不会看成“眼睛”
-      RECT body{cx - u * 8, cy - u * 4, cx + u * 8, cy + u * 13};
-      FillRoundRect(dc, body, ink, u * 2);
-      const int slotW = u * 2;
-      FillPill(dc, cx - u * 4, cy, slotW, u * 10, C(214, 72, 64));
-      FillPill(dc, cx + u * 4 - slotW, cy, slotW, u * 10, C(214, 72, 64));
-      break;
-    }
-    case IconId::kArrowBack: {
-      POINT pts[3] = {{cx + arrowHalfW, cy - arrowHalfH},
-                      {cx - arrowHalfW, cy},
-                      {cx + arrowHalfW, cy + arrowHalfH}};
-      FillPoly(dc, pts, 3, C(90, 104, 116));
-      break;
-    }
-    case IconId::kArrowForward: {
-      POINT pts[3] = {{cx - arrowHalfW, cy - arrowHalfH},
-                      {cx + arrowHalfW, cy},
-                      {cx - arrowHalfW, cy + arrowHalfH}};
-      FillPoly(dc, pts, 3, C(90, 104, 116));
-      break;
-    }
-    case IconId::kArrowUp: {
-      POINT pts[3] = {{cx - arrowHalfH, cy + arrowHalfW},
-                      {cx + arrowHalfH, cy + arrowHalfW},
-                      {cx, cy - arrowHalfW}};
-      FillPoly(dc, pts, 3, C(90, 104, 116));
-      break;
-    }
-    case IconId::kRefresh: {
-      // 圆弧 + 箭头：用 Polyline 近似 270° 圆环，比 Arc 更可控
-      const int r = s / 2 - stroke;
-      HPEN p = ::CreatePen(PS_SOLID, stroke, C(90, 104, 116));
-      auto op = ::SelectObject(dc, p);
-      auto ob = ::SelectObject(dc, ::GetStockObject(NULL_BRUSH));
-
-      // 从 40° 扫到 300°，留出缺口给箭头
-      constexpr int kSteps = 24;
-      POINT arc[kSteps + 1];
-      for (int i = 0; i <= kSteps; ++i) {
-        const double deg = 40.0 + (300.0 - 40.0) * i / kSteps;
-        const double rad = deg * 3.14159265358979 / 180.0;
-        arc[i].x = cx + static_cast<int>(r * cos(rad));
-        arc[i].y = cy - static_cast<int>(r * sin(rad));
-      }
-      ::Polyline(dc, arc, kSteps + 1);
-
-      // 缺口处的小三角箭头
-      POINT tip[3] = {{cx + r, cy - r / 3},
-                      {cx + r - s / 5, cy - r / 3 - s / 6},
-                      {cx + r - s / 5, cy - r / 3 + s / 6}};
-      FillPoly(dc, tip, 3, C(90, 104, 116));
-      ::SelectObject(dc, ob);
-      ::SelectObject(dc, op);
-      ::DeleteObject(p);
-      break;
-    }
-    case IconId::kWinMin: {
-      // 字形占满框宽的 ~62%，与系统标题栏按钮一致
-      const int lineW = s * 62 / 100;
-      const int thick = (s / 11) > 0 ? (s / 11) : 1;
-      FillPill(dc, cx - lineW / 2, cy - thick / 2, lineW, thick, G(70, 82, 94));
-      break;
-    }
-    case IconId::kWinMax: {
-      const int half = s * 31 / 100;
-      const int thick = (s / 11) > 0 ? (s / 11) : 1;
-      RECT box{cx - half, cy - half, cx + half, cy + half};
-      StrokeRoundRect(dc, box, G(70, 82, 94), s / 20, thick);
-      break;
-    }
-    case IconId::kWinRestore: {
-      // 两个叠放的方块：后者只露右上角
-      const int half = s * 27 / 100;
-      const int off = s * 12 / 100;
-      const int thick = (s / 11) > 0 ? (s / 11) : 1;
-      RECT back{cx - half + off, cy - half - off, cx + half + off, cy + half - off};
-      StrokeRoundRect(dc, back, G(70, 82, 94), s / 20, thick);
-      RECT front{cx - half - off, cy - half + off, cx + half - off, cy + half + off};
-      StrokeRoundRect(dc, front, G(70, 82, 94), s / 20, thick);
-      break;
-    }
-    case IconId::kWinClose: {
-      // 两条等宽斜条交叉成 X；用几何笔描线比多边形拼更干净
-      const int half = s * 31 / 100;
-      const int thick = (s / 11) > 0 ? (s / 11) : 1;
-      POINT d1[2] = {{cx - half, cy - half}, {cx + half, cy + half}};
-      POINT d2[2] = {{cx + half, cy - half}, {cx - half, cy + half}};
-      StrokePoly(dc, d1, 2, G(70, 82, 94), thick, false);
-      StrokePoly(dc, d2, 2, G(70, 82, 94), thick, false);
-      break;
+  void Line(double x1, double y1, double x2, double y2) const {
+    POINT pts[2] = {P(x1, y1), P(x2, y2)};
+    ::Polyline(dc, pts, 2);
+  }
+  void Poly(const POINT* pts, int n, bool closed) const {
+    ::Polyline(dc, pts, n);
+    if (closed) {
+      POINT tail[2] = {pts[n - 1], pts[0]};
+      ::Polyline(dc, tail, 2);
     }
   }
-}
+  void PolyD(std::initializer_list<std::pair<double, double>> list, bool closed = false) const {
+    std::vector<POINT> pts;
+    pts.reserve(list.size());
+    for (const auto& p : list) pts.push_back(P(p.first, p.second));
+    Poly(pts.data(), static_cast<int>(pts.size()), closed);
+  }
+  // 圆弧近似：角度以屏幕坐标（y 向下）计
+  void Arc(double cx, double cy, double r, double a0, double a1) const {
+    constexpr int kSteps = 28;
+    std::vector<POINT> pts;
+    pts.reserve(kSteps + 1);
+    for (int i = 0; i <= kSteps; ++i) {
+      const double deg = a0 + (a1 - a0) * i / kSteps;
+      const double rad = deg * 3.14159265358979 / 180.0;
+      pts.push_back(P(cx + r * std::cos(rad), cy + r * std::sin(rad)));
+    }
+    Poly(pts.data(), static_cast<int>(pts.size()), false);
+  }
+};
 
-}  // namespace
-
-void DrawIcon(HDC dc, IconId id, const RECT& rc, bool enabled, COLORREF inkOverride) {
+void DrawStrokeIcon(HDC dc, IconId id, const RECT& rc, COLORREF color, bool enabled) {
   const int w = rc.right - rc.left;
   const int h = rc.bottom - rc.top;
   if (w <= 0 || h <= 0) return;
 
+  COLORREF ink = color;
+  if (!enabled) {
+    const int y = (GetRValue(color) * 30 + GetGValue(color) * 59 + GetBValue(color) * 11) / 100;
+    const int m = 255 - (255 - y) * 45 / 100;
+    ink = RGB(m, m, m);
+  }
+
+  const int side = (w < h ? w : h);
+  GridPen g;
+  g.dc = dc;
+  g.u = static_cast<double>(side) / kGrid;
+  g.ox = rc.left + (w - side) / 2.0;
+  g.oy = rc.top + (h - side) / 2.0;
+  const int width = side >= 44 ? 3 : (side >= 26 ? 2 : 1);
+  LOGBRUSH lb{BS_SOLID, ink, 0};
+  g.pen = ::ExtCreatePen(PS_GEOMETRIC | PS_SOLID | PS_JOIN_ROUND | PS_ENDCAP_ROUND, width, &lb, 0,
+                         nullptr);
+  g.oldPen = ::SelectObject(dc, g.pen);
+  g.oldBrush = ::SelectObject(dc, ::GetStockObject(NULL_BRUSH));
+
+  switch (id) {
+    case IconId::kRefresh: {
+      // 对应 HTML 的双向刷新：两段圆弧 + 两个转角箭头（屏幕坐标 y 向下）
+      g.Arc(12, 12, 9, 199.5, 315);   // 上弧：左中 → 右上
+      g.Arc(12, 12, 9, 135, 19.5);    // 下弧：左下 → 右中
+      g.PolyD({{23, 4}, {23, 10}, {17, 10}});   // 右上箭头
+      g.PolyD({{1, 20}, {1, 14}, {7, 14}});     // 左下箭头
+      break;
+    }
+    case IconId::kExtract: {
+      // 托盘
+      g.PolyD({{21, 15}, {21, 19}}, false);
+      g.Arc(19, 19, 2, 0, 90);
+      g.Line(17, 21, 7, 21);
+      g.Arc(5, 19, 2, 90, 180);
+      g.Line(3, 19, 3, 15);
+      // 箭头
+      g.Line(12, 3, 12, 15);
+      g.PolyD({{7, 10}, {12, 15}, {17, 10}});
+      break;
+    }
+    case IconId::kExtractAll: {
+      g.PolyD({{21, 15}, {21, 19}}, false);
+      g.Arc(19, 19, 2, 0, 90);
+      g.Line(17, 21, 7, 21);
+      g.Arc(5, 19, 2, 90, 180);
+      g.Line(3, 19, 3, 15);
+      g.Line(12, 2, 12, 14);
+      g.PolyD({{8, 10}, {12, 14}, {16, 10}});
+      break;
+    }
+    case IconId::kAdd: {
+      g.PolyD({{21, 15}, {21, 19}}, false);
+      g.Arc(19, 19, 2, 0, 90);
+      g.Line(17, 21, 7, 21);
+      g.Arc(5, 19, 2, 90, 180);
+      g.Line(3, 19, 3, 15);
+      g.Line(12, 5, 12, 15);
+      g.Line(7, 10, 17, 10);
+      break;
+    }
+    case IconId::kTrash: {
+      g.Line(3, 6, 21, 6);
+      g.PolyD({{19, 6}, {19, 20}}, false);
+      g.Arc(17, 20, 2, 0, 90);
+      g.Line(17, 22, 7, 22);
+      g.Arc(5, 20, 2, 90, 180);
+      g.Line(5, 20, 5, 6);
+      g.PolyD({{9, 6}, {9, 4}}, false);
+      g.Arc(11, 4, 2, 180, 270);
+      g.Line(13, 2, 15, 2);
+      g.Arc(15, 4, 2, 270, 360);
+      g.Line(17, 4, 17, 6);
+      break;
+    }
+    case IconId::kArrowBack: {
+      g.Line(19, 12, 5, 12);
+      g.PolyD({{10, 7}, {5, 12}, {10, 17}});
+      break;
+    }
+    case IconId::kChevron: {
+      g.PolyD({{9, 18}, {15, 12}, {9, 6}});
+      break;
+    }
+    case IconId::kHome: {
+      g.PolyD({{3, 9}, {12, 2}, {21, 9}, {21, 20}}, false);
+      g.Arc(19, 20, 2, 0, 90);
+      g.Line(17, 22, 7, 22);
+      g.Arc(5, 20, 2, 90, 180);
+      g.Line(9, 22, 9, 12);
+      g.Line(9, 12, 15, 12);
+      g.Line(15, 12, 15, 22);
+      break;
+    }
+    case IconId::kFolder: {
+      // 文件夹轮廓：左竖边 → 上边台阶 → 右上圆角 → 右竖边 → 底边
+      g.Line(2, 20, 2, 5);
+      g.Line(2, 5, 9, 5);
+      g.Line(9, 5, 11, 8);
+      g.Line(11, 8, 20, 8);
+      g.Arc(20, 10, 2, 270, 360);
+      g.Line(22, 10, 22, 20);
+      g.Line(22, 20, 2, 20);
+      break;
+    }
+    case IconId::kFile: {
+      g.PolyD({{14, 2}, {6, 2}}, false);
+      g.Arc(6, 4, 2, 180, 270);
+      g.Line(4, 4, 4, 20);
+      g.Arc(6, 20, 2, 90, 180);
+      g.Line(6, 22, 18, 22);
+      g.Arc(18, 20, 2, 0, 90);
+      g.Line(20, 20, 20, 8);
+      g.PolyD({{20, 8}, {14, 2}, {14, 8}, {20, 8}});
+      break;
+    }
+    case IconId::kSearch: {
+      g.Arc(11, 11, 7.5, 0, 360);
+      g.Line(16.6, 16.6, 21, 21);
+      break;
+    }
+    case IconId::kWinMin: {
+      g.Line(6, 12, 18, 12);
+      break;
+    }
+    case IconId::kWinMax: {
+      g.PolyD({{5, 5}, {19, 5}, {19, 19}, {5, 19}}, true);
+      break;
+    }
+    case IconId::kWinRestore: {
+      g.PolyD({{8, 4}, {20, 4}, {20, 16}, {16, 16}}, false);
+      g.PolyD({{4, 8}, {16, 8}, {16, 20}, {4, 20}}, true);
+      break;
+    }
+    case IconId::kWinClose: {
+      g.Line(6, 6, 18, 18);
+      g.Line(18, 6, 6, 18);
+      break;
+    }
+  }
+
+  ::SelectObject(dc, g.oldBrush);
+  ::SelectObject(dc, g.oldPen);
+  ::DeleteObject(g.pen);
+}
+
+}  // namespace
+
+void DrawIcon(HDC dc, IconId id, const RECT& rc, COLORREF color, bool enabled) {
+  const int w = rc.right - rc.left;
+  const int h = rc.bottom - rc.top;
+  if (w <= 0 || h <= 0) return;
+
+  // 放大绘制再降采样：先把目标区域原样贴到离屏画布，边缘混合不会发白
   HDC buf = ::CreateCompatibleDC(dc);
   HBITMAP bmp = buf ? ::CreateCompatibleBitmap(dc, w * kIconSs, h * kIconSs) : nullptr;
   if (!buf || !bmp) {
-    // 极端情况退化为直接绘制，至少保证图标不丢
     if (bmp) ::DeleteObject(bmp);
     if (buf) ::DeleteDC(buf);
-    DrawIconShape(dc, id, rc, enabled, CLR_INVALID);
+    DrawStrokeIcon(dc, id, rc, color, enabled);
     return;
   }
 
@@ -389,7 +398,7 @@ void DrawIcon(HDC dc, IconId id, const RECT& rc, bool enabled, COLORREF inkOverr
   ::SetBrushOrgEx(buf, 0, 0, nullptr);
   ::StretchBlt(buf, 0, 0, w * kIconSs, h * kIconSs, dc, rc.left, rc.top, w, h, SRCCOPY);
 
-  DrawIconShape(buf, id, RECT{0, 0, w * kIconSs, h * kIconSs}, enabled, inkOverride);
+  DrawStrokeIcon(buf, id, RECT{0, 0, w * kIconSs, h * kIconSs}, color, enabled);
 
   const int oldMode = ::SetStretchBltMode(dc, HALFTONE);
   ::SetBrushOrgEx(dc, 0, 0, nullptr);
@@ -401,9 +410,6 @@ void DrawIcon(HDC dc, IconId id, const RECT& rc, bool enabled, COLORREF inkOverr
   ::DeleteDC(buf);
 }
 
-// 可缩放感应带宽度（96 DPI 基准）。
-// 客户区已铺满整个窗口，视觉上只剩 1px 边框，但抓取范围要宽一些才好用。
-// 取 6 是为了不超过工具栏按钮的起始 y（也是 6），避免抢走按钮点击。
 int ResizeBorder(int dpi) {
   constexpr int kBase = 6;
   return ::MulDiv(kBase, dpi, 96);
@@ -411,51 +417,69 @@ int ResizeBorder(int dpi) {
 
 // ───────────────────────── Shell 图标缓存 ─────────────────────────
 namespace {
-std::map<std::wstring, int> g_iconMap;
-HIMAGELIST g_smallList = nullptr;
+std::map<std::wstring, HICON> g_hiconMap;
+}  // namespace
 
-void EnsureImageList() {
-  if (g_smallList) return;
+// 直接拿 HICON，绘制时用 DrawIconEx 缩放。
+// 系统图像列表的索引在不同 shell 版本下不总是能画出来（压缩包内无实体文件时尤其如此）。
+HICON ShellIconFor(const std::wstring& path, bool isDir) {
+  const std::wstring key = isDir ? L"<dir>" : util::FileExtension(path);
+  auto it = g_hiconMap.find(key);
+  if (it != g_hiconMap.end()) return it->second;
+
   SHFILEINFOW sfi{};
-  g_smallList = reinterpret_cast<HIMAGELIST>(
-      ::SHGetFileInfoW(L"C:\\", FILE_ATTRIBUTE_DIRECTORY, &sfi, sizeof(sfi),
-                       SHGFI_SYSICONINDEX | SHGFI_SMALLICON));
+  const DWORD attrib = isDir ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+  const DWORD flags = SHGFI_ICON | SHGFI_SMALLICON |
+                      (isDir ? SHGFI_USEFILEATTRIBUTES
+                             : (::GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES
+                                    ? 0
+                                    : SHGFI_USEFILEATTRIBUTES));
+  ::SHGetFileInfoW(isDir ? L"dir" : path.c_str(), attrib, &sfi, sizeof(sfi), flags);
+  g_hiconMap[key] = sfi.hIcon;
+  return sfi.hIcon;
 }
 
-int IconForAttrib(DWORD attrib) {
-  SHFILEINFOW sfi{};
-  ::SHGetFileInfoW(L"x", attrib, &sfi, sizeof(sfi), SHGFI_USEFILEATTRIBUTES | SHGFI_SYSICONINDEX |
-                                                       SHGFI_SMALLICON);
-  return sfi.iIcon;
+void ClearIconCache() {
+  for (auto& kv : g_hiconMap) {
+    if (kv.second) ::DestroyIcon(kv.second);
+  }
+  g_hiconMap.clear();
+}
+
+// ── 列表行高用的占位图像列表 ──
+// ListView 的行高由图像列表单元格尺寸决定。这里用 rowHeight 见方的空格子，
+// 只为了把行撑到与 ui.html 一致的 44px，图标本身在自绘时单独画。
+namespace {
+HIMAGELIST g_rowList = nullptr;
+int g_rowCell = 0;
+
+void FreeRowList() {
+  if (g_rowList) {
+    ::ImageList_Destroy(g_rowList);
+    g_rowList = nullptr;
+  }
+  g_rowCell = 0;
 }
 }  // namespace
 
-int ShellIconIndex(const std::wstring& path, bool isDir) {
-  EnsureImageList();
-  const std::wstring ext = isDir ? L"<dir>" : path;
-  auto it = g_iconMap.find(ext);
-  if (it != g_iconMap.end()) return it->second;
-
-  int idx;
-  if (isDir) {
-    idx = IconForAttrib(FILE_ATTRIBUTE_DIRECTORY);
-  } else {
-    SHFILEINFOW sfi{};
-    const DWORD flags = ::GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES
-                            ? SHGFI_SYSICONINDEX | SHGFI_SMALLICON
-                            : SHGFI_USEFILEATTRIBUTES | SHGFI_SYSICONINDEX | SHGFI_SMALLICON;
-    ::SHGetFileInfoW(path.c_str(), FILE_ATTRIBUTE_NORMAL, &sfi, sizeof(sfi), flags);
-    idx = sfi.iIcon;
-  }
-  g_iconMap[ext] = idx;
-  return idx;
-}
-
-void ClearIconCache() { g_iconMap.clear(); }
-
-HIMAGELIST ShellImageList() {
-  EnsureImageList();
-  return g_smallList;
+HIMAGELIST ListImageList(int rowHeight) {
+  if (g_rowList && g_rowCell == rowHeight) return g_rowList;
+  FreeRowList();
+  g_rowCell = rowHeight;
+  g_rowList = ::ImageList_Create(rowHeight, rowHeight, ILC_COLOR32, 1, 1);
+  // 下标 0 是全透明的空位，行首图标由自绘负责
+  HDC screen = ::GetDC(nullptr);
+  HDC mem = ::CreateCompatibleDC(screen);
+  HBITMAP bmp = ::CreateCompatibleBitmap(screen, rowHeight, rowHeight);
+  HBITMAP old = static_cast<HBITMAP>(::SelectObject(mem, bmp));
+  RECT bg{0, 0, rowHeight, rowHeight};
+  FillRect(mem, bg, kPaneBg);
+  ::SelectObject(mem, old);
+  ::ImageList_Add(g_rowList, bmp, nullptr);
+  ::DeleteObject(bmp);
+  ::DeleteDC(mem);
+  ::ReleaseDC(nullptr, screen);
+  return g_rowList;
 }
 
 // ───────────────────────── 窗口/对话框公共设施 ─────────────────────────
@@ -476,7 +500,6 @@ bool RegisterWindowClass(const wchar_t* name, WNDPROC proc, HINSTANCE inst, UINT
                                                  ::GetSystemMetrics(SM_CXSMICON),
                                                  ::GetSystemMetrics(SM_CYSMICON), 0));
   }
-  // 已注册（例如同名类被重复创建）视为成功
   return ::RegisterClassExW(&wc) != 0 || ::GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
 }
 
@@ -502,7 +525,6 @@ void PaintDialogBackground(HWND hwnd) {
 
 HBRUSH DialogCtlBrush(UINT msg, HWND ctl) {
   if (msg == WM_CTLCOLORBTN) {
-    // 只有分组框/复选/单选需要底色，普通按钮保持系统观感
     const LONG type = ctl ? (::GetWindowLongW(ctl, GWL_STYLE) & BS_TYPEMASK) : 0;
     if (type == BS_PUSHBUTTON || type == BS_DEFPUSHBUTTON || type == BS_OWNERDRAW) return nullptr;
   }
@@ -513,7 +535,6 @@ HBRUSH DialogCtlBrush(UINT msg, HWND ctl) {
 RECT DialogRect(HWND owner, int w, int h) {
   RECT out{CW_USEDEFAULT, CW_USEDEFAULT, w, h};
   RECT ref{};
-  // 没有 owner 时用工作区居中：右键菜单调起的对话框就是这种情况
   if ((owner && ::GetWindowRect(owner, &ref)) ||
       ::SystemParametersInfoW(SPI_GETWORKAREA, 0, &ref, 0)) {
     out.left = ref.left + ((ref.right - ref.left) - w) / 2;
@@ -522,8 +543,7 @@ RECT DialogRect(HWND owner, int w, int h) {
   return out;
 }
 
-// 只有本进程自己的窗口才能当模态 owner。外部窗口（桌面、任务栏、别的程序）
-// 一旦被 EnableWindow(FALSE)，程序异常退出就永久锁死用户界面，绝不接受。
+// 只有本进程自己的窗口才能当模态 owner，否则异常退出会锁死外部界面
 bool IsOwnWindow(HWND h) {
   if (!h || !::IsWindow(h)) return false;
   DWORD pid = 0;
