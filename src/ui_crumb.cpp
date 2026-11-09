@@ -112,11 +112,15 @@ void BuildNodes() {
   if (!g_nodes.empty()) g_nodes.back().current = true;
 }
 
-// 搜索框位置：始终贴右
+// 搜索框位置：始终贴右；宽度随窗口收缩，避开面包屑
 RECT SearchRect(int cx) {
   const int h = g_app.px(34);
-  const int w = g_app.px(kSearchW);
-  return RECT{cx - g_app.px(16) - w, (g_app.px(kCrumbH) - h) / 2, cx - g_app.px(16),
+  const int pad = g_app.px(16);
+  // 至少要给面包屑留出后退按钮 + 一段路径的空间
+  const int minCrumb = g_app.px(kBackBtnW) + g_app.px(120);
+  const int avail = cx - pad * 2 - minCrumb;
+  const int w = std::max(g_app.px(120), std::min(g_app.px(kSearchW), avail));
+  return RECT{cx - pad - w, (g_app.px(kCrumbH) - h) / 2, cx - pad,
               (g_app.px(kCrumbH) - h) / 2 + h};
 }
 
@@ -406,6 +410,10 @@ LRESULT CALLBACK CrumbProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_SIZE: {
       RECT cr;
       ::GetClientRect(hwnd, &cr);
+      // 搜索框宿主是独立子窗口，缩放时必须跟着重定位
+      const RECT sr = SearchRect(cr.right);
+      if (g_search)
+        ::MoveWindow(g_search, sr.left, sr.top, sr.right - sr.left, sr.bottom - sr.top, TRUE);
       Layout(cr.right);
       if (g_editing) RepositionEdit();
       return 0;

@@ -1,4 +1,4 @@
-﻿// 主窗口：工具栏 + 面包屑 + 树 + 列表 + 状态栏
+﻿// 主窗口：面包屑 + 工具栏 + 树 + 列表 + 状态栏
 #include "ui_main.h"
 
 #include "app.h"
@@ -69,8 +69,8 @@ void OnSize(HWND hwnd, int cx, int cy) {
   const int crumbH = g_app.px(kCrumbH);
   const int statusH = g_app.px(kStatusH);
 
-  ::MoveWindow(g_parts.toolbar, 0, 0, cx, toolH, TRUE);
-  ::MoveWindow(g_parts.crumb, 0, toolH, cx, crumbH, TRUE);
+  ::MoveWindow(g_parts.crumb, 0, 0, cx, crumbH, TRUE);
+  ::MoveWindow(g_parts.toolbar, 0, crumbH, cx, toolH, TRUE);
 
   const int contentY = toolH + crumbH;
   const int statusTop = cy - statusH;
