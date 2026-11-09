@@ -348,9 +348,12 @@ void ActivateNode(Node* n) {
              ::CompareStringOrdinal(n->path.c_str(), -1, g_app.curDir.c_str(), -1, TRUE) !=
                  CSTR_EQUAL) {
     AppNavigateTo(n->path);
+    RefreshToolbarState();
     return;
   }
   ::InvalidateRect(g_tree, nullptr, FALSE);
+  // 树上的选中变化会影响「提取选中」的可用性
+  RefreshToolbarState();
 }
 
 }  // namespace
@@ -489,5 +492,11 @@ void LayoutSideTree() {
   UpdateScrollBar();
   ::InvalidateRect(g_tree, nullptr, FALSE);
 }
+
+std::wstring TreeActivePath() { return g_active ? g_active->path : std::wstring(); }
+
+// 树只列目录，只有包内模式有「解压这个目录」的语义。
+// 根节点路径为空，等价于整包。
+bool TreeActiveCanExtract() { return g_app.archiveMode && g_active != nullptr; }
 
 }  // namespace ui

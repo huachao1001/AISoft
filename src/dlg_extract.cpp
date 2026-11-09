@@ -44,6 +44,7 @@ constexpr int kIdCancel = IDCANCEL;
 
 struct DlgState {
   std::vector<int> selected;  // g_app.items 下标；空表示整包
+  std::wstring prefix;        // 包内目录前缀；非空时只解压其下成员
   std::wstring targetDir;
   int updateIndex = 0;
   int overwriteIndex = 1;  // 默认覆盖
@@ -150,6 +151,17 @@ void OnPassword(HWND hwnd) {
   }
 }
 
+// p 是否等于 prefix 或位于 prefix 目录之下；避免 "probe" 误匹配 "probe2"
+bool IsUnderDir(const std::wstring& p, const std::wstring& prefix) {
+  if (prefix.empty()) return true;
+  if (p.size() < prefix.size()) return false;
+  if (::CompareStringOrdinal(p.c_str(), static_cast<int>(prefix.size()), prefix.c_str(),
+                             static_cast<int>(prefix.size()), TRUE) != CSTR_EQUAL) {
+    return false;
+  }
+  return p.size() == prefix.size() || p[prefix.size()] == L'\\' || p[prefix.size()] == L'/';
+}
+
 void OnOk(HWND hwnd) {
   wchar_t buf[MAX_PATH * 2];
   ::GetWindowTextW(::GetDlgItem(hwnd, kIdTarget), buf, MAX_PATH * 2);
@@ -189,7 +201,7 @@ void OnOk(HWND hwnd) {
     opts.overwrite = arc::ExtractOptions::Overwrite::kOverwrite;
   }
 
-  // 收集要解压的成员下标；没有选中项就是整包
+  // 收集要解压的成员下标；既没有选中项也没有目录前缀时就是整包
   std::vector<uint32_t> indices;
   for (int row : g_state->selected) {
     if (row < 0 || row >= static_cast<int>(g_app.items.size())) continue;
@@ -207,6 +219,14 @@ void OnOk(HWND hwnd) {
       }
     } else if (it.entryIndex >= 0) {
       indices.push_back(static_cast<uint32_t>(it.entryIndex));
+    }
+  }
+  if (g_state->selected.empty() && !g_state->prefix.empty()) {
+    // 左侧树选中的包内目录：按路径前缀收集
+    for (size_t i = 0; i < g_app.archive.Entries().size(); ++i) {
+      if (IsUnderDir(g_app.archive.Entries()[i].path, g_state->prefix)) {
+        indices.push_back(static_cast<uint32_t>(i));
+      }
     }
   }
 
@@ -342,7 +362,7 @@ LRESULT CALLBACK Proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
 }  // namespace
 
-void ShowExtractDialog(HWND owner, const std::vector<int>& selected) {
+void ShowExtractDialog(HWND owner, const std::vector<int>& selected, const std::wstring& prefix) {
   static bool registered = false;
   if (!registered) {
     registered = RegisterWindowClass(kClass, Proc, g_app.instance, CS_HREDRAW | CS_VREDRAW,
@@ -351,6 +371,7 @@ void ShowExtractDialog(HWND owner, const std::vector<int>& selected) {
 
   DlgState st;
   st.selected = selected;
+  st.prefix = prefix;
   st.targetDir = DefaultTargetDir();
 
   const int w = g_app.px(512);

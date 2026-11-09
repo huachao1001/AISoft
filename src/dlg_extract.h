@@ -3,11 +3,14 @@
 
 #include <windows.h>
 
+#include <string>
 #include <vector>
 
 namespace ui {
 
 // selected 为 g_app.items 的下标；空表示解压整包
-void ShowExtractDialog(HWND owner, const std::vector<int>& selected = {});
+// prefix 为包内目录路径：非空时只解压该目录下的成员（左侧树选中目录时用）
+void ShowExtractDialog(HWND owner, const std::vector<int>& selected = {},
+                       const std::wstring& prefix = {});
 
 }  // namespace ui

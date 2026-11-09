@@ -7,6 +7,7 @@
 #include "ui.h"
 #include "ui_main.h"
 #include "ui_toolbar.h"
+#include "ui_tree.h"
 #include "util.h"
 
 #include <commctrl.h>
@@ -213,11 +214,7 @@ void OnRightClick(HWND mainWnd) {
 
   switch (cmd) {
     case 1:
-      if (g_app.archiveMode) {
-        ShowExtractDialog(mainWnd, sel);
-      } else if (sel.size() == 1) {
-        AppExtractArchive(mainWnd, g_app.items[sel[0]].fullPath);
-      }
+      ExtractSelection(mainWnd);
       break;
     case 2: {
       if (g_app.archiveMode) {
@@ -473,16 +470,46 @@ std::vector<int> GetSelectedItems() {
   return out;
 }
 
-// 包内模式天然可解压；文件系统下只认单个受支持的压缩包，多选或普通文件一律不可
+// 包内模式天然可解压；文件系统下只认单个受支持的压缩包，多选或普通文件一律不可。
+// 右侧没有选中项时，退回左侧树当前节点判断。
 bool CanExtractSelected() {
   const auto sel = GetSelectedItems();
-  if (sel.empty()) return false;
-  if (g_app.archiveMode) return true;
-  if (sel.size() != 1) return false;
-  const int idx = sel[0];
-  if (idx < 0 || idx >= static_cast<int>(g_app.items.size())) return false;
-  const Item& it = g_app.items[idx];
-  return !it.isDir && arc::Archive::IsArchiveFile(it.fullPath);
+  if (!sel.empty()) {
+    if (g_app.archiveMode) return true;
+    if (sel.size() != 1) return false;
+    const int idx = sel[0];
+    if (idx < 0 || idx >= static_cast<int>(g_app.items.size())) return false;
+    const Item& it = g_app.items[idx];
+    return !it.isDir && arc::Archive::IsArchiveFile(it.fullPath);
+  }
+  // 右侧没选中时退回左侧树：树上的目标同样可以解压
+  return TreeActiveCanExtract();
+}
+
+// 解压入口：右侧有选中项就按选中项，否则用左侧树的当前节点
+void ExtractSelection(HWND owner) {
+  const auto sel = GetSelectedItems();
+  if (!sel.empty()) {
+    if (g_app.archiveMode) {
+      ShowExtractDialog(owner, sel);
+    } else if (sel.size() == 1) {
+      const int idx = sel[0];
+      if (idx >= 0 && idx < static_cast<int>(g_app.items.size())) {
+        AppExtractArchive(owner, g_app.items[idx].fullPath);
+      }
+    }
+    return;
+  }
+
+  // 右侧没选中：退到左侧树的当前节点
+  if (!TreeActiveCanExtract()) return;
+  const std::wstring path = TreeActivePath();
+  if (!g_app.archiveMode) {
+    AppExtractArchive(owner, path);
+    return;
+  }
+  // 包内树节点按目录前缀解压；根节点（空路径）等于整包
+  ShowExtractDialog(owner, {}, path);
 }
 
 const std::vector<int>& VisibleRows() { return g_rows; }

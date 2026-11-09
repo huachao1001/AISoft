@@ -171,22 +171,9 @@ void RunButton(HWND hwnd, int hit) {
     case kBtnRefresh:
       AppRefreshView();
       break;
-    case kBtnExtractSel: {
-      if (g_app.archiveMode) {
-        // 包内：解压选中的成员
-        ShowExtractDialog(main, GetSelectedItems());
-        break;
-      }
-      // 文件系统：选中项是压缩包，先打开再解压整包
-      const auto sel = GetSelectedItems();
-      if (sel.size() == 1) {
-        const int idx = sel[0];
-        if (idx >= 0 && idx < static_cast<int>(g_app.items.size())) {
-          AppExtractArchive(main, g_app.items[idx].fullPath);
-        }
-      }
+    case kBtnExtractSel:
+      ExtractSelection(main);
       break;
-    }
     case kBtnExtractAll:
       ShowExtractDialog(main, {});
       break;
