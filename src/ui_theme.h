@@ -7,7 +7,6 @@ namespace ui {
 
 // 底色
 constexpr COLORREF kBodyBg = RGB(0xf3, 0xf4, 0xf6);
-constexpr COLORREF kTitleBg = RGB(0xe9, 0xe9, 0xeb);
 constexpr COLORREF kToolBg = RGB(0xf7, 0xf8, 0xfa);
 constexpr COLORREF kPaneBg = RGB(0xff, 0xff, 0xff);
 
@@ -51,7 +50,6 @@ constexpr COLORREF kTagInk = RGB(0x08, 0x42, 0x98);
 constexpr COLORREF kDialogBg = RGB(240, 247, 252);
 
 // 布局尺寸（96 DPI 基准）
-constexpr int kTitleH = 40;
 constexpr int kToolH = 52;
 constexpr int kCrumbH = 48;
 constexpr int kStatusH = 36;

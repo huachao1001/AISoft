@@ -53,6 +53,8 @@ void DrawTextEllipsis(HDC dc, const RECT& rc, const std::wstring& text, COLORREF
                       HFONT font);
 // 文本宽度，用于面包屑/标签排版
 int TextWidth(HDC dc, const std::wstring& text, HFONT font);
+// 字体行高，用于把单行 EDIT 垂直居中
+int TextHeight(HDC dc, HFONT font);
 
 // 线描图标（对齐 ui.html 的 stroke 风格，无外部图片）
 enum class IconId {
@@ -67,16 +69,9 @@ enum class IconId {
   kFolder,
   kFile,
   kSearch,
-  kWinMin,
-  kWinMax,
-  kWinRestore,
-  kWinClose,
 };
 
 void DrawIcon(HDC dc, IconId id, const RECT& rc, COLORREF color, bool enabled = true);
-
-// 可缩放边框厚度（96 DPI 基准）
-int ResizeBorder(int dpi);
 
 // ── 窗口/对话框公共设施 ──
 bool RegisterWindowClass(const wchar_t* name, WNDPROC proc, HINSTANCE inst, UINT style,

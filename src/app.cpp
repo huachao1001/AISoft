@@ -157,10 +157,11 @@ bool OpenArchiveWithPassword(arc::Archive& a, const std::wstring& path, HWND own
 void AppRefreshView() {
   if (g_app.archiveMode) {
     LoadArchiveItems();
-    ui::UpdateMainTitle(g_app.mainWnd);
   } else {
     LoadDirectoryItems(g_app.curDir);
   }
+  // 退出压缩包模式时也要还原标题
+  ui::UpdateMainTitle(g_app.mainWnd);
   ui::RefreshFileList();
   ui::RefreshAddressBar(g_app.mainWnd);
   ui::RefreshStatusBar(g_app.mainWnd);

@@ -34,7 +34,17 @@ RECT EditRect(HWND host) {
   ::GetClientRect(host, &rc);
   const int dpi = util::DpiForWindow(host);
   auto px = [dpi](int v) { return ::MulDiv(v, dpi, 96); };
-  return RECT{rc.left + px(kPadX), rc.top + px(5), rc.right - px(kPadX), rc.bottom - px(5)};
+  const int left = rc.left + px(kPadX);
+  const int right = rc.right - px(kPadX);
+  // 单行 EDIT 把文字贴在自身顶部，所以让它的高度等于行高再上下居中
+  HDC dc = ::GetDC(host);
+  int lineH = TextHeight(dc, fonts.ui);
+  ::ReleaseDC(host, dc);
+  if (lineH <= 0) lineH = px(16);
+  const int avail = rc.bottom - rc.top - px(8);
+  const int h = (lineH < avail) ? lineH : avail;
+  const int top = rc.top + ((rc.bottom - rc.top) - h) / 2;
+  return RECT{left, top, right, top + h};
 }
 
 void Reposition(HWND host) {

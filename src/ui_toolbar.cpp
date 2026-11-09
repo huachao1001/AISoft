@@ -1,4 +1,4 @@
-﻿// 顶部两条：40px 标题栏（系统按钮）+ 52px 工具按钮条
+﻿// 工具按钮条：52px，纯自绘
 #include "ui_toolbar.h"
 
 #include "app.h"
@@ -12,12 +12,7 @@
 namespace ui {
 namespace {
 
-constexpr const wchar_t* kTitleClass = L"AIZipTitleBar";
 constexpr const wchar_t* kToolClass = L"AIZipToolBar";
-
-// 标题栏系统按钮：36x30
-constexpr int kSysBtnW = 36;
-constexpr int kSysBtnH = 30;
 
 // 工具按钮：padding 7px 12px，图标 18，间距 6
 constexpr int kToolBtnH = 32;
@@ -60,8 +55,6 @@ constexpr int kGroupCount = 3;
 
 int g_hot = 0;
 int g_pressed = 0;
-int g_sysHot = 0;
-int g_sysPressed = 0;
 HWND g_toolbar = nullptr;
 
 // 缓存每个按钮的矩形，绘制与命中用同一份，避免两处算错
@@ -108,21 +101,6 @@ int HitTest(POINT pt) {
   return 0;
 }
 
-RECT SysButtonRect(int index, int clientW, int dpi) {
-  const int w = ::MulDiv(kSysBtnW, dpi, 96);
-  const int h = ::MulDiv(kSysBtnH, dpi, 96);
-  const int right = clientW - (2 - index) * w - ::MulDiv(8, dpi, 96);
-  return RECT{right - w, 0, right, h};
-}
-
-int SysHitTest(POINT pt, int clientW, int dpi) {
-  for (int i = 0; i < 3; ++i) {
-    RECT rc = SysButtonRect(i, clientW, dpi);
-    if (::PtInRect(&rc, pt)) return i + 1;
-  }
-  return 0;
-}
-
 // 按钮可用性：无选中时“提取选中/删除选中”置灰；压缩包模式下“添加文件”置灰
 bool BtnEnabled(int idx) {
   switch (kButtons[idx].id) {
@@ -137,151 +115,6 @@ bool BtnEnabled(int idx) {
     default:
       return true;
   }
-}
-
-// ───────────────────────── 标题栏 ─────────────────────────
-
-void PaintTitleBar(HWND hwnd) {
-  RECT rc;
-  ::GetClientRect(hwnd, &rc);
-  HDC target = ::GetDC(hwnd);
-  MemDC mem(target, rc);
-  HDC dc = mem.dc();
-  ::SetBkMode(dc, TRANSPARENT);
-  FillRect(dc, rc, kTitleBg);
-
-  const HWND main = ::GetParent(hwnd);
-  const bool zoomed = main && ::IsZoomed(main);
-  const IconId icons[3] = {IconId::kWinMin, zoomed ? IconId::kWinRestore : IconId::kWinMax,
-                           IconId::kWinClose};
-  for (int i = 0; i < 3; ++i) {
-    const int idNum = i + 1;
-    RECT br = SysButtonRect(i, rc.right, g_app.dpi);
-    const bool hot = (g_sysHot == idNum);
-    const bool pressed = (g_sysPressed == idNum);
-    const bool isClose = (icons[i] == IconId::kWinClose);
-
-    if (hot || pressed) {
-      FillRect(dc, br, isClose ? (pressed ? RGB(0xc1, 0x2e, 0x2a) : RGB(0xe5, 0x39, 0x35))
-                               : (pressed ? RGB(0xc8, 0xc8, 0xca) : RGB(0xd8, 0xd8, 0xda)));
-    }
-
-    const int sz = g_app.px(14);
-    RECT iconRc{br.left + (br.right - br.left - sz) / 2, br.top + (br.bottom - br.top - sz) / 2,
-                br.left + (br.right - br.left - sz) / 2 + sz,
-                br.top + (br.bottom - br.top - sz) / 2 + sz};
-    const bool white = isClose && (hot || pressed);
-    DrawIcon(dc, icons[i], iconRc, white ? RGB(255, 255, 255) : kInk);
-  }
-
-  mem.Commit();
-  ::ReleaseDC(hwnd, target);
-}
-
-LRESULT CALLBACK TitleProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-  switch (msg) {
-    case WM_ERASEBKGND: {
-      HDC dc = reinterpret_cast<HDC>(wParam);
-      RECT rc;
-      ::GetClientRect(hwnd, &rc);
-      FillRect(dc, rc, kTitleBg);
-      return 1;
-    }
-    case WM_PAINT: {
-      PAINTSTRUCT ps;
-      ::BeginPaint(hwnd, &ps);
-      PaintTitleBar(hwnd);
-      ::EndPaint(hwnd, &ps);
-      return 0;
-    }
-    case WM_MOUSEMOVE: {
-      POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
-      RECT cr;
-      ::GetClientRect(hwnd, &cr);
-      const int next = SysHitTest(pt, cr.right, g_app.dpi);
-      if (next != g_sysHot) {
-        g_sysHot = next;
-        ::InvalidateRect(hwnd, nullptr, FALSE);
-        TRACKMOUSEEVENT tme{sizeof(tme), TME_LEAVE, hwnd, 0};
-        ::TrackMouseEvent(&tme);
-      }
-      return 0;
-    }
-    case WM_MOUSELEAVE:
-      g_sysHot = 0;
-      ::InvalidateRect(hwnd, nullptr, FALSE);
-      return 0;
-    case WM_LBUTTONDOWN: {
-      POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
-      RECT cr;
-      ::GetClientRect(hwnd, &cr);
-      const int sys = SysHitTest(pt, cr.right, g_app.dpi);
-      if (sys) {
-        g_sysPressed = sys;
-        ::SetCapture(hwnd);
-        ::InvalidateRect(hwnd, nullptr, FALSE);
-        return 0;
-      }
-      return 0;  // 空白区交给 WM_NCHITTEST 的 HTCAPTION 拖动
-    }
-    case WM_LBUTTONUP: {
-      POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
-      RECT cr;
-      ::GetClientRect(hwnd, &cr);
-      const int sys = SysHitTest(pt, cr.right, g_app.dpi);
-      const int was = g_sysPressed;
-      g_sysPressed = 0;
-      if (was) ::ReleaseCapture();
-      if (sys && sys == was) {
-        HWND main = ::GetParent(hwnd);
-        switch (sys) {
-          case 1: ::ShowWindow(main, SW_MINIMIZE); break;
-          case 2: ::ShowWindow(main, ::IsZoomed(main) ? SW_RESTORE : SW_MAXIMIZE); break;
-          case 3: ::PostMessageW(main, WM_CLOSE, 0, 0); break;
-        }
-        ::InvalidateRect(hwnd, nullptr, FALSE);
-      }
-      return 0;
-    }
-    case WM_NCHITTEST: {
-      POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
-      ::ScreenToClient(hwnd, &pt);
-      RECT cr;
-      ::GetClientRect(hwnd, &cr);
-      if (SysHitTest(pt, cr.right, g_app.dpi) != 0) return HTCLIENT;
-      return HTCAPTION;
-    }
-    case WM_NCLBUTTONDOWN:
-      if (wParam != HTCAPTION) break;
-      ::SendMessageW(::GetParent(hwnd), WM_NCLBUTTONDOWN, HTCAPTION, lParam);
-      return 0;
-    case WM_NCLBUTTONDBLCLK: {
-      if (wParam != HTCAPTION) break;
-      HWND main = ::GetParent(hwnd);
-      ::ShowWindow(main, ::IsZoomed(main) ? SW_RESTORE : SW_MAXIMIZE);
-      return 0;
-    }
-    case WM_RBUTTONUP: {
-      POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
-      RECT cr;
-      ::GetClientRect(hwnd, &cr);
-      if (SysHitTest(pt, cr.right, g_app.dpi) != 0) break;
-      ::ClientToScreen(hwnd, &pt);
-      HMENU sys = ::GetSystemMenu(::GetParent(hwnd), FALSE);
-      if (!sys) break;
-      ::SetForegroundWindow(hwnd);
-      const UINT cmd = ::TrackPopupMenu(sys, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0,
-                                        ::GetParent(hwnd), nullptr);
-      if (cmd) ::PostMessageW(::GetParent(hwnd), WM_SYSCOMMAND, cmd, 0);
-      return 0;
-    }
-    case WM_SETCURSOR:
-      ::SetCursor(::LoadCursorW(nullptr, IDC_ARROW));
-      return TRUE;
-    default:
-      break;
-  }
-  return ::DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
 // ───────────────────────── 工具按钮条 ─────────────────────────
@@ -428,16 +261,6 @@ LRESULT CALLBACK ToolBarProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 }
 
 }  // namespace
-
-HWND CreateTitleBar(HWND parent, HINSTANCE inst, int id) {
-  static bool registered = false;
-  if (!registered) {
-    registered = RegisterWindowClass(kTitleClass, TitleProc, inst, CS_HREDRAW | CS_VREDRAW,
-                                     nullptr);
-  }
-  return ::CreateWindowExW(0, kTitleClass, L"", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, parent,
-                           reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), inst, nullptr);
-}
 
 HWND CreateToolBar(HWND parent, HINSTANCE inst, int id) {
   static bool registered = false;

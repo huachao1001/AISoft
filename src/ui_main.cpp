@@ -1,4 +1,4 @@
-﻿// 主窗口：标题栏 + 工具栏 + 面包屑 + 树 + 列表 + 状态栏
+﻿// 主窗口：工具栏 + 面包屑 + 树 + 列表 + 状态栏
 #include "ui_main.h"
 
 #include "app.h"
@@ -14,7 +14,6 @@
 #include "util.h"
 
 #include <commctrl.h>
-#include <dwmapi.h>
 #include <shellapi.h>
 #include <windowsx.h>
 
@@ -44,30 +43,9 @@ LRESULT CALLBACK DropForwardProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
   return ::DefSubclassProc(hwnd, msg, wParam, lParam);
 }
 
-// 贴边子窗口让出命中，否则主窗口收不到缩放
-LRESULT CALLBACK EdgePassThroughProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
-                                     UINT_PTR id, DWORD_PTR) {
-  if (msg == WM_NCHITTEST) {
-    HWND parent = ::GetParent(hwnd);
-    if (parent) {
-      POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
-      RECT wr;
-      ::GetWindowRect(parent, &wr);
-      const int band = ResizeBorder(g_app.dpi);
-      if (pt.x < wr.left + band || pt.x >= wr.right - band || pt.y < wr.top + band ||
-          pt.y >= wr.bottom - band) {
-        return HTTRANSPARENT;
-      }
-    }
-  }
-  if (msg == WM_NCDESTROY) ::RemoveWindowSubclass(hwnd, EdgePassThroughProc, id);
-  return ::DefSubclassProc(hwnd, msg, wParam, lParam);
-}
-
 void CreateChildren(HWND hwnd) {
   HINSTANCE inst = reinterpret_cast<HINSTANCE>(::GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
 
-  g_parts.title = CreateTitleBar(hwnd, inst, kTitleId);
   g_parts.toolbar = CreateToolBar(hwnd, inst, kToolbarId);
   g_parts.crumb = CreateCrumbBar(hwnd, inst, kCrumbId);
   g_parts.tree = CreateSideTree(hwnd, inst, kTreeId);
@@ -79,29 +57,22 @@ void CreateChildren(HWND hwnd) {
 
   // 顶部区域也要能接文件拖放
   int subId = 1;
-  for (HWND c : {g_parts.title, g_parts.toolbar, g_parts.crumb, CrumbSearchEdit(), g_parts.tree,
-                 g_parts.status}) {
+  for (HWND c : {g_parts.toolbar, g_parts.crumb, CrumbSearchEdit(), g_parts.tree, g_parts.status}) {
     EnableDrop(c);
     ::SetWindowSubclass(c, DropForwardProc, static_cast<UINT_PTR>(subId++), 0);
-  }
-  for (HWND c : {g_parts.title, g_parts.toolbar, g_parts.crumb, CrumbSearchEdit(), g_parts.tree,
-                 g_parts.list, g_parts.status}) {
-    ::SetWindowSubclass(c, EdgePassThroughProc, static_cast<UINT_PTR>(subId++), 0);
   }
 }
 
 void OnSize(HWND hwnd, int cx, int cy) {
   if (!g_parts.toolbar) return;
-  const int titleH = g_app.px(kTitleH);
   const int toolH = g_app.px(kToolH);
   const int crumbH = g_app.px(kCrumbH);
   const int statusH = g_app.px(kStatusH);
 
-  ::MoveWindow(g_parts.title, 0, 0, cx, titleH, TRUE);
-  ::MoveWindow(g_parts.toolbar, 0, titleH, cx, toolH, TRUE);
-  ::MoveWindow(g_parts.crumb, 0, titleH + toolH, cx, crumbH, TRUE);
+  ::MoveWindow(g_parts.toolbar, 0, 0, cx, toolH, TRUE);
+  ::MoveWindow(g_parts.crumb, 0, toolH, cx, crumbH, TRUE);
 
-  const int contentY = titleH + toolH + crumbH;
+  const int contentY = toolH + crumbH;
   const int statusTop = cy - statusH;
   const int contentH = statusTop - contentY;
   if (contentH > 0) {
@@ -140,42 +111,6 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_SIZE:
       OnSize(hwnd, LOWORD(lParam), HIWORD(lParam));
       return 0;
-
-    case WM_NCCALCSIZE: {
-      if (!wParam) break;
-      auto* p = reinterpret_cast<NCCALCSIZE_PARAMS*>(lParam);
-      if (::IsZoomed(hwnd)) {
-        HMONITOR mon = ::MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-        MONITORINFO mi{sizeof(mi)};
-        if (mon && ::GetMonitorInfoW(mon, &mi)) {
-          p->rgrc[0] = mi.rcWork;
-          return 0;
-        }
-      }
-      return 0;
-    }
-
-    case WM_NCHITTEST: {
-      if (::IsZoomed(hwnd)) break;
-      POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
-      RECT wr;
-      ::GetWindowRect(hwnd, &wr);
-      const int band = ResizeBorder(g_app.dpi);
-      const bool left = pt.x < wr.left + band;
-      const bool right = pt.x >= wr.right - band;
-      const bool top = pt.y < wr.top + band;
-      const bool bottom = pt.y >= wr.bottom - band;
-
-      if (top && left) return HTTOPLEFT;
-      if (top && right) return HTTOPRIGHT;
-      if (bottom && left) return HTBOTTOMLEFT;
-      if (bottom && right) return HTBOTTOMRIGHT;
-      if (top) return HTTOP;
-      if (bottom) return HTBOTTOM;
-      if (left) return HTLEFT;
-      if (right) return HTRIGHT;
-      break;
-    }
 
     case WM_GETMINMAXINFO: {
       auto* mmi = reinterpret_cast<MINMAXINFO*>(lParam);
@@ -318,14 +253,6 @@ HWND CreateMainWindow(HINSTANCE inst) {
                                 WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, 0, 0, w, h, nullptr,
                                 nullptr, inst, nullptr);
   if (!hwnd) return nullptr;
-  ::SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
-                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-  // 自绘标题栏已经铺满客户区，不能再扩展 DWM 边框（会在顶部留一条深色描边），
-  // 圆角交给 Win11 的窗口圆角属性处理，边框线直接隐藏。
-  const int corner = 2;  // DWMWCP_ROUND
-  ::DwmSetWindowAttribute(hwnd, 33 /*DWMWA_WINDOW_CORNER_PREFERENCE*/, &corner, sizeof(corner));
-  const COLORREF none = 0xFFFFFFFE;  // DWMWA_COLOR_NONE
-  ::DwmSetWindowAttribute(hwnd, 34 /*DWMWA_BORDER_COLOR*/, &none, sizeof(none));
   CenterOnWorkArea(hwnd);
   return hwnd;
 }

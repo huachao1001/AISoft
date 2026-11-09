@@ -175,6 +175,14 @@ int TextWidth(HDC dc, const std::wstring& text, HFONT font) {
   return sz.cx;
 }
 
+int TextHeight(HDC dc, HFONT font) {
+  HFONT old = static_cast<HFONT>(::SelectObject(dc, font ? font : fonts.ui));
+  TEXTMETRICW tm{};
+  ::GetTextMetricsW(dc, &tm);
+  ::SelectObject(dc, old);
+  return tm.tmHeight;
+}
+
 // ───────────────────────── 线描图标 ─────────────────────────
 // 全部按 24x24 网格描述，绘制时按目标尺寸等比缩放。
 // 与 ui.html 的 SVG 一致：1.8 单位线宽、圆头圆角、只描边不填充。
@@ -351,24 +359,6 @@ void DrawStrokeIcon(HDC dc, IconId id, const RECT& rc, COLORREF color, bool enab
       g.Line(16.6, 16.6, 21, 21);
       break;
     }
-    case IconId::kWinMin: {
-      g.Line(6, 12, 18, 12);
-      break;
-    }
-    case IconId::kWinMax: {
-      g.PolyD({{5, 5}, {19, 5}, {19, 19}, {5, 19}}, true);
-      break;
-    }
-    case IconId::kWinRestore: {
-      g.PolyD({{8, 4}, {20, 4}, {20, 16}, {16, 16}}, false);
-      g.PolyD({{4, 8}, {16, 8}, {16, 20}, {4, 20}}, true);
-      break;
-    }
-    case IconId::kWinClose: {
-      g.Line(6, 6, 18, 18);
-      g.Line(18, 6, 6, 18);
-      break;
-    }
   }
 
   ::SelectObject(dc, g.oldBrush);
@@ -408,11 +398,6 @@ void DrawIcon(HDC dc, IconId id, const RECT& rc, COLORREF color, bool enabled) {
   ::SelectObject(buf, oldBmp);
   ::DeleteObject(bmp);
   ::DeleteDC(buf);
-}
-
-int ResizeBorder(int dpi) {
-  constexpr int kBase = 6;
-  return ::MulDiv(kBase, dpi, 96);
 }
 
 // ───────────────────────── Shell 图标缓存 ─────────────────────────

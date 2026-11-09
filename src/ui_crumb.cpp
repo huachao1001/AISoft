@@ -41,6 +41,7 @@ HWND g_edit = nullptr;  // 编辑态输入框，懒创建
 bool g_editing = false;
 int g_hot = -1;
 bool g_backHot = false;
+bool g_pressed = false;
 std::vector<Node> g_nodes;
 RECT g_backRect{};
 // 编辑框外框（含 1px 边框），自绘时用
@@ -162,11 +163,15 @@ void PaintBar(HWND hwnd) {
   ::SetBkMode(dc, TRANSPARENT);
   FillRect(dc, rc, kPaneBg);
 
-  // 编辑态：给内嵌 EDIT 画圆角外框，避免系统方角边框
+  // 编辑态：只画编辑框，面包屑与后退按钮都让位
   if (g_editing && !::IsRectEmpty(&g_editFrame)) {
     const int radius = g_app.px(7);
     FillRoundRect(dc, g_editFrame, kInputBg, radius);
     StrokeRoundRect(dc, g_editFrame, kInputFocusBorder, radius, 1);
+    DrawHLine(dc, 0, rc.right, rc.bottom - 1, kLine);
+    mem.Commit();
+    ::ReleaseDC(hwnd, target);
+    return;
   }
 
   // 后退按钮
@@ -303,12 +308,20 @@ void RepositionEdit() {
   const int left = g_app.px(16);
   const int width = std::max(g_app.px(120), right - left);
   g_editFrame = RECT{left, y, left + width, y + h};
-  ::MoveWindow(g_edit, left + g_app.px(1), y + g_app.px(1), width - g_app.px(2), h - g_app.px(2),
-               TRUE);
-  if (width > g_app.px(2) && h > g_app.px(2)) {
-    HRGN rgn = ::CreateRoundRectRgn(0, 0, width - g_app.px(1), h - g_app.px(1), g_app.px(12),
-                                    g_app.px(12));
-    ::SetWindowRgn(g_edit, rgn, TRUE);
+
+  // 单行 EDIT 把文字贴顶，所以让它只有一行高再居中；
+  // 内缩 2px 留白，避免选中蓝底压住自绘圆角描边。
+  HDC dc = ::GetDC(g_bar);
+  int lineH = TextHeight(dc, fonts.ui);
+  ::ReleaseDC(g_bar, dc);
+  if (lineH <= 0) lineH = g_app.px(16);
+  const int avail = h - g_app.px(8);
+  const int eh = (lineH < avail) ? lineH : avail;
+  const int insetX = g_app.px(10);
+  const int ew = width - insetX * 2;
+  ::MoveWindow(g_edit, left + insetX, y + (h - eh) / 2, ew, eh, TRUE);
+  if (ew > g_app.px(2) && eh > g_app.px(2)) {
+    ::SetWindowRgn(g_edit, ::CreateRoundRectRgn(0, 0, ew, eh, 0, 0), TRUE);
   }
 }
 
@@ -440,7 +453,17 @@ LRESULT CALLBACK CrumbProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
       ::InvalidateRect(hwnd, nullptr, FALSE);
       return 0;
 
+    case WM_LBUTTONDOWN: {
+      // 只有按下发生在面包屑内才算有效点击，丢掉切窗/切桌面时残留的抬起消息
+      RECT cr;
+      ::GetClientRect(hwnd, &cr);
+      g_pressed = ::PtInRect(&cr, POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)}) != 0;
+      return 0;
+    }
+
     case WM_LBUTTONUP: {
+      if (!g_pressed) return 0;
+      g_pressed = false;
       POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
       if (::PtInRect(&g_backRect, pt)) {
         if (AppCanBack()) AppGoBack();

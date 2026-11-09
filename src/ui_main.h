@@ -1,4 +1,4 @@
-﻿// 主窗口：标题栏 + 工具栏 + 面包屑 + 树 + 列表 + 状态栏
+﻿// 主窗口：工具栏 + 面包屑 + 树 + 列表 + 状态栏
 #pragma once
 
 #include <windows.h>
@@ -21,7 +21,6 @@ bool HandleMainKeyMessage(MSG* msg);
 // 编辑框里的按键：消息循环需要跳过 IsDialogMessage，直接派发
 bool IsEditKeystroke(const MSG* msg);
 
-constexpr int kTitleId = 1001;
 constexpr int kToolbarId = 1002;
 constexpr int kListId = 1003;
 constexpr int kTreeId = 1004;
@@ -31,7 +30,6 @@ constexpr int kSearchId = 1007;
 constexpr int kCrumbId = 1008;
 
 struct MainParts {
-  HWND title = nullptr;
   HWND toolbar = nullptr;
   HWND crumb = nullptr;
   HWND tree = nullptr;
