@@ -53,7 +53,8 @@ std::wstring ItemText(int column, const Item& it) {
     case kColType:
       return it.typeName;
     case kColSize:
-      return it.isDir ? L"—" : util::FormatSize(it.size);
+      // 文件夹不统计大小，留空比画横线干净
+      return it.isDir ? L"" : util::FormatSize(it.size);
     case kColModified:
       return (it.mtime.dwLowDateTime || it.mtime.dwHighDateTime) ? util::FormatTime(it.mtime) : L"";
     default:
