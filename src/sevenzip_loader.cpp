@@ -57,7 +57,7 @@ const wchar_t* FormatNameFromExtension(const std::wstring& extIn) {
 }
 
 // ── 可创建格式表 ──
-// 顺序对齐 HaoZip：ZIP / 7Z 单独单选，其余按下表顺序进下拉。
+// 格式顺序：ZIP / 7Z 单独单选，其余按下表顺序进下拉。
 // 7-Zip 的 gzip/bzip2/xz handler 只接受单文件，多文件必须走 tar 包裹，
 // 这就是 TAR.GZ / TAR.BZ2 / TAR.XZ 三个组合格式存在的原因。
 namespace {

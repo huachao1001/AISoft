@@ -1,4 +1,4 @@
-// 解压对话框：对齐 HaoZip 的“解压”窗口
+// 解压对话框
 #include "dlg_extract.h"
 
 #include "app.h"

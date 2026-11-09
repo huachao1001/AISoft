@@ -1,4 +1,4 @@
-// 压缩对话框：对齐 HaoZip 的“压缩文件”窗口
+// 压缩对话框
 #include "dlg_compress.h"
 
 #include "app.h"
@@ -109,7 +109,7 @@ void CreateControls(HWND hwnd) {
   make(L"BUTTON", L"浏览(B)...", BS_PUSHBUTTON | WS_TABSTOP, 348, 29, 88, 24, kIdBrowse);
 
   make(L"STATIC", L"压缩文件格式", SS_LEFT, 12, 62, 160, 16, 0);
-  // 与 HaoZip 一致：○ ZIP ○ 7Z ○ [格式▾]，第三个单选没有文字，下拉框充当它的标签
+  // 格式选择：○ ZIP ○ 7Z ○ [格式▾]，第三个单选没有文字，下拉框充当它的标签
   make(L"BUTTON", L"ZIP", BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP, 12, 82, 46, 18, kIdFormatZip);
   make(L"BUTTON", L"7Z", BS_AUTORADIOBUTTON | WS_TABSTOP, 62, 82, 40, 18, kIdFormat7z);
   make(L"BUTTON", L"", BS_AUTORADIOBUTTON | WS_TABSTOP, 104, 82, 16, 18, kIdFormatOther);

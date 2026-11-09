@@ -35,7 +35,7 @@ using OverwriteFn = std::function<int(const std::wstring& path)>;
 // 口令询问
 using PasswordFn = std::function<bool(std::wstring& out)>;
 
-// 解压选项，对应 HaoZip 的“更新方式 / 覆盖方式”
+// 解压选项：更新方式 / 覆盖方式
 struct ExtractOptions {
   enum class Overwrite { kAsk, kOverwrite, kSkip, kRename };
   enum class Update { kExtractReplace, kExtractUpdate, kNewerOnly };

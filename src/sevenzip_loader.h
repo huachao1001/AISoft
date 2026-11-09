@@ -97,8 +97,8 @@ GUID FormatFromExtension(const std::wstring& ext);
 const wchar_t* FormatNameFromExtension(const std::wstring& ext);
 
 // ── 可创建的压缩格式 ──
-// 与 HaoZip 压缩对话框的格式列表对齐，顺序也保持一致（ZIP/7Z 单列单选，
-// 其余进下拉）。每种格式声明扩展名、显示名、是否单文件容器、支持的档位。
+// 格式列表顺序：ZIP/7Z 单列单选，其余进下拉。
+// 每种格式声明扩展名、显示名、是否单文件容器、支持的档位。
 struct FormatInfo {
   const wchar_t* name;      // 下拉显示名，如 L"TAR.GZ"
   const wchar_t* ext;       // 主扩展名，含点
