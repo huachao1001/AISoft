@@ -1,4 +1,4 @@
-﻿// 文件列表：虚拟 ListView，列与行样式对齐 ui.html
+﻿// 文件列表：虚拟 ListView
 #include "ui_list.h"
 
 #include "app.h"
@@ -40,7 +40,7 @@ struct ColDef {
   bool stretch;  // 名称列吃掉剩余宽度
 };
 
-// 与 ui.html 一致：名称 / 类型 / 大小 / 修改时间
+// 名称 / 类型 / 大小 / 修改时间
 const ColDef kCols[kColCount] = {
     {L"名称", 320, LVCFMT_LEFT, true},
     {L"类型", 110, LVCFMT_LEFT, false},
@@ -134,7 +134,7 @@ int ClientRight() {
   return rc.right;
 }
 
-// 行首图标：文件夹用线描图标（与 ui.html 一致），文件用系统关联图标
+// 行首图标：文件夹用系统图标，文件用系统关联图标
 void DrawFileGlyph(HDC dc, const Item& it, const RECT& rc) {
   if (it.isDir) {
     DrawIcon(dc, IconId::kFolder, rc, RGB(0x9a, 0xa3, 0xaf));
@@ -310,31 +310,15 @@ void PaintHeader(HWND header) {
     ::SelectObject(dc, old);
 
     if (isSort) {
+      // 排序指示用系统 chevron，与树、面包屑保持同一套图形语言
+      const int cs = g_app.px(11);
       const int cx = cell.right - g_app.px(18);
       const int cy = (cell.top + cell.bottom) / 2;
-      const int half = g_app.px(4);
-      POINT pts[3];
-      if (g_sortAsc) {
-        pts[0] = POINT{cx - half, cy + half / 2};
-        pts[1] = POINT{cx + half, cy + half / 2};
-        pts[2] = POINT{cx, cy - half / 2};
-      } else {
-        pts[0] = POINT{cx - half, cy - half / 2};
-        pts[1] = POINT{cx + half, cy - half / 2};
-        pts[2] = POINT{cx, cy + half / 2};
-      }
-      HBRUSH b = ::CreateSolidBrush(kTextMuted);
-      HPEN p = ::CreatePen(PS_SOLID, 1, kTextMuted);
-      HBRUSH ob = static_cast<HBRUSH>(::SelectObject(dc, b));
-      HPEN op = static_cast<HPEN>(::SelectObject(dc, p));
-      ::Polygon(dc, pts, 3);
-      ::SelectObject(dc, ob);
-      ::SelectObject(dc, op);
-      ::DeleteObject(b);
-      ::DeleteObject(p);
+      RECT cr{cx - cs / 2, cy - cs / 2, cx + cs / 2, cy + cs / 2};
+      DrawIcon(dc, g_sortAsc ? IconId::kChevronUp : IconId::kChevronDown, cr, kTextMuted);
     }
 
-    // ui.html 的表头没有列分隔线，这里只保留底部一条细线
+    // 表头没有列分隔线，这里只保留底部一条细线
   }
 
   DrawHLine(dc, 0, rc.right, rc.bottom - 1, kLineHead);
@@ -508,7 +492,7 @@ HWND CreateFileList(HWND parent, HINSTANCE inst, int id) {
   if (g_sortColumn >= kColCount) g_sortColumn = kColName;
 
   ApplyColumns();
-  // 行高由图像列表单元格决定，撑到与 ui.html 一致的 44px
+  // 行高由图像列表单元格决定，撑到 44px
   ::SendMessageW(list, LVM_SETICONSPACING, 0,
                  MAKELPARAM(g_app.px(kRowH), g_app.px(kRowH)));
   ::SendMessageW(list, LVM_SETIMAGELIST, LVSIL_SMALL,

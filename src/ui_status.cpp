@@ -1,4 +1,4 @@
-// 底部状态栏：自绘，与 ui.html 的 36px 条一致
+// 底部状态栏：自绘，36px 条
 #include "ui_status.h"
 
 #include "app.h"

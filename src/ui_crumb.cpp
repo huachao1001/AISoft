@@ -25,6 +25,7 @@ constexpr int kNodeGap = 2;
 constexpr int kBackBtnW = 30;
 constexpr int kBackBtnH = 30;
 constexpr int kIconSm = 16;
+constexpr int kIconGap = 6;  // 图标与文字的间距，宽度计算与绘制必须一致
 constexpr int kSearchW = 270;
 
 struct Node {
@@ -139,7 +140,7 @@ void Layout(int cx) {
   for (size_t i = 0; i < g_nodes.size(); ++i) {
     Node& n = g_nodes[i];
     int w = TextWidth(dc, n.label, fonts.ui) + g_app.px(kNodePadX) * 2;
-    if (n.home) w += g_app.px(kIconSm) + g_app.px(4);
+    if (n.home) w += g_app.px(kIconSm) + g_app.px(kIconGap);
     const int h = g_app.px(kNodePadY) * 2 + g_app.px(20);
     n.rc = RECT{x, (barH - h) / 2, x + w, (barH - h) / 2 + h};
     // 放不下的节点标记成空矩形，既不绘制也不可点
@@ -205,7 +206,7 @@ void PaintBar(HWND hwnd) {
       RECT ir{textLeft, n.rc.top + (n.rc.bottom - n.rc.top - is) / 2, textLeft + is,
               n.rc.top + (n.rc.bottom - n.rc.top - is) / 2 + is};
       DrawIcon(dc, IconId::kHome, ir, n.current ? kInk : kLink);
-      textLeft = ir.right + g_app.px(4);
+      textLeft = ir.right + g_app.px(kIconGap);
     }
     RECT tr{textLeft, n.rc.top, n.rc.right - g_app.px(kNodePadX), n.rc.bottom};
     DrawTextLeft(dc, tr, n.label, n.current ? RGB(0x11, 0x11, 0x11) : kLink, fonts.ui);

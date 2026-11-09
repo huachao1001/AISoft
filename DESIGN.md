@@ -24,6 +24,7 @@ AIZip 有两种用法：双击 exe 打开文件浏览窗口，或从 Windows 资
 
 保留：
 - 主窗口与文件浏览：自绘工具栏、地址栏、文件列表、状态栏；
+  图标取自系统图标字体 Segoe Fluent Icons（缺失回退 MDL2）；
   双击压缩包进入包内浏览，地址栏可编辑，搜索框按名称过滤
 - 压缩对话框：格式 ZIP/7Z/TAR/GZ 等 10 种、压缩方式（存储~极限）、更新方式、分卷、
   密码、压缩后删除/测试、固实、逐项单独压缩
@@ -101,7 +102,7 @@ AIZip/
 │  ├─ ui_status.h/.cpp    底部状态栏（自绘）
 │  ├─ ui_search.h/.cpp    圆角搜索框（自绘边框 + 内嵌 EDIT）
 │  ├─ ui_theme.h          配色与尺寸常量
-│  ├─ ui.h/.cpp           自绘工具、图标、Windows 资源管理器图标缓存
+│  ├─ ui.h/.cpp           自绘工具、系统图标字体渲染、资源管理器图标缓存
 │  ├─ dlg_compress.h/.cpp 压缩对话框
 │  ├─ dlg_extract.h/.cpp  解压对话框
 │  ├─ dlg_input.h/.cpp    密码/文本输入框

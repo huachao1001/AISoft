@@ -1,4 +1,4 @@
-// 界面配色与尺寸：与 ui.html 对齐
+// 界面配色与尺寸
 #pragma once
 
 #include <windows.h>

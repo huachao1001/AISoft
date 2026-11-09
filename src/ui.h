@@ -56,7 +56,7 @@ int TextWidth(HDC dc, const std::wstring& text, HFONT font);
 // 字体行高，用于把单行 EDIT 垂直居中
 int TextHeight(HDC dc, HFONT font);
 
-// 线描图标（对齐 ui.html 的 stroke 风格，无外部图片）
+// 系统图标：取自 Segoe Fluent Icons（Win11），缺失时回退 Segoe MDL2 Assets
 enum class IconId {
   kRefresh,
   kExtract,     // 提取选中
@@ -65,6 +65,8 @@ enum class IconId {
   kTrash,       // 删除
   kArrowBack,
   kChevron,     // 面包屑分隔
+  kChevronDown, // 展开 / 降序
+  kChevronUp,   // 折叠 / 升序
   kHome,
   kFolder,
   kFile,

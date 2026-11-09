@@ -189,187 +189,115 @@ int TextHeight(HDC dc, HFONT font) {
   return tm.tmHeight;
 }
 
-// ───────────────────────── 线描图标 ─────────────────────────
-// 全部按 24x24 网格描述，绘制时按目标尺寸等比缩放。
-// 与 ui.html 的 SVG 一致：1.8 单位线宽、圆头圆角、只描边不填充。
+// ───────────────────────── 系统图标 ─────────────────────────
+// 图标取自系统图标字体：优先 Segoe Fluent Icons（Win11），
+// 缺失时回退 Segoe MDL2 Assets（Win10）。两者码点完全兼容。
 namespace {
 
-constexpr double kGrid = 24.0;
-constexpr int kIconSs = 4;  // 超采样倍数，抵消 GDI 无抗锯齿
-
-struct GridPen {
-  HDC dc;
-  double ox, oy, u;
-  HPEN pen;
-  HGDIOBJ oldPen;
-  HGDIOBJ oldBrush;
-
-  POINT P(double x, double y) const {
-    return POINT{static_cast<LONG>(std::lround(ox + x * u)),
-                 static_cast<LONG>(std::lround(oy + y * u))};
-  }
-  void Line(double x1, double y1, double x2, double y2) const {
-    POINT pts[2] = {P(x1, y1), P(x2, y2)};
-    ::Polyline(dc, pts, 2);
-  }
-  void Poly(const POINT* pts, int n, bool closed) const {
-    ::Polyline(dc, pts, n);
-    if (closed) {
-      POINT tail[2] = {pts[n - 1], pts[0]};
-      ::Polyline(dc, tail, 2);
+// 运行时选定可用的图标字体；都没有时返回空串，调用方退化为不画
+const wchar_t* IconFace() {
+  static const std::wstring face = [] {
+    for (const wchar_t* name : {L"Segoe Fluent Icons", L"Segoe MDL2 Assets"}) {
+      HDC dc = ::GetDC(nullptr);
+      LOGFONTW lf{};
+      lf.lfHeight = -16;
+      wcscpy_s(lf.lfFaceName, name);
+      HFONT f = ::CreateFontIndirectW(&lf);
+      std::wstring actual;
+      if (f) {
+        HGDIOBJ old = ::SelectObject(dc, f);
+        wchar_t buf[64] = {};
+        ::GetTextFaceW(dc, 64, buf);
+        actual = buf;
+        ::SelectObject(dc, old);
+        ::DeleteObject(f);
+      }
+      ::ReleaseDC(nullptr, dc);
+      if (::CompareStringOrdinal(actual.c_str(), -1, name, -1, TRUE) == CSTR_EQUAL) return actual;
     }
+    return std::wstring();
+  }();
+  return face.c_str();
+}
+
+// 按像素高度缓存图标字体；不可用时返回 nullptr
+HFONT IconFont(int pixelHeight) {
+  static std::map<int, HFONT> cache;
+  auto it = cache.find(pixelHeight);
+  if (it != cache.end()) return it->second;
+
+  const wchar_t* face = IconFace();
+  HFONT f = nullptr;
+  if (*face) {
+    LOGFONTW lf{};
+    lf.lfHeight = -pixelHeight;
+    lf.lfWeight = FW_NORMAL;
+    lf.lfCharSet = DEFAULT_CHARSET;
+    // 灰度抗锯齿：彩色亚像素会让图标边缘出现彩边
+    lf.lfQuality = ANTIALIASED_QUALITY;
+    wcscpy_s(lf.lfFaceName, face);
+    f = ::CreateFontIndirectW(&lf);
   }
-  void PolyD(std::initializer_list<std::pair<double, double>> list, bool closed = false) const {
-    std::vector<POINT> pts;
-    pts.reserve(list.size());
-    for (const auto& p : list) pts.push_back(P(p.first, p.second));
-    Poly(pts.data(), static_cast<int>(pts.size()), closed);
+  cache[pixelHeight] = f;
+  return f;
+}
+
+// 图标字形码点，取自 MDL2 字表
+constexpr wchar_t GlyphFor(IconId id) {
+  switch (id) {
+    case IconId::kRefresh: return 0xE72C;      // Refresh
+    case IconId::kExtract: return 0xE8DE;      // MoveToFolder
+    case IconId::kExtractAll: return 0xE896;   // Download
+    case IconId::kAdd: return 0xE710;          // Add
+    case IconId::kTrash: return 0xE74D;        // Delete
+    case IconId::kArrowBack: return 0xE72B;    // Back
+    case IconId::kChevron: return 0xE76C;      // ChevronRight
+    case IconId::kChevronDown: return 0xE70D;  // ChevronDown
+    case IconId::kChevronUp: return 0xE70E;    // ChevronUp
+    case IconId::kHome: return 0xE80F;         // Home
+    case IconId::kFolder: return 0xE8B7;       // Folder
+    case IconId::kFile: return 0xE8A5;         // Document
+    case IconId::kSearch: return 0xE721;       // Search
   }
-  // 圆弧近似：角度以屏幕坐标（y 向下）计
-  void Arc(double cx, double cy, double r, double a0, double a1) const {
-    constexpr int kSteps = 28;
-    std::vector<POINT> pts;
-    pts.reserve(kSteps + 1);
-    for (int i = 0; i <= kSteps; ++i) {
-      const double deg = a0 + (a1 - a0) * i / kSteps;
-      const double rad = deg * 3.14159265358979 / 180.0;
-      pts.push_back(P(cx + r * std::cos(rad), cy + r * std::sin(rad)));
-    }
-    Poly(pts.data(), static_cast<int>(pts.size()), false);
-  }
+  return 0;
+}
+
+// 字形墨迹框：宽高与原点偏移都按字号归一，便于任意尺寸复用
+struct InkBox {
+  double rw = 1.0;  // 墨迹宽 / 字号
+  double rh = 1.0;  // 墨迹高 / 字号
+  double ox = 0.0;  // 墨迹左边界相对字符原点
+  double oy = 0.0;  // 墨迹上边界相对基线
 };
 
-void DrawStrokeIcon(HDC dc, IconId id, const RECT& rc, COLORREF color, bool enabled) {
-  const int w = rc.right - rc.left;
-  const int h = rc.bottom - rc.top;
-  if (w <= 0 || h <= 0) return;
+// 以 64px 参考字号取字形墨迹；字体没有该字形时退回整块 em 框
+InkBox MeasureInk(wchar_t glyph) {
+  static std::map<wchar_t, InkBox> cache;
+  auto it = cache.find(glyph);
+  if (it != cache.end()) return it->second;
 
-  COLORREF ink = color;
-  if (!enabled) {
-    const int y = (GetRValue(color) * 30 + GetGValue(color) * 59 + GetBValue(color) * 11) / 100;
-    const int m = 255 - (255 - y) * 45 / 100;
-    ink = RGB(m, m, m);
+  constexpr int kRef = 64;
+  InkBox box;
+  HDC dc = ::CreateCompatibleDC(nullptr);
+  HFONT font = IconFont(kRef);
+  if (dc && font) {
+    HGDIOBJ old = ::SelectObject(dc, font);
+    MAT2 mat{};
+    mat.eM11.value = 1;
+    mat.eM22.value = 1;
+    GLYPHMETRICS gm{};
+    if (::GetGlyphOutlineW(dc, glyph, GGO_BITMAP, &gm, 0, nullptr, &mat) != GDI_ERROR &&
+        gm.gmBlackBoxX && gm.gmBlackBoxY) {
+      box.rw = static_cast<double>(gm.gmBlackBoxX) / kRef;
+      box.rh = static_cast<double>(gm.gmBlackBoxY) / kRef;
+      box.ox = static_cast<double>(gm.gmptGlyphOrigin.x) / kRef;
+      box.oy = static_cast<double>(gm.gmptGlyphOrigin.y) / kRef;
+    }
+    ::SelectObject(dc, old);
   }
-
-  const int side = (w < h ? w : h);
-  GridPen g;
-  g.dc = dc;
-  g.u = static_cast<double>(side) / kGrid;
-  g.ox = rc.left + (w - side) / 2.0;
-  g.oy = rc.top + (h - side) / 2.0;
-  const int width = side >= 44 ? 3 : (side >= 26 ? 2 : 1);
-  LOGBRUSH lb{BS_SOLID, ink, 0};
-  g.pen = ::ExtCreatePen(PS_GEOMETRIC | PS_SOLID | PS_JOIN_ROUND | PS_ENDCAP_ROUND, width, &lb, 0,
-                         nullptr);
-  g.oldPen = ::SelectObject(dc, g.pen);
-  g.oldBrush = ::SelectObject(dc, ::GetStockObject(NULL_BRUSH));
-
-  switch (id) {
-    case IconId::kRefresh: {
-      // 对应 HTML 的双向刷新：两段圆弧 + 两个转角箭头（屏幕坐标 y 向下）
-      g.Arc(12, 12, 9, 199.5, 315);   // 上弧：左中 → 右上
-      g.Arc(12, 12, 9, 135, 19.5);    // 下弧：左下 → 右中
-      g.PolyD({{23, 4}, {23, 10}, {17, 10}});   // 右上箭头
-      g.PolyD({{1, 20}, {1, 14}, {7, 14}});     // 左下箭头
-      break;
-    }
-    case IconId::kExtract: {
-      // 托盘
-      g.PolyD({{21, 15}, {21, 19}}, false);
-      g.Arc(19, 19, 2, 0, 90);
-      g.Line(17, 21, 7, 21);
-      g.Arc(5, 19, 2, 90, 180);
-      g.Line(3, 19, 3, 15);
-      // 箭头
-      g.Line(12, 3, 12, 15);
-      g.PolyD({{7, 10}, {12, 15}, {17, 10}});
-      break;
-    }
-    case IconId::kExtractAll: {
-      g.PolyD({{21, 15}, {21, 19}}, false);
-      g.Arc(19, 19, 2, 0, 90);
-      g.Line(17, 21, 7, 21);
-      g.Arc(5, 19, 2, 90, 180);
-      g.Line(3, 19, 3, 15);
-      g.Line(12, 2, 12, 14);
-      g.PolyD({{8, 10}, {12, 14}, {16, 10}});
-      break;
-    }
-    case IconId::kAdd: {
-      g.PolyD({{21, 15}, {21, 19}}, false);
-      g.Arc(19, 19, 2, 0, 90);
-      g.Line(17, 21, 7, 21);
-      g.Arc(5, 19, 2, 90, 180);
-      g.Line(3, 19, 3, 15);
-      g.Line(12, 5, 12, 15);
-      g.Line(7, 10, 17, 10);
-      break;
-    }
-    case IconId::kTrash: {
-      g.Line(3, 6, 21, 6);
-      g.PolyD({{19, 6}, {19, 20}}, false);
-      g.Arc(17, 20, 2, 0, 90);
-      g.Line(17, 22, 7, 22);
-      g.Arc(5, 20, 2, 90, 180);
-      g.Line(5, 20, 5, 6);
-      g.PolyD({{9, 6}, {9, 4}}, false);
-      g.Arc(11, 4, 2, 180, 270);
-      g.Line(13, 2, 15, 2);
-      g.Arc(15, 4, 2, 270, 360);
-      g.Line(17, 4, 17, 6);
-      break;
-    }
-    case IconId::kArrowBack: {
-      g.Line(19, 12, 5, 12);
-      g.PolyD({{10, 7}, {5, 12}, {10, 17}});
-      break;
-    }
-    case IconId::kChevron: {
-      g.PolyD({{9, 18}, {15, 12}, {9, 6}});
-      break;
-    }
-    case IconId::kHome: {
-      g.PolyD({{3, 9}, {12, 2}, {21, 9}, {21, 20}}, false);
-      g.Arc(19, 20, 2, 0, 90);
-      g.Line(17, 22, 7, 22);
-      g.Arc(5, 20, 2, 90, 180);
-      g.Line(9, 22, 9, 12);
-      g.Line(9, 12, 15, 12);
-      g.Line(15, 12, 15, 22);
-      break;
-    }
-    case IconId::kFolder: {
-      // 文件夹轮廓：左竖边 → 上边台阶 → 右上圆角 → 右竖边 → 底边
-      g.Line(2, 20, 2, 5);
-      g.Line(2, 5, 9, 5);
-      g.Line(9, 5, 11, 8);
-      g.Line(11, 8, 20, 8);
-      g.Arc(20, 10, 2, 270, 360);
-      g.Line(22, 10, 22, 20);
-      g.Line(22, 20, 2, 20);
-      break;
-    }
-    case IconId::kFile: {
-      g.PolyD({{14, 2}, {6, 2}}, false);
-      g.Arc(6, 4, 2, 180, 270);
-      g.Line(4, 4, 4, 20);
-      g.Arc(6, 20, 2, 90, 180);
-      g.Line(6, 22, 18, 22);
-      g.Arc(18, 20, 2, 0, 90);
-      g.Line(20, 20, 20, 8);
-      g.PolyD({{20, 8}, {14, 2}, {14, 8}, {20, 8}});
-      break;
-    }
-    case IconId::kSearch: {
-      g.Arc(11, 11, 7.5, 0, 360);
-      g.Line(16.6, 16.6, 21, 21);
-      break;
-    }
-  }
-
-  ::SelectObject(dc, g.oldBrush);
-  ::SelectObject(dc, g.oldPen);
-  ::DeleteObject(g.pen);
+  if (dc) ::DeleteDC(dc);
+  cache[glyph] = box;
+  return box;
 }
 
 }  // namespace
@@ -379,31 +307,43 @@ void DrawIcon(HDC dc, IconId id, const RECT& rc, COLORREF color, bool enabled) {
   const int h = rc.bottom - rc.top;
   if (w <= 0 || h <= 0) return;
 
-  // 放大绘制再降采样：先把目标区域原样贴到离屏画布，边缘混合不会发白
-  HDC buf = ::CreateCompatibleDC(dc);
-  HBITMAP bmp = buf ? ::CreateCompatibleBitmap(dc, w * kIconSs, h * kIconSs) : nullptr;
-  if (!buf || !bmp) {
-    if (bmp) ::DeleteObject(bmp);
-    if (buf) ::DeleteDC(buf);
-    DrawStrokeIcon(dc, id, rc, color, enabled);
-    return;
+  const wchar_t glyph = GlyphFor(id);
+  if (!glyph) return;
+
+  // 按墨迹最长边贴合目标矩形，避免字形撑出矩形压到相邻文字
+  const InkBox ink = MeasureInk(glyph);
+  const int side = w < h ? w : h;
+  const double ratio = ink.rw > ink.rh ? ink.rw : ink.rh;
+  const int fontSize = static_cast<int>(std::lround(side / ratio));
+  HFONT font = IconFont(fontSize > 0 ? fontSize : 1);
+  if (!font) return;
+
+  COLORREF inkColor = color;
+  if (!enabled) {
+    const int y = (GetRValue(color) * 30 + GetGValue(color) * 59 + GetBValue(color) * 11) / 100;
+    const int m = 255 - (255 - y) * 45 / 100;
+    inkColor = RGB(m, m, m);
   }
 
-  HGDIOBJ oldBmp = ::SelectObject(buf, bmp);
-  ::SetStretchBltMode(buf, HALFTONE);
-  ::SetBrushOrgEx(buf, 0, 0, nullptr);
-  ::StretchBlt(buf, 0, 0, w * kIconSs, h * kIconSs, dc, rc.left, rc.top, w, h, SRCCOPY);
+  // 让墨迹框中心落在目标矩形中心
+  const double inkW = ink.rw * fontSize;
+  const double inkH = ink.rh * fontSize;
+  const int cx = (rc.left + rc.right) / 2;
+  const int cy = (rc.top + rc.bottom) / 2;
+  const int x = static_cast<int>(std::lround(cx - ink.ox * fontSize - inkW / 2));
+  const int y = static_cast<int>(std::lround(cy + ink.oy * fontSize - inkH / 2));
 
-  DrawStrokeIcon(buf, id, RECT{0, 0, w * kIconSs, h * kIconSs}, color, enabled);
+  HFONT oldFont = static_cast<HFONT>(::SelectObject(dc, font));
+  const int oldMode = ::SetBkMode(dc, TRANSPARENT);
+  const COLORREF oldColor = ::SetTextColor(dc, inkColor);
+  const UINT oldAlign = ::SetTextAlign(dc, TA_LEFT | TA_BASELINE);
 
-  const int oldMode = ::SetStretchBltMode(dc, HALFTONE);
-  ::SetBrushOrgEx(dc, 0, 0, nullptr);
-  ::StretchBlt(dc, rc.left, rc.top, w, h, buf, 0, 0, w * kIconSs, h * kIconSs, SRCCOPY);
-  ::SetStretchBltMode(dc, oldMode);
+  ::TextOutW(dc, x, y, &glyph, 1);
 
-  ::SelectObject(buf, oldBmp);
-  ::DeleteObject(bmp);
-  ::DeleteDC(buf);
+  ::SetTextAlign(dc, oldAlign);
+  ::SetTextColor(dc, oldColor);
+  ::SetBkMode(dc, oldMode);
+  ::SelectObject(dc, oldFont);
 }
 
 // ───────────────────────── Shell 图标缓存 ─────────────────────────
@@ -439,7 +379,7 @@ void ClearIconCache() {
 
 // ── 列表行高用的占位图像列表 ──
 // ListView 的行高由图像列表单元格尺寸决定。这里用 rowHeight 见方的空格子，
-// 只为了把行撑到与 ui.html 一致的 44px，图标本身在自绘时单独画。
+// 只为了把行撑到 44px，图标本身在自绘时单独画。
 namespace {
 HIMAGELIST g_rowList = nullptr;
 int g_rowCell = 0;

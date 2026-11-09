@@ -310,26 +310,7 @@ void PaintTree(HWND hwnd) {
     if (n->hasChildren) {
       const int as = g_app.px(12);
       RECT ar{x, cy - as / 2, x + as, cy + as / 2};
-      // 用 chevron 旋转：展开态画向下（这里直接画三角更省事）
-      POINT pts[3];
-      if (n->expanded) {
-        pts[0] = POINT{ar.left + g_app.px(2), cy - g_app.px(3)};
-        pts[1] = POINT{ar.right - g_app.px(2), cy - g_app.px(3)};
-        pts[2] = POINT{(ar.left + ar.right) / 2, cy + g_app.px(3)};
-      } else {
-        pts[0] = POINT{ar.left + g_app.px(4), cy - g_app.px(5)};
-        pts[1] = POINT{ar.left + g_app.px(4), cy + g_app.px(5)};
-        pts[2] = POINT{ar.right - g_app.px(2), cy};
-      }
-      HBRUSH b = ::CreateSolidBrush(kTextMuted);
-      HPEN p = ::CreatePen(PS_SOLID, 1, kTextMuted);
-      HBRUSH ob = static_cast<HBRUSH>(::SelectObject(dc, b));
-      HPEN op = static_cast<HPEN>(::SelectObject(dc, p));
-      ::Polygon(dc, pts, 3);
-      ::SelectObject(dc, ob);
-      ::SelectObject(dc, op);
-      ::DeleteObject(b);
-      ::DeleteObject(p);
+      DrawIcon(dc, n->expanded ? IconId::kChevronDown : IconId::kChevron, ar, kTextMuted);
     }
     x += g_app.px(kArrowW);
 

@@ -119,6 +119,10 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
     }
   }
 
+  // 初始目录记为历史第一项，否则首次导航后 historyPos 停在 0，返回按钮永远禁用
+  g_app.history.assign(1, g_app.curDir);
+  g_app.historyPos = 0;
+
   if (!ui::RegisterMainWindow(hInst)) {
     ShowFatal(L"窗口类注册失败。");
     ui::fonts.Destroy();

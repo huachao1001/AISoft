@@ -14,6 +14,8 @@ namespace {
 constexpr const wchar_t* kSearchClass = L"AIZipSearchBox";
 constexpr int kRadius = 7;
 constexpr int kPadX = 11;
+constexpr int kIconSz = 14;   // 左侧放大镜
+constexpr int kIconGap = 5;   // 图标与文字间距
 
 struct Host {
   HWND edit = nullptr;
@@ -29,12 +31,18 @@ Host* Get(HWND h) {
   return it == g_hosts.end() ? nullptr : &it->second;
 }
 
+// 左侧放大镜占位宽度；EDIT 与提示文字都要让开
+int IconLead(HWND host) {
+  const int dpi = util::DpiForWindow(host);
+  return ::MulDiv(kIconSz + kIconGap, dpi, 96);
+}
+
 RECT EditRect(HWND host) {
   RECT rc;
   ::GetClientRect(host, &rc);
   const int dpi = util::DpiForWindow(host);
   auto px = [dpi](int v) { return ::MulDiv(v, dpi, 96); };
-  const int left = rc.left + px(kPadX);
+  const int left = rc.left + px(kPadX) + IconLead(host);
   const int right = rc.right - px(kPadX);
   // 单行 EDIT 把文字贴在自身顶部，所以让它的高度等于行高再上下居中
   HDC dc = ::GetDC(host);
@@ -131,9 +139,15 @@ LRESULT CALLBACK SearchProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
       FillRoundRect(dc, rc, kInputBg, radius);
       StrokeRoundRect(dc, rc, focused ? kInputFocusBorder : kInputBorder, radius, 1);
 
+      // 左侧放大镜
+      const int is = ::MulDiv(kIconSz, dpi, 96);
+      const int left = rc.left + ::MulDiv(kPadX, dpi, 96);
+      RECT ir{left, (rc.top + rc.bottom - is) / 2, left + is, (rc.top + rc.bottom - is) / 2 + is};
+      DrawIcon(dc, IconId::kSearch, ir, kTextFaint);
+
       if (h && EditEmpty(h->edit)) {
         RECT tr = rc;
-        tr.left += ::MulDiv(kPadX, dpi, 96);
+        tr.left = ir.right + ::MulDiv(kIconGap, dpi, 96);
         tr.right -= ::MulDiv(kPadX, dpi, 96);
         DrawTextEllipsis(dc, tr, h->cue, kTextFaint, fonts.ui);
       }
