@@ -9,9 +9,11 @@
 #include <shlwapi.h>
 
 #include <cmath>
+#include <cstring>
 #include <map>
 #include <set>
 #include <string>
+#include <vector>
 
 namespace AiUI {
 namespace win32 {
@@ -120,6 +122,83 @@ InkBox measureInk(wchar_t glyph) {
   }
   cache[glyph] = box;
   return box;
+}
+
+// HICON → 32bpp ARGB 位图。
+// Bitmap::FromHICON 对只有 AND mask 的旧式图标会把透明区画成黑色，
+// 这里手工合成 alpha：图标自带 alpha 就直接用，否则按 mask 判断透明。
+Gdiplus::Bitmap* bitmapFromIcon(HICON icon) {
+  ICONINFO info{};
+  if (!::GetIconInfo(icon, &info)) return nullptr;
+
+  auto releaseBitmaps = [&info] {
+    if (info.hbmColor) ::DeleteObject(info.hbmColor);
+    if (info.hbmMask) ::DeleteObject(info.hbmMask);
+  };
+
+  BITMAP bm{};
+  if (!info.hbmColor || !::GetObject(info.hbmColor, sizeof(bm), &bm) || bm.bmWidth <= 0 ||
+      bm.bmHeight <= 0) {
+    releaseBitmaps();
+    return nullptr;
+  }
+
+  const int width = bm.bmWidth;
+  const int height = bm.bmHeight;
+  const size_t count = static_cast<size_t>(width) * height;
+
+  BITMAPINFO bi{};
+  bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+  bi.bmiHeader.biWidth = width;
+  bi.bmiHeader.biHeight = -height;  // 负高度 = 自上而下
+  bi.bmiHeader.biPlanes = 1;
+  bi.bmiHeader.biBitCount = 32;
+  bi.bmiHeader.biCompression = BI_RGB;
+
+  std::vector<uint32_t> pixels(count, 0);
+  HDC dc = ::GetDC(nullptr);
+  const int got = ::GetDIBits(dc, info.hbmColor, 0, height, pixels.data(), &bi, DIB_RGB_COLORS);
+
+  std::vector<uint32_t> mask;
+  if (info.hbmMask) {
+    mask.assign(count, 0);
+    ::GetDIBits(dc, info.hbmMask, 0, height, mask.data(), &bi, DIB_RGB_COLORS);
+  }
+  ::ReleaseDC(nullptr, dc);
+  releaseBitmaps();
+
+  if (got != height) return nullptr;
+
+  // 有非零 alpha 说明图标自带透明信息；否则用 mask 的白色位当透明
+  bool hasAlpha = false;
+  for (uint32_t px : pixels) {
+    if ((px >> 24) != 0) {
+      hasAlpha = true;
+      break;
+    }
+  }
+  if (!hasAlpha) {
+    for (size_t i = 0; i < count; ++i) {
+      const bool transparent = i < mask.size() && mask[i] != 0;
+      pixels[i] = transparent ? 0u : (pixels[i] | 0xFF000000u);
+    }
+  }
+
+  auto* bitmap = new Gdiplus::Bitmap(width, height, PixelFormat32bppARGB);
+  Gdiplus::Rect lockRect(0, 0, width, height);
+  Gdiplus::BitmapData data{};
+  if (bitmap->LockBits(&lockRect, Gdiplus::ImageLockModeWrite, PixelFormat32bppARGB, &data) !=
+      Ok) {
+    delete bitmap;
+    return nullptr;
+  }
+  for (int y = 0; y < height; ++y) {
+    auto* dst = static_cast<uint8_t*>(data.Scan0) + static_cast<ptrdiff_t>(y) * data.Stride;
+    memcpy(dst, pixels.data() + static_cast<size_t>(y) * width,
+           static_cast<size_t>(width) * sizeof(uint32_t));
+  }
+  bitmap->UnlockBits(&data);
+  return bitmap;
 }
 
 }  // namespace
@@ -233,9 +312,7 @@ Image fileIcon(const std::wstring& path, bool isDirectory) {
 
   Image image;
   if (info.hIcon) {
-    if (Gdiplus::Bitmap* bmp = Gdiplus::Bitmap::FromHICON(info.hIcon)) {
-      image = Image(bmp);
-    }
+    if (Gdiplus::Bitmap* bmp = win32::bitmapFromIcon(info.hIcon)) image = Image(bmp);
     ::DestroyIcon(info.hIcon);
   }
   cache[key] = image;
