@@ -364,6 +364,7 @@ std::string headerFor(const std::string& tag) {
       {"InputBox", "AiUI/widgets/input_box.h"},
       {"TreeView", "AiUI/widgets/tree_view.h"},
       {"ListView", "AiUI/widgets/list_view.h"},
+      {"BreadcrumbBar", "AiUI/widgets/breadcrumb_bar.h"},
       {"StatusBar", "AiUI/widgets/status_bar.h"},
       {"ButtonBar", "AiUI/widgets/button_bar.h"},
   };

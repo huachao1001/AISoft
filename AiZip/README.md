@@ -27,7 +27,7 @@ src/
   archive.cpp       7-Zip 封装（打开、列出、解压、压缩）
   sevenzip_loader.cpp  静态 7-Zip 内核的格式与算法信息
   ui_main.cpp       主窗口：由生成的 MainFrame 布局装配
-  ui_crumb.cpp      面包屑导航条（自绘 Widget，含搜索框）
+  ui_crumb.cpp      面包屑适配：把视图状态翻译成 BreadcrumbBar 的数据
   ui_toolbar.cpp    工具栏五个按钮与可用性
   ui_tree.cpp       左侧文件夹树
   ui_list.cpp       文件列表：列、排序、右键菜单、键盘
@@ -54,7 +54,7 @@ tools/              内核验证程序 test_arc 与清单生成脚本
 ```xml
 <!-- assets/layouts/main_frame.xml -->
 <LinearLayout orientation="vertical">
-  <CrumbBar id="crumb" ns="ui" header="ui_crumb.h" height="48"/>
+  <BreadcrumbBar id="crumb" height="48"/>
   <ButtonBar id="toolBar" height="52"/>
   <LinearLayout id="content" orientation="horizontal" weight="1">
     <TreeView id="tree" width="230" height="match"/>
@@ -65,8 +65,9 @@ tools/              内核验证程序 test_arc 与清单生成脚本
 ```
 
 `main_frame.xml` 在构建期由 `aiui_add_layouts` 生成 `AiUI::generated::MainFrame`，
-`WM_SIZE` 直接交给布局系统，不再手写 `MoveWindow`。各控件的行为在
-`ui_toolbar.cpp` / `ui_tree.cpp` / `ui_list.cpp` / `ui_status.cpp` 里用回调装配。
+`WM_SIZE` 直接交给布局系统，不再手写 `MoveWindow`。界面控件全部来自 AiUI，
+应用侧只负责传数据：`ui_tree.cpp` / `ui_list.cpp` / `ui_crumb.cpp` /
+`ui_status.cpp` 都是无状态的适配函数，不是控件子类。
 
 ## 构建
 

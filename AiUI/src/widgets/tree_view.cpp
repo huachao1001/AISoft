@@ -150,9 +150,28 @@ void TreeView::scrollToActive() {
 void TreeView::scrollBy(int delta) { setScroll(scroll_ + delta); }
 
 void TreeView::setScroll(int position) {
-  scroll_ = std::clamp(position, 0, maxScroll());
+  const int next = std::clamp(position, 0, maxScroll());
+  if (next == scroll_) return;
+  scroll_ = next;
   updateScrollBar();
   invalidate();
+}
+
+void TreeView::invalidateRow(int index) {
+  if (index < 0 || index >= static_cast<int>(rows_.size())) return;
+  const Rect rc = clientRect();
+  Rect row = rowRect(index);
+  if (row.bottom <= 0 || row.top >= rc.bottom) return;
+  row.top = (std::max)(row.top, 0);
+  row.bottom = (std::min)(row.bottom, rc.bottom);
+  invalidateRect(row);
+}
+
+int TreeView::indexOfNode(const TreeNode* node) const {
+  if (!node) return -1;
+  const auto it = std::find(rows_.begin(), rows_.end(), node);
+  if (it == rows_.end()) return -1;
+  return static_cast<int>(it - rows_.begin());
 }
 
 void TreeView::onPaint(Painter& painter, const Rect& rect) {
@@ -206,29 +225,36 @@ void TreeView::onMouseDown(const MouseEvent& e) {
     return;
   }
 
+  const int previousIndex = indexOfNode(active_);
   active_ = node;
   if (node->hasChildren && !node->expanded) {
     node->expanded = true;
     loadChildren(node);
     rebuild();
+  } else {
+    // 只换了选中项：重绘旧选中行与新选中行，不整控件重画
+    invalidateRow(previousIndex);
+    invalidateRow(hit);
   }
-  invalidate();
   if (onSelect_) onSelect_(node);
 }
 
 void TreeView::onMouseMove(const MouseEvent& e) {
   const int hit = hitRow(e.position);
   if (hit != hot_) {
+    const int previous = hot_;
     hot_ = hit;
-    invalidate();
+    invalidateRow(previous);
+    invalidateRow(hot_);
   }
   setCursor(hit >= 0 ? CursorShape::kHand : CursorShape::kArrow);
 }
 
 void TreeView::onMouseLeave() {
   if (hot_ == -1) return;
+  const int previous = hot_;
   hot_ = -1;
-  invalidate();
+  invalidateRow(previous);
 }
 
 void TreeView::onMouseWheel(const MouseEvent& e) {

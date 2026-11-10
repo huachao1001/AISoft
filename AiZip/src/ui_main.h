@@ -8,7 +8,7 @@ namespace ui {
 bool RegisterMainWindow(HINSTANCE inst);
 HWND CreateMainWindow(HINSTANCE inst);
 void UpdateMainTitle(HWND hwnd);
-// 视图状态变化后同步面包屑与树
+// 视图状态变化后同步面包屑与树（仅根结构变化时才重建树）
 void RefreshAddressBar(HWND hwnd);
 
 // 把焦点交回文件列表

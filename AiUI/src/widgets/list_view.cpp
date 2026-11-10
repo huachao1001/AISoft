@@ -36,10 +36,23 @@ void ListView::setColumns(std::vector<ListColumn> columns) {
 
 void ListView::setCallbacks(ListCallbacks callbacks) {
   callbacks_ = std::move(callbacks);
-  reload();
 }
 
-int ListView::rowCount() const { return callbacks_.rowCount ? callbacks_.rowCount() : 0; }
+void ListView::setRows(std::vector<ListRow> rows) {
+  rows_ = std::move(rows);
+  // 行内容整体变了，按行号保留选中没有意义，直接清空
+  selected_.assign(rows_.size(), false);
+  anchor_ = -1;
+  scroll_ = (std::max)(0, scroll_);
+  scroll_ = (std::min)(scroll_, maxScroll());
+  updateScrollBar();
+  invalidate();
+}
+
+int ListView::rowTag(int row) const {
+  if (row < 0 || row >= static_cast<int>(rows_.size())) return -1;
+  return rows_[row].tag;
+}
 
 int ListView::headHeight() const { return style_.headHeight * dpi() / 96; }
 int ListView::rowHeight() const { return style_.rowHeight * dpi() / 96; }
@@ -125,14 +138,14 @@ void ListView::clearSelection() {
   std::fill(selected_.begin(), selected_.end(), false);
   anchor_ = -1;
   if (callbacks_.onSelectionChanged) callbacks_.onSelectionChanged();
-  invalidate();
+  invalidateContent();
 }
 
 void ListView::selectAll() {
   std::fill(selected_.begin(), selected_.end(), true);
   if (!selected_.empty() && anchor_ < 0) anchor_ = 0;
   if (callbacks_.onSelectionChanged) callbacks_.onSelectionChanged();
-  invalidate();
+  invalidateContent();
 }
 
 void ListView::selectRow(int row, bool scrollIntoView) {
@@ -143,7 +156,7 @@ void ListView::selectRow(int row, bool scrollIntoView) {
   anchor_ = row;
   if (scrollIntoView) ensureRowVisible(row);
   if (callbacks_.onSelectionChanged) callbacks_.onSelectionChanged();
-  invalidate();
+  invalidateContent();
 }
 
 void ListView::syncSelection(int row, bool ctrl, bool shift) {
@@ -164,19 +177,26 @@ void ListView::syncSelection(int row, bool ctrl, bool shift) {
     anchor_ = row;
   }
   if (callbacks_.onSelectionChanged) callbacks_.onSelectionChanged();
-  invalidate();
+  invalidateContent();
 }
 
-void ListView::reload() {
-  const int count = rowCount();
-  // 行内容可能整体变化，保留原有的勾选模式
-  std::vector<bool> next(count, false);
-  for (int i = 0; i < count && i < static_cast<int>(selected_.size()); ++i) next[i] = selected_[i];
-  selected_.swap(next);
-  if (anchor_ >= count) anchor_ = count - 1;
-  scroll_ = (std::max)(0, scroll_);
-  updateScrollBar();
-  invalidate();
+void ListView::invalidateContent() {
+  // 选中变化只影响行区，表头不必重画
+  const Rect rc = clientRect();
+  const int top = contentTop();
+  if (rc.bottom <= top) return;
+  invalidateRect(Rect{rc.left, top, rc.right, rc.bottom});
+}
+
+void ListView::invalidateRow(int row) {
+  if (row < 0 || row >= rowCount()) return;
+  Rect rc = rowRect(row);
+  // 滚出可视区的行不必重画
+  const int top = contentTop();
+  if (rc.bottom <= top || rc.top >= clientRect().bottom) return;
+  rc.top = (std::max)(rc.top, top);
+  rc.bottom = (std::min)(rc.bottom, clientRect().bottom);
+  invalidateRect(rc);
 }
 
 void ListView::setSort(int column, bool ascending) {
@@ -210,9 +230,12 @@ void ListView::updateScrollBar() {
 }
 
 void ListView::setScroll(int position) {
-  scroll_ = std::clamp(position, 0, maxScroll());
+  const int next = std::clamp(position, 0, maxScroll());
+  if (next == scroll_) return;
+  scroll_ = next;
   updateScrollBar();
-  invalidate();
+  // 整行平移，只能重画行区
+  invalidateContent();
 }
 
 void ListView::scrollBy(int delta) { setScroll(scroll_ + delta); }
@@ -269,6 +292,9 @@ void ListView::paintRow(Painter& painter, int row, const Rect& rowRect) {
   const bool hot = (row == hot_) && !selected;
   painter.fillRect(rowRect, selected ? style_.selBg : (hot ? style_.hoverBg : style_.background));
 
+  if (row < 0 || row >= static_cast<int>(rows_.size())) return;
+  const ListRow& data = rows_[row];
+
   for (int col = 0; col < static_cast<int>(columns_.size()); ++col) {
     const int left = cellLeft(col);
     if (left >= rowRect.right) break;
@@ -276,22 +302,32 @@ void ListView::paintRow(Painter& painter, int row, const Rect& rowRect) {
     Rect textRect{left + style_.padX * d / 96, rowRect.top,
                   left + colWidth_[col] - style_.padX * d / 96, rowRect.bottom};
 
-    if (col == 0 && callbacks_.drawIcon) {
+    // 图标只跟着第一列画
+    if (col == 0) {
       const int iconSize = style_.iconSize * d / 96;
       const int iconTop = (rowRect.top + rowRect.bottom - iconSize) / 2;
       const Rect iconRect{left + style_.padX * d / 96, iconTop,
                           left + style_.padX * d / 96 + iconSize, iconTop + iconSize};
-      callbacks_.drawIcon(painter, row, iconRect);
+      if (data.icon.image.isValid()) {
+        painter.drawImage(data.icon.image, iconRect);
+      } else {
+        const IconId glyph = data.icon.glyph == IconId::kNone ? IconId::kFile : data.icon.glyph;
+        const Color color = data.icon.color != kNoColor ? data.icon.color : style_.text;
+        painter.drawIcon(glyph, iconRect, color);
+      }
       textRect.left = iconRect.right + style_.iconGap * d / 96;
     }
 
-    const std::wstring text = callbacks_.text ? callbacks_.text(row, col) : std::wstring();
-    if (text.empty()) continue;
+    if (col >= static_cast<int>(data.cells.size())) continue;
+    const ListCell& cell = data.cells[col];
+    if (cell.text.empty()) continue;
 
+    const Color color =
+        cell.textColor != kNoColor ? cell.textColor : (data.dimmed ? style_.headText : style_.text);
     if (columns_[col].align == ListAlign::kRight) {
-      painter.drawText(textRect, text, style_.text, fonts.ui, TextAlign::kRight);
+      painter.drawText(textRect, cell.text, color, fonts.ui, TextAlign::kRight);
     } else {
-      painter.drawTextEllipsis(textRect, text, style_.text, fonts.ui);
+      painter.drawTextEllipsis(textRect, cell.text, color, fonts.ui);
     }
   }
 
@@ -382,24 +418,29 @@ void ListView::onMouseMove(const MouseEvent& e) {
     }
     setCursor(onEdge ? CursorShape::kSizeHorizontal : CursorShape::kArrow);
     if (hot_ != -1) {
+      const int previous = hot_;
       hot_ = -1;
-      invalidate();
+      invalidateRow(previous);
     }
     return;
   }
 
   const int row = hitRow(e.position);
   if (row != hot_) {
+    const int previous = hot_;
     hot_ = row;
-    invalidate();
+    // 只重画进出悬停的两行
+    invalidateRow(previous);
+    invalidateRow(hot_);
   }
   setCursor(CursorShape::kArrow);
 }
 
 void ListView::onMouseLeave() {
   if (hot_ == -1) return;
+  const int previous = hot_;
   hot_ = -1;
-  invalidate();
+  invalidateRow(previous);
 }
 
 void ListView::onMouseWheel(const MouseEvent& e) { scrollBy(-e.wheelDelta * rowHeight() * 3 / 120); }

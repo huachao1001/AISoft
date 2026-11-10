@@ -59,10 +59,15 @@ void EnableDrop(HWND hwnd) {
 }
 
 void OnCreate(HWND hwnd) {
+  // WM_CREATE 在 CreateWindowExW 内同步触发，早于 main.cpp 赋值，
+  // 这里先补上，后续装配捕获取到的 owner 才不是空
+  g_app.mainWnd = hwnd;
+
   g_frame = std::make_unique<AiUI::generated::MainFrame>();
   g_frame->create(hwnd, 0, AiUI::Rect{});
 
   // 各模块只负责“拿到控件后怎么用”，不再关心摆放
+  AttachCrumbBar(g_frame->crumb);
   AttachToolBar(g_frame->toolBar);
   AttachSideTree(g_frame->tree);
   AttachFileList(g_frame->list);
@@ -232,10 +237,9 @@ void UpdateMainTitle(HWND hwnd) {
 }
 
 void RefreshAddressBar(HWND) {
-  if (g_frame) {
-    g_frame->crumb->refresh();
-    RefreshSideTree();
-  }
+  if (!g_frame) return;
+  RefreshCrumbBar();
+  SyncSideTree();
 }
 
 void FocusFileList() {
@@ -248,10 +252,10 @@ bool HandleMainShortcut(const MSG& msg) {
 
   switch (msg.wParam) {
     case 'L':
-      if (g_frame) g_frame->crumb->beginEdit();
+      BeginAddressEdit();
       return true;
     case 'F':
-      if (g_frame) g_frame->crumb->focusSearch();
+      FocusSearchBox();
       return true;
     default:
       return false;

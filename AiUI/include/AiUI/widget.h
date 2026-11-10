@@ -160,6 +160,8 @@ class Widget {
   void layout(const Rect& frame);
   void setBounds(const Rect& frame);
   void invalidate();
+  // 只重绘一块区域：悬停、选中这类局部变化用，避免整控件重画
+  void invalidateRect(const Rect& rc);
 
   // ── 外观与状态 ──
   void show(bool visible = true);

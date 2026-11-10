@@ -18,6 +18,10 @@ namespace ui {
 namespace {
 
 AiUI::TreeView* g_view = nullptr;
+// 树根的结构标识：文件系统用 "fs"，压缩包用包路径。只有它变了才重建根节点
+std::wstring g_rootsKey;
+
+std::wstring SyncKey() { return g_app.archiveMode ? g_app.archivePath : std::wstring(L"fs"); }
 
 // 枚举目录下的一级子目录（跳过隐藏与系统目录）
 std::vector<std::wstring> SubDirs(const std::wstring& dir) {
@@ -147,6 +151,8 @@ void OnNodeSelected(AiUI::TreeNode* node) {
   if (g_app.archiveMode) {
     if (::CompareStringOrdinal(node->path.c_str(), -1, g_app.innerPath.c_str(), -1, TRUE) !=
         CSTR_EQUAL) {
+      // 包内换目录必须按新前缀重新筛条目，走完整刷新；
+      // 树这边 SyncSideTree 会按根标识判断，只同步选中、不重建
       g_app.innerPath = node->path;
       AppRefreshView();
       return;
@@ -155,9 +161,9 @@ void OnNodeSelected(AiUI::TreeNode* node) {
              ::CompareStringOrdinal(node->path.c_str(), -1, g_app.curDir.c_str(), -1, TRUE) !=
                  CSTR_EQUAL) {
     AppNavigateTo(node->path);
-    RefreshToolbarState();
     return;
   }
+  // 已经在这个目录上：只更新工具栏，不触发任何重载
   RefreshToolbarState();
 }
 
@@ -176,12 +182,29 @@ void AttachSideTree(AiUI::TreeView* tree) {
   tree->setChildrenLoader(LoadChildren);
   tree->setSelectHandler(OnNodeSelected);
   tree->setScrollable(true);
-  RefreshSideTree();
+  RebuildSideTree();
 }
 
-void RefreshSideTree() {
+void RebuildSideTree() {
   if (!g_view) return;
+  g_rootsKey = SyncKey();
   g_view->setRoot(BuildRoot());
+  g_view->selectPath(g_app.archiveMode ? g_app.innerPath : g_app.curDir);
+}
+
+void SyncSideTree() {
+  if (!g_view) return;
+  // 根结构只在“文件系统 ↔ 压缩包”或换了包时变，其余情况保留展开状态
+  if (SyncKey() != g_rootsKey) {
+    RebuildSideTree();
+    return;
+  }
+  SyncSideTreeSelection();
+}
+
+void SyncSideTreeSelection() {
+  if (!g_view) return;
+  // 只走 selectPath：已展开的分支保持原样，滚动位置也不重置
   g_view->selectPath(g_app.archiveMode ? g_app.innerPath : g_app.curDir);
 }
 

@@ -27,6 +27,7 @@ set(AIUI_SOURCES
   # 控件
   src/widgets/button.cpp
   src/widgets/button_bar.cpp
+  src/widgets/breadcrumb_bar.cpp
   src/widgets/dialog.cpp
   src/widgets/image_view.cpp
   src/widgets/input_box.cpp

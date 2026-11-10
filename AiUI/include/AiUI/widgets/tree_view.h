@@ -87,6 +87,10 @@ class TreeView : public Widget {
   void scrollBy(int delta);
   void setScroll(int position);
   int maxScroll() const;
+  // 只重绘一行；悬停、选中这类局部变化用
+  void invalidateRow(int index);
+  // 节点当前对应的可见行号；不在可见区返回 -1
+  int indexOfNode(const TreeNode* node) const;
 
   TreeStyle style_{};
   TreeChildrenLoader loader_;

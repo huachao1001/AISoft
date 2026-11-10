@@ -21,6 +21,29 @@ struct ListColumn {
   bool stretch = false;  // 吃掉剩余宽度（通常只有名称列）
 };
 
+// 行首图标的来源：矢量图标或位图，二者取其一
+struct ListIcon {
+  IconId glyph = IconId::kNone;
+  Image image;           // 有效时优先于 glyph
+  Color color = kNoColor;  // kNoColor 表示用样式默认色
+};
+
+// 单元格：文本 + 可选配色；图标只画在第 0 列
+struct ListCell {
+  std::wstring text;
+  Color textColor = kNoColor;
+};
+
+// 一行数据。库内只按行号保存选中状态，业务标识放在 tag 里。
+struct ListRow {
+  std::vector<ListCell> cells;
+  ListIcon icon;
+  // 业务方自定义的整型标记（如条目下标），库不解释
+  int tag = -1;
+  // 整行禁用外观（如占位行）
+  bool dimmed = false;
+};
+
 struct ListStyle {
   int headHeight = 40;
   int rowHeight = 44;
@@ -37,13 +60,9 @@ struct ListStyle {
   Color hoverBg = kColorRowHover;
 };
 
-// 调用方提供数据与事件；控件只做布局、选择、滚动、列宽与排序指示
+// 事件回调：只管交互通知，不再由调用方提供渲染数据
 struct ListCallbacks {
-  std::function<int()> rowCount;
-  std::function<std::wstring(int row, int column)> text;
-  // 行首图标由调用方画；坐标是控件客户区绝对坐标
-  std::function<void(Painter& painter, int row, const Rect& rect)> drawIcon;
-  std::function<void(int row)> onActivate;  // 双击或回车
+  std::function<void(int row)> onActivate;  // 双击或回车，参数是行号
   std::function<void()> onSelectionChanged;
   std::function<void(int column, bool ascending)> onSort;
   std::function<void()> onContextMenu;
@@ -59,7 +78,14 @@ class ListView : public Widget {
   void setColumns(std::vector<ListColumn> columns);
   void setCallbacks(ListCallbacks callbacks);
 
-  void reload();
+  // 整表替换数据；行号即选中索引
+  void setRows(std::vector<ListRow> rows);
+  const std::vector<ListRow>& rows() const { return rows_; }
+  int rowCount() const { return static_cast<int>(rows_.size()); }
+  // 取某行的业务标记；越界返回 -1
+  int rowTag(int row) const;
+
+  // 列宽随控件宽度重新分配
   void layoutColumns();
 
   int sortColumn() const { return sortColumn_; }
@@ -98,7 +124,6 @@ class ListView : public Widget {
   int headHeight() const;
   int rowHeight() const;
   int contentTop() const;
-  int rowCount() const;
   int pageHeight() const;
 
   Rect rowRect(int row) const;
@@ -114,11 +139,16 @@ class ListView : public Widget {
   void paintHeader(Painter& painter, const Rect& rect);
   void paintRow(Painter& painter, int row, const Rect& rowRect);
   int maxScroll() const;
+  // 只重绘一行（夹在表头之下）
+  void invalidateRow(int row);
+  // 只重绘行区，不动表头
+  void invalidateContent();
 
   ListStyle style_{};
   std::vector<ListColumn> columns_;
   std::vector<int> colWidth_;   // 物理像素
   std::vector<int> userWidth_;  // 用户拖过的宽度，0 表示未拖
+  std::vector<ListRow> rows_;
   ListCallbacks callbacks_;
 
   std::vector<bool> selected_;

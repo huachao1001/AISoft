@@ -16,8 +16,8 @@ include/AiUI/
   font.h         FontSet：按 DPI 创建的一组界面字体
   widget.h       控件基类：树结构、测量、布局、事件分发
   layouts/       FrameLayout / LinearLayout
-  widgets/       Button / ButtonBar / InputBox / ListView / TreeView /
-                 StatusBar / TextView / ImageView
+  widgets/       Button / ButtonBar / BreadcrumbBar / InputBox /
+                 ListView / TreeView / StatusBar / TextView / ImageView
 src/
   widget.cpp     控件基类实现
   font.cpp       字体集
@@ -67,7 +67,7 @@ aiui_add_layouts(AiZip assets/layouts/main_frame.xml)
 
 ```xml
 <LinearLayout orientation="vertical">
-  <CrumbBar id="crumb" ns="ui" header="ui_crumb.h" height="48"/>
+  <BreadcrumbBar id="crumb" height="48"/>
   <ButtonBar id="toolBar" height="52"/>
   <LinearLayout id="content" orientation="horizontal" weight="1">
     <TreeView id="tree" width="230" height="match"/>
@@ -83,15 +83,39 @@ aiui_add_layouts(AiZip assets/layouts/main_frame.xml)
 
 ## 事件
 
-两种风格可以混用：
+控件自己持有数据、自己绘制，调用方只传数据和回调，不需要继承控件：
 
 ```cpp
-// 回调
-button->setOnClick([] { /* ... */ });
-input->setOnChange([this] { SetFilterText(input->text()); });
-// 或派生覆盖
-class MyList : public ListView {
-  bool onKeyDown(const Key& key, const Modifiers& mods) override;
+// ListView：整表传数据，tag 是业务标识，由库原样回传
+list->setColumns({{L"名称", 320}, {L"类型", 110}});
+std::vector<ListRow> rows;
+for (const auto& item : items) {
+  ListRow row;
+  row.tag = item.index;
+  row.icon = ListIcon{.glyph = IconId::kFolder, .color = kColorTextFaint};
+  row.cells = {{item.name}, {item.typeName}};
+  rows.push_back(std::move(row));
+}
+list->setRows(std::move(rows));
+list->setCallbacks({.onActivate = [](int row) { /* ... */ }});
+```
+
+| 控件 | 传数据 | 交互回调 |
+| --- | --- | --- |
+| `ListView` | `setColumns` / `setRows` | `onActivate` / `onSelectionChanged` / `onSort` / `onContextMenu` |
+| `TreeView` | `setRoot` / `setChildrenLoader` | `setSelectHandler` |
+| `BreadcrumbBar` | `setSegments` | `onNavigate` / `onBack` / `onSearch` / `onCommitAddress` |
+| `StatusBar` | `setFields` | — |
+| `ButtonBar` | `add(ButtonSpec)` | `Button::setOnClick` |
+
+控件内部按需局部重绘：悬停、选中只重画受影响的行，滚动只重画行区，
+不触发整控件或整窗刷新。
+
+也支持派生覆盖（少数需要完全自定义绘制的场景）：
+
+```cpp
+class MyGauge : public Widget {
+  void onPaint(Painter& painter, const Rect& rect) override;
 };
 ```
 

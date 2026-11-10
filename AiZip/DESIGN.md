@@ -101,8 +101,8 @@ AiUI/
 │  ├─ icon.h              矢量图标 ID
 │  ├─ platform.h          平台后端接口：窗口、字体、图片、绘制子系统生命周期
 │  ├─ layouts/            FrameLayout / LinearLayout
-│  └─ widgets/            Button / ButtonBar / InputBox / ListView / TreeView /
-│                         StatusBar / TextView / ImageView
+│  └─ widgets/            Button / ButtonBar / BreadcrumbBar / InputBox /
+│                         ListView / TreeView / StatusBar / TextView / ImageView
 ├─ src/
 │  ├─ layouts/            布局实现
 │  ├─ widgets/            控件实现
@@ -120,7 +120,7 @@ AiZip/
 │  ├─ ui_main.h/.cpp      主窗口：装配生成的 MainFrame、拖放、窗口消息
 │  ├─ ui_list.h/.cpp      列表的数据与交互编排（控件用 AiUI::ListView）
 │  ├─ ui_toolbar.h/.cpp   工具按钮条的装配（控件用 AiUI::ButtonBar）
-│  ├─ ui_crumb.h/.cpp     CrumbBar：面包屑 + 可编辑地址栏 + 搜索框（自绘 Widget）
+│  ├─ ui_crumb.h/.cpp     面包屑适配：视图状态 → BreadcrumbBar 的路径段与回调
 │  ├─ ui_tree.h/.cpp      左侧文件夹树的数据编排（控件用 AiUI::TreeView）
 │  ├─ ui_status.h/.cpp    状态栏文案与字段来源（控件用 AiUI::StatusBar）
 │  ├─ ui_theme.h          对话框底色分量（GDI 与 GDI+ 共用）

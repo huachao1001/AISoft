@@ -5,6 +5,7 @@
 #include "dlg_input.h"
 #include "dlg_progress.h"
 #include "ui.h"
+#include "ui_crumb.h"
 #include "ui_list.h"
 #include "ui_main.h"
 #include "ui_status.h"

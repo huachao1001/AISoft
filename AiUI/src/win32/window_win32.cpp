@@ -178,6 +178,12 @@ class Win32Window : public PlatformWindow {
     if (hwnd_) ::InvalidateRect(hwnd_, nullptr, FALSE);
   }
 
+  void invalidateRect(const Rect& rc) override {
+    if (!hwnd_ || rc.isEmpty()) return;
+    RECT r{rc.left, rc.top, rc.right, rc.bottom};
+    ::InvalidateRect(hwnd_, &r, FALSE);
+  }
+
   void setFocus() override {
     if (hwnd_) ::SetFocus(hwnd_);
   }
@@ -449,7 +455,8 @@ class Win32Platform : public Platform {
     Gdiplus::RectF bounds;
     g->MeasureString(text.c_str(), static_cast<INT>(text.size()), f, Gdiplus::PointF(0, 0),
                      &bounds);
-    return static_cast<int>(bounds.Width + 0.5f);
+    // 与 painter 后端保持一致：MeasureString 偏小，留 4px 余量防末字被裁
+    return static_cast<int>(bounds.Width + 0.5f) + 4;
   }
 
   Image loadImage(const std::wstring& path) override { return loadImageFile(path); }

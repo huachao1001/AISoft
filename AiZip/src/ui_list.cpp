@@ -110,21 +110,17 @@ const Item* RowItem(int row) {
 }
 
 // 行首图标：文件夹用矢量图标，文件用系统关联图标
-void DrawFileGlyph(AiUI::Painter& painter, int row, const AiUI::Rect& rect) {
-  const Item* item = RowItem(row);
-  if (!item) return;
-
-  if (item->isDir) {
-    painter.drawIcon(AiUI::IconId::kFolder, rect, AiUI::kColorTextFaint);
-    return;
+AiUI::ListIcon ItemIcon(const Item& item) {
+  AiUI::ListIcon icon;
+  if (item.isDir) {
+    icon.glyph = AiUI::IconId::kFolder;
+    icon.color = AiUI::kColorTextFaint;
+    return icon;
   }
-  const AiUI::Image icon =
-      AiUI::fileIcon(item->fullPath.empty() ? item->name : item->fullPath, false);
-  if (icon.isValid()) {
-    painter.drawImage(icon, rect);
-    return;
-  }
-  painter.drawIcon(AiUI::IconId::kFile, rect, AiUI::kColorTextFaint);
+  icon.image = AiUI::fileIcon(item.fullPath.empty() ? item.name : item.fullPath, false);
+  icon.glyph = AiUI::IconId::kFile;
+  icon.color = AiUI::kColorTextFaint;
+  return icon;
 }
 
 void OnActivate(HWND mainWnd, int row) {
@@ -138,7 +134,7 @@ void OnActivate(HWND mainWnd, int row) {
       AppRefreshView();
       return;
     }
-    ShowExtractDialog(mainWnd, {g_rows[row]});
+    ShowExtractDialog(mainWnd, {g_view->rowTag(row)});
     return;
   }
 
@@ -169,8 +165,11 @@ void OnRightClick(HWND mainWnd) {
 
   POINT pt;
   ::GetCursorPos(&pt);
+  // 菜单 owner 必须是前台窗口，否则 TrackPopupMenu 会立即取消
+  ::SetForegroundWindow(mainWnd);
   const UINT command = ::TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0,
                                         mainWnd, nullptr);
+  ::PostMessageW(mainWnd, WM_NULL, 0, 0);
   ::DestroyMenu(menu);
 
   switch (command) {
@@ -263,14 +262,6 @@ void AttachFileList(AiUI::ListView* view) {
   HWND mainWnd = g_app.mainWnd;
 
   AiUI::ListCallbacks callbacks;
-  callbacks.rowCount = [] { return static_cast<int>(g_rows.size()); };
-  callbacks.text = [](int row, int column) -> std::wstring {
-    const Item* item = RowItem(row);
-    return item ? ItemText(column, *item) : std::wstring();
-  };
-  callbacks.drawIcon = [](AiUI::Painter& painter, int row, const AiUI::Rect& rect) {
-    DrawFileGlyph(painter, row, rect);
-  };
   callbacks.onActivate = [mainWnd](int row) { OnActivate(mainWnd, row); };
   callbacks.onSelectionChanged = [mainWnd] {
     RefreshStatusBarData();
@@ -300,10 +291,26 @@ void RefreshFileList() {
   if (!g_view) return;
   SortItems(g_sortColumn, g_sortAsc);
   RebuildRows();
+
+  // 把可见行翻译成库要的数据行；tag 记住条目下标，交互时再翻回来
+  std::vector<AiUI::ListRow> rows;
+  rows.reserve(g_rows.size());
+  for (int index : g_rows) {
+    const Item& item = g_app.items[index];
+    AiUI::ListRow row;
+    row.tag = index;
+    row.icon = ItemIcon(item);
+    row.cells.reserve(kColCount);
+    for (int col = 0; col < kColCount; ++col) {
+      AiUI::ListCell cell;
+      cell.text = ItemText(col, item);
+      row.cells.push_back(std::move(cell));
+    }
+    rows.push_back(std::move(row));
+  }
+
   g_view->setSort(g_sortColumn, g_sortAsc);
-  g_view->reload();
-  // 内容整体换了（换目录/改过滤/重排），按行号保留选中会落到别的条目上
-  g_view->clearSelection();
+  g_view->setRows(std::move(rows));
 }
 
 void SetFilterText(const std::wstring& text) {
@@ -316,8 +323,10 @@ void SetFilterText(const std::wstring& text) {
 std::vector<int> GetSelectedItems() {
   std::vector<int> out;
   if (!g_view) return out;
+  // tag 就是条目在 g_app.items 里的下标，过滤后也不会错位
   for (int row : g_view->selectedRows()) {
-    if (row >= 0 && row < static_cast<int>(g_rows.size())) out.push_back(g_rows[row]);
+    const int index = g_view->rowTag(row);
+    if (index >= 0 && index < static_cast<int>(g_app.items.size())) out.push_back(index);
   }
   return out;
 }

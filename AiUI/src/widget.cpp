@@ -195,6 +195,10 @@ void Widget::invalidate() {
   if (window_) window_->invalidate();
 }
 
+void Widget::invalidateRect(const Rect& rc) {
+  if (window_) window_->invalidateRect(rc);
+}
+
 void Widget::show(bool visible) {
   visible_ = visible;
   if (window_) window_->show(visible);

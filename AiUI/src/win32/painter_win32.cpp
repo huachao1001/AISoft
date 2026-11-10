@@ -116,8 +116,8 @@ class GdiplusBackend : public PaintBackend {
 
     RectF bounds;
     g_->MeasureString(text.c_str() + from, length, f, PointF(0, 0), &bounds);
-    // MeasureString 偏小，整数化后最后一个字会被 DrawString 裁掉，留 2px 余量
-    return static_cast<int>(bounds.Width + 0.5f) + 2;
+    // MeasureString 偏小，整数化后尾部字符会被 DrawString 裁掉，留 4px 余量
+    return static_cast<int>(bounds.Width + 0.5f) + 4;
   }
 
   int textHeight(const Font& font) override { return font.pixelHeight(); }

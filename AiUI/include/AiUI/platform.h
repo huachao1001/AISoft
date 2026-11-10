@@ -66,6 +66,8 @@ class PlatformWindow {
   virtual void setBounds(const Rect& bounds) = 0;
   virtual void show(bool visible) = 0;
   virtual void invalidate() = 0;
+  // 只失效一块区域，用于悬停、选中这类局部更新
+  virtual void invalidateRect(const Rect& rc) = 0;
   virtual void setFocus() = 0;
   virtual void setCursorShape(CursorShape shape) = 0;
   virtual void captureMouse(bool capture) = 0;
