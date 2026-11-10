@@ -64,7 +64,8 @@ void OnCreate(HWND hwnd) {
   g_app.mainWnd = hwnd;
 
   g_frame = std::make_unique<AiUI::generated::MainFrame>();
-  g_frame->create(hwnd, 0, AiUI::Rect{});
+  // 整棵界面只有一个子窗口：MainFrame 自己就是根视图
+  g_frame->create(hwnd, AiUI::Rect{});
 
   // 各模块只负责“拿到控件后怎么用”，不再关心摆放
   AttachCrumbBar(g_frame->crumb);
@@ -73,10 +74,10 @@ void OnCreate(HWND hwnd) {
   AttachFileList(g_frame->list);
   AttachStatusBar(g_frame->status);
 
-  // 顶部区域与树也要能接收拖放
+  // 拖放注册在 ViewRoot 的窗口上：它铺满客户区，是光标实际所在的那个窗口。
+  // 主窗口保留一份，标题栏等非客户区拖入也能收。
   EnableDrop(hwnd);
-  EnableDrop(static_cast<HWND>(g_frame->tree->handle()));
-  EnableDrop(static_cast<HWND>(g_frame->status->handle()));
+  EnableDrop(static_cast<HWND>(g_frame->handle()));
 
   RefreshAddressBar(hwnd);
   AppRefreshView();

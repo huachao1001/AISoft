@@ -22,6 +22,8 @@ namespace ui {
 namespace {
 
 AiUI::ListView* g_view = nullptr;
+// 列表适配器：库滚动到哪一行才来这里取数据，长目录不预先构建整表
+std::shared_ptr<AiUI::ListRowSource> g_adapter;
 int g_sortColumn = 0;
 bool g_sortAsc = true;
 
@@ -257,7 +259,6 @@ void AttachFileList(AiUI::ListView* view) {
   // 持久化的是物理像素，恢复时直接给，避免再乘一次 DPI
   for (int i = 0; i < kColCount; ++i) view->setUserWidth(i, g_app.settings.listColWidth[i]);
   view->setSort(g_sortColumn, g_sortAsc);
-  view->setScrollable(true);
 
   HWND mainWnd = g_app.mainWnd;
 
@@ -284,6 +285,27 @@ void AttachFileList(AiUI::ListView* view) {
   };
   view->setCallbacks(std::move(callbacks));
 
+  // 适配器只记数据访问方式，具体某行画什么等滚动到那里再算
+  g_adapter = std::make_shared<AiUI::ListRowSource>();
+  g_adapter->setCount([] { return static_cast<int>(g_rows.size()); });
+  g_adapter->setBinder([](int row, AiUI::ListRow& out) {
+    const Item* item = RowItem(row);
+    if (!item) return;
+    // tag 记住条目下标，交互时再翻回来
+    out.tag = g_rows[row];
+    out.icon = ItemIcon(*item);
+    if (out.cells.size() < static_cast<size_t>(kColCount)) out.cells.resize(kColCount);
+    for (int col = 0; col < kColCount; ++col) {
+      out.cells[col].text = ItemText(col, *item);
+      out.cells[col].textColor = AiUI::kNoColor;
+    }
+  });
+  g_adapter->setTagAt([](int row) {
+    if (row < 0 || row >= static_cast<int>(g_rows.size())) return -1;
+    return g_rows[row];
+  });
+  view->setAdapter(g_adapter);
+
   RefreshFileList();
 }
 
@@ -292,25 +314,9 @@ void RefreshFileList() {
   SortItems(g_sortColumn, g_sortAsc);
   RebuildRows();
 
-  // 把可见行翻译成库要的数据行；tag 记住条目下标，交互时再翻回来
-  std::vector<AiUI::ListRow> rows;
-  rows.reserve(g_rows.size());
-  for (int index : g_rows) {
-    const Item& item = g_app.items[index];
-    AiUI::ListRow row;
-    row.tag = index;
-    row.icon = ItemIcon(item);
-    row.cells.reserve(kColCount);
-    for (int col = 0; col < kColCount; ++col) {
-      AiUI::ListCell cell;
-      cell.text = ItemText(col, item);
-      row.cells.push_back(std::move(cell));
-    }
-    rows.push_back(std::move(row));
-  }
-
+  // 只告诉控件行数变了，不预先生成任何一行
   g_view->setSort(g_sortColumn, g_sortAsc);
-  g_view->setRows(std::move(rows));
+  g_view->notifyDataSetChanged();
 }
 
 void SetFilterText(const std::wstring& text) {

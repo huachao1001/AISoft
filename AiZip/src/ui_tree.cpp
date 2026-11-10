@@ -181,7 +181,6 @@ void AttachSideTree(AiUI::TreeView* tree) {
   tree->setStyle(style);
   tree->setChildrenLoader(LoadChildren);
   tree->setSelectHandler(OnNodeSelected);
-  tree->setScrollable(true);
   RebuildSideTree();
 }
 

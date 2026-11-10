@@ -66,19 +66,19 @@ void AttachToolBar(AiUI::ButtonBar* bar) {
   if (!bar || g_bar) return;
   g_bar = bar;
 
-  g_btnRefresh = bar->add(MakeSpec(L"刷新", AiUI::IconId::kRefresh), 0);
+  g_btnRefresh = bar->addButton(MakeSpec(L"刷新", AiUI::IconId::kRefresh), 0);
   if (g_btnRefresh) g_btnRefresh->setOnClick(RunRefresh);
 
-  g_btnExtractSel = bar->add(MakeSpec(L"提取选中", AiUI::IconId::kExtract), 1);
+  g_btnExtractSel = bar->addButton(MakeSpec(L"提取选中", AiUI::IconId::kExtract), 1);
   if (g_btnExtractSel) g_btnExtractSel->setOnClick(RunExtractSel);
 
-  g_btnExtractAll = bar->add(MakeSpec(L"全部解压", AiUI::IconId::kExtractAll), 1);
+  g_btnExtractAll = bar->addButton(MakeSpec(L"全部解压", AiUI::IconId::kExtractAll), 1);
   if (g_btnExtractAll) g_btnExtractAll->setOnClick(RunExtractAll);
 
-  g_btnAdd = bar->add(MakeSpec(L"添加文件", AiUI::IconId::kAdd), 2);
+  g_btnAdd = bar->addButton(MakeSpec(L"添加文件", AiUI::IconId::kAdd), 2);
   if (g_btnAdd) g_btnAdd->setOnClick(RunAdd);
 
-  g_btnDelete = bar->add(MakeSpec(L"删除选中", AiUI::IconId::kTrash), 2);
+  g_btnDelete = bar->addButton(MakeSpec(L"删除选中", AiUI::IconId::kTrash), 2);
   if (g_btnDelete) g_btnDelete->setOnClick(RunDelete);
 
   RefreshToolbarState();
