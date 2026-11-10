@@ -1,0 +1,144 @@
+﻿# AIZip 设计说明
+
+## 目标
+
+实现一个轻量的压缩/解压工具与文件浏览界面，剔除广告、推广、
+升级弹窗、工具箱、图片/视频/PDF 压缩等无关模块。
+
+## 技术选型
+
+| 项 | 选择 | 理由 |
+|---|---|---|
+| 语言 | C++17 | 无 CRT 以外依赖，编译产物小 |
+| 界面 | 纯 Win32 + GDI | 不引入 Duilib/MFC/Qt；启动快、体积小 |
+| 压缩内核 | 官方 7-Zip 26.05（静态库） | 格式/算法/参数直接复用上游 |
+| 运行时 | 静态链接 CRT (`/MT`) | 免安装 VC++ 运行库 |
+| 构建 | CMake + MSVC | 单命令出包 |
+
+体积预算：exe ≈ 2 MB（内核已链入，无外部 dll）。
+
+## 功能范围
+
+AIZip 有两种用法：双击 exe 打开文件浏览窗口，或从 Windows 资源管理器右键菜单
+直接发起压缩 / 解压，只弹出对应的小窗口、不建主窗口。
+
+保留：
+- 主窗口与文件浏览：自绘工具栏、地址栏、文件列表、状态栏；
+  图标取自系统图标字体 Segoe Fluent Icons（缺失回退 MDL2）；
+  双击压缩包进入包内浏览，地址栏可编辑，搜索框按名称过滤
+- 压缩对话框：格式 ZIP/7Z/TAR/GZ 等 10 种、压缩方式（存储~极限）、更新方式、分卷、
+  密码、压缩后删除/测试、固实、逐项单独压缩
+- 解压对话框：目标路径/浏览/新建文件夹、更新方式、覆盖方式、密码、
+  解压后打开目标文件夹、解压后删除压缩包、保存为默认
+- 资源管理器右键菜单：压缩、一键压缩到 ZIP、解压
+
+剔除（不实现）：
+- 广告 SDK、首页推广、皮肤下载、升级检查、反馈上报
+- 工具箱（批量改名、MD5、文本替换、虚拟光驱等）
+- 图片/视频/PDF 压缩与预览、文件编辑器
+- 云盘、分享、安全扫描、守护进程
+
+## 已验证行为
+
+以下均以官方 7-Zip 26.05 交叉校验：
+
+| 项目 | 结果 |
+|---|---|
+| ZIP 压缩 | 4 文件 / 3 目录完整保留，`7z t` 通过 |
+| 7Z 加密压缩 | 极限级 → `LZMA2:12`，`7zAES` 加密，`Solid=+` |
+| 密码校验 | 正确密码通过，错误密码报错 |
+| 7z 头部加密 | `-mhe=on` 的包可正常枚举与解压（需 `ICryptoGetTextPassword` 5,0x10） |
+| 解压 | 4 个文件 SHA-256 与原文件逐字节一致 |
+| 跨格式 | TAR / TAR.GZ / RAR / CAB 解压通过 |
+| 中文文件名 | ZIP 往返保持 UTF-8 名称 |
+| 句柄释放 | 解压结束后文件立即可读（无占用） |
+| 一键压缩 | 右键「压缩到 ZIP」→ 直接产出 `源名.zip`，同名自动加 `(2)` |
+| 右键菜单 | 三个动词实机触发均正常；多选 5 个文件合并成 1 个包 |
+| 高 DPI | 150% 下布局与图标正确缩放 |
+
+## 体积
+
+| 产物 | 大小 |
+|---|---|
+| AIZip.exe（7-Zip 静态链接） | 2.0 MB |
+
+单文件分发，无需附带任何 dll，只依赖系统 DLL。
+
+## 单文件实现
+
+官方 7-Zip 源码编成静态库 `7zstatic` 后直接链进 exe，格式与算法支持和官方
+`7z.dll` 完全一致。两个必须注意的点：
+
+- **构建清单**取自官方 dll 配方 `CPP/7zip/Bundles/Format7zF/Arc.mak`，
+  由 `tools/gen_sources.ps1` 解析生成 `sources.cmake`（225 cpp / 46 c / 8 asm）。
+  各 `*Opt.c` 与同名 `.asm` 互斥，x64 下只编汇编版，否则同名符号重复定义。
+- **`/WHOLEARCHIVE:7zstatic`**：各格式靠 `*Register.cpp` 里的全局对象在静态
+  初始化阶段注册，这些对象没有任何外部引用，普通静态库链接会被整体丢弃，
+  结果是格式列表为空。整库拉入后由 `/OPT:REF` 清理真正死掉的函数。
+
+汇编模块用 `ml64` 编译。上游 `.asm` 写的是 `include ../../../../Asm/x86/7zAsm.asm`，
+而 MASM 按**当前工作目录**解析相对 include（不是源文件目录），CMake 的 ASM_MASM
+规则固定以构建目录为 CWD，无法复刻官方的 `Format7zF` 工作目录。因此配置期会生成
+一份把该 include 改写成绝对路径的副本再交给 CMake 编译。
+
+7z 头部加密（`-mhe=on`）的包在**打开阶段**只查询老接口
+`ICryptoGetTextPassword`（5,0x10），而不是解压阶段用的 2 版（5,0x11）。
+两者签名与 vtable 槽位都不同，必须各用一个独立对象实现，否则参数错位。
+
+## 目录结构
+
+根目录只放 `README.md` 与 git 元数据，两个工程并列且各自独立构建：
+
+```
+AUI/
+├─ CMakeLists.txt
+├─ include/AUI/           公开头文件（按 "AUI/xxx.h" 引用）
+│  ├─ widget.h            自绘子窗口基类：窗口类注册、消息分发、DPI 换算
+│  ├─ painter.h           Painter（HDC 封装）/ Canvas（离屏双缓冲）
+│  ├─ theme.h             配色与尺寸常量
+│  ├─ font.h              字体
+│  ├─ icon.h              图标字体渲染与资源管理器图标缓存
+│  ├─ platform.h          DPI 查询、扩展名
+│  ├─ button.h / button_bar.h   按钮与按钮条
+│  ├─ input_box.h         输入框（自绘文本、光标、选区、IME）
+│  ├─ list_view.h         文件列表（表头/行自绘、虚拟数据、多选、列宽拖动）
+│  ├─ tree_view.h         树控件视图层
+│  ├─ status_bar.h        状态栏
+│  └─ dialog.h            模态对话框外壳
+└─ src/                   上述组件的实现
+
+AiZip/
+├─ CMakeLists.txt         add_subdirectory(../AUI) 引入同级 UI 库
+├─ src/
+│  ├─ main.cpp            程序入口、单实例、命令行分发
+│  ├─ app.h/.cpp          应用状态、视图/导航编排、启动请求分发
+│  ├─ archive.h/.cpp      7-Zip 封装：打开/枚举/解压/压缩
+│  ├─ ui_main.h/.cpp      主窗口：布局、拖放、子窗口编排
+│  ├─ ui_list.h/.cpp      列表的数据与交互编排（控件用 AUI::ListView）
+│  ├─ ui_toolbar.h/.cpp   工具按钮条的装配（控件用 AUI::ButtonBar）
+│  ├─ ui_crumb.h/.cpp     面包屑导航 + 可编辑地址栏 + 搜索框宿主
+│  ├─ ui_tree.h/.cpp      左侧文件夹树的数据编排（控件用 AUI::TreeView）
+│  ├─ ui_status.h/.cpp    状态栏文案与字段来源（控件用 AUI::StatusBar）
+│  ├─ ui_theme.h          应用侧配色与尺寸常量
+│  ├─ ui.h                界面公共入口（转发 AUI 头文件）
+│  ├─ dlg_compress.h/.cpp 压缩对话框
+│  ├─ dlg_extract.h/.cpp  解压对话框
+│  ├─ dlg_input.h/.cpp    密码/文本输入框
+│  ├─ dlg_progress.h/.cpp 进度对话框
+│  ├─ shell_menu.h/.cpp   资源管理器右键菜单注册
+│  ├─ single_instance.h/.cpp  右键多选时的进程聚合
+│  ├─ res/                图标与资源
+│  └─ util.h/.cpp         路径、格式化、DPI
+└─ third_party/7z/        7-Zip 26.05 源码（与官方源码包同构）
+   └─ build-cmake/        静态库构建配置与对象清单
+```
+
+### 分层约定
+
+- `AUI` 只依赖 Win32 GDI，不引用任何应用代码；DPI、扩展名这类通用能力
+  由 `AUI/platform.h` 自带一份，避免反向依赖。
+- 主界面全部自绘：`ListView` 取代 `SysListView32` + `SysHeader32`，
+  `InputBox` 取代内嵌 `EDIT`（自己维护文本、光标、选区与 IME 组合串），
+  `TreeView` / `ButtonBar` / `StatusBar` 同样没有原生控件。
+- 应用侧的 `ui_*.cpp` 只做数据与交互编排，控件能力全部来自 `AUI`，
+  不再为单个控件写适配层。

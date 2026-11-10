@@ -10,17 +10,28 @@
 
 需要 VS2022（MSVC 14.4x）+ CMake 3.20+ + Ninja。
 
+两个工程彼此独立，可以分别打开构建：
+
 ```bat
 call "D:\vs2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
-cmake -S . -B build\cmake -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build\cmake --parallel
+
+:: UI 库（可选，AiZip 会通过 add_subdirectory 自动带上）
+cmake -S AUI -B AUI\build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build AUI\build --parallel
+
+:: 应用
+cmake -S AiZip -B AiZip\build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build AiZip\build --parallel
 ```
 
-产物是单个 `build\cmake\AIZip.exe`。CRT 已静态链接，目标机无需安装 VC++ 运行库。
+产物是单个 `AiZip\build\AiZip.exe`。CRT 已静态链接，目标机无需安装 VC++ 运行库。
+
+`AiZip` 通过 `add_subdirectory` 引入同级 `AUI`，`AUI` 不反向依赖应用。
+单独构建 `AUI` 可得到静态库与头文件，供其它宿主工程复用。
 
 ## 单文件是怎么做到的
 
-`third_party/7z/build-cmake` 把官方 7-Zip 26.05 源码编成静态库 `7zstatic`，直接链进 exe。
+`AiZip/third_party/7z/build-cmake` 把官方 7-Zip 26.05 源码编成静态库 `7zstatic`，直接链进 exe。
 构建清单取自官方 `7z.dll` 的配方 `CPP/7zip/Bundles/Format7zF/Arc.mak`，
 所以格式与算法支持和 7z.dll 完全一致。
 
@@ -65,18 +76,26 @@ MD5 / 虚拟光驱）、图片视频 PDF 压缩与预览、云盘、分享、安
 
 未实现：自解压（SFX）生成、压缩包注释写入、压缩包内直接增删成员。
 
-技术选型与验证记录见 [DESIGN.md](DESIGN.md)。
+技术选型与验证记录见 [AiZip/DESIGN.md](AiZip/DESIGN.md)。
 
 ## 目录
 
 ```
-src/                    全部源码（界面、对话框、7-Zip 封装）
-src/res/                图标与 comctl32 v6 清单
-third_party/7z/         7-Zip 26.05 源码（与官方源码包同构）
-third_party/7z/build-cmake/  静态库的 CMake 构建配置与对象清单
-tools/                  内核验证程序（test_arc.cpp）与清单生成脚本
+AUI/                        自绘 UI 库（独立工程，可单独构建）
+AUI/include/AUI/            公开头文件，按 "AUI/xxx.h" 引用
+AUI/src/                    控件实现（按钮、输入框、列表、树、状态栏…）
+AiZip/                      应用工程
+AiZip/src/                  业务源码（界面装配、对话框、7-Zip 封装）
+AiZip/src/res/              图标与 comctl32 v6 清单
+AiZip/third_party/7z/       7-Zip 26.05 源码（与官方源码包同构）
+AiZip/third_party/7z/build-cmake/  静态库的 CMake 构建配置与对象清单
+AiZip/tools/                内核验证程序（test_arc.cpp）与清单生成脚本
 ```
 
-`third_party/7z/` 只保留编进 `7zstatic` 的部分：上游的 GUI（`CPP/7zip/UI`）、
+主界面全部自绘：工具栏、面包屑、搜索框、地址栏、文件列表、侧树与状态栏
+都是 `AUI` 的自绘窗口，不使用 `SysListView32` / `SysHeader32` / 原生 `EDIT`
+这类子控件，为跨平台留出空间。
+
+`AiZip/third_party/7z/` 只保留编进 `7zstatic` 的部分：上游的 GUI（`CPP/7zip/UI`）、
 编译器工具链（`C/Util`）、非 Format7zF 的 bundle 和 7z.dll 分发件都已移除。
 需要核对上游改动时，可直接与官方 7-Zip 26.05 源码包对应目录 diff。
