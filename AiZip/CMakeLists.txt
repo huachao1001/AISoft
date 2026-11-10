@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(AiZip CXX C ASM_MASM)
 
-# AiZip：压缩软件应用，可独立构建（cmake -S AiZip -B build/AiZip）。
-# 依赖同级的 AUI 库，用相对路径引入；AUI 本身不反向依赖本工程。
+# AiZip：压缩软件应用，可独立构建（cmake -S AiZip -B AiZip/build）。
+# 依赖同级的 AiUI 库，用相对路径引入；AiUI 本身不反向依赖本工程。
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -17,8 +17,8 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
 # 7-Zip 内核以静态库形式编进 exe，不再需要外部 dll
 add_subdirectory(third_party/7z/build-cmake)
 
-# 同级目录的 AUI 自绘 UI 库
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../AUI ${CMAKE_CURRENT_BINARY_DIR}/AUI)
+# 同级目录的 AiUI 自绘 UI 库
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../AiUI ${CMAKE_CURRENT_BINARY_DIR}/AiUI)
 
 # 7-Zip 各格式靠 *Register.cpp 里的全局对象在静态初始化阶段注册自己，这些对象
 # 没有任何外部引用，普通静态库链接会被整体丢弃，结果是格式列表为空。
@@ -36,6 +36,7 @@ add_executable(AiZip WIN32
   src/ui_tree.cpp
   src/ui_crumb.cpp
   src/ui_status.cpp
+  src/dlg_util.cpp
   src/dlg_compress.cpp
   src/dlg_extract.cpp
   src/dlg_input.cpp
@@ -53,6 +54,9 @@ set_source_files_properties(src/res/aizip.rc PROPERTIES
 
 target_include_directories(AiZip PRIVATE src)
 
+# XML 布局在构建期自动转成 C++ 并加入编译，改 .xml 后重新构建即可
+aiui_add_layouts(AiZip assets/layouts/main_frame.xml)
+
 target_compile_options(AiZip PRIVATE /O2 /Gy /Gw /GF /utf-8 /W4 /permissive- /Zc:__cplusplus /GL)
 
 # 清单里声明 comctl32 v6（控件视觉风格）与 Per-Monitor V2 DPI 感知。
@@ -64,8 +68,9 @@ target_link_options(AiZip PRIVATE
 )
 
 target_link_libraries(AiZip PRIVATE
-  AUI
+  AiUI
   7zstatic
+  comctl32
 )
 
 # 内核功能回归工具（非发布产物）：命令行驱动压缩/解压，便于端到端校验

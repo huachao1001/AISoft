@@ -1,16 +1,16 @@
-﻿// 文件列表：数据与交互编排，绘制/选择/滚动由 AUI::ListView 负责
+﻿// 文件列表：数据与交互编排，绘制/选择/滚动由 AiUI::ListView 负责
 #include "ui_list.h"
 
 #include "app.h"
 #include "dlg_compress.h"
 #include "dlg_extract.h"
-#include "ui.h"
 #include "ui_main.h"
+#include "ui_status.h"
 #include "ui_toolbar.h"
 #include "ui_tree.h"
-#include "ui_theme.h"
 #include "util.h"
-#include "AUI/list_view.h"
+#include "AiUI/theme.h"
+#include "AiUI/widgets/list_view.h"
 
 #include <shellapi.h>
 #include <shlwapi.h>
@@ -21,7 +21,7 @@
 namespace ui {
 namespace {
 
-std::unique_ptr<AUI::ListView> g_view;
+AiUI::ListView* g_view = nullptr;
 int g_sortColumn = 0;
 bool g_sortAsc = true;
 
@@ -46,49 +46,51 @@ const ColDef kCols[kColCount] = {
     {L"修改时间", 160, false, false},
 };
 
-std::wstring ItemText(int column, const Item& it) {
+std::wstring ItemText(int column, const Item& item) {
   switch (column) {
     case kColType:
-      return it.typeName;
+      return item.typeName;
     case kColSize:
       // 文件夹不统计大小，留空比画横线干净
-      return it.isDir ? L"" : util::FormatSize(it.size);
+      return item.isDir ? L"" : util::FormatSize(item.size);
     case kColModified:
-      return (it.mtime.dwLowDateTime || it.mtime.dwHighDateTime) ? util::FormatTime(it.mtime) : L"";
+      return (item.mtime.dwLowDateTime || item.mtime.dwHighDateTime)
+                 ? util::FormatTime(item.mtime)
+                 : L"";
     default:
-      return it.name;
+      return item.name;
   }
 }
 
-uint64_t ItemNumber(int column, const Item& it) {
+uint64_t ItemNumber(int column, const Item& item) {
   switch (column) {
     case kColSize:
-      return it.size;
+      return item.size;
     case kColModified:
-      return (static_cast<uint64_t>(it.mtime.dwHighDateTime) << 32) | it.mtime.dwLowDateTime;
+      return (static_cast<uint64_t>(item.mtime.dwHighDateTime) << 32) | item.mtime.dwLowDateTime;
     default:
       return 0;
   }
 }
 
-void SortItems(int col, bool asc) {
-  const bool numeric = (col == kColSize || col == kColModified);
+void SortItems(int column, bool ascending) {
+  const bool numeric = (column == kColSize || column == kColModified);
   std::stable_sort(g_app.items.begin(), g_app.items.end(), [&](const Item& a, const Item& b) {
     if (a.isDir != b.isDir) return a.isDir;  // 文件夹恒在前
     bool less;
     if (numeric) {
-      less = ItemNumber(col, a) < ItemNumber(col, b);
+      less = ItemNumber(column, a) < ItemNumber(column, b);
     } else {
-      less = ::CompareStringOrdinal(ItemText(col, a).c_str(), -1, ItemText(col, b).c_str(), -1,
+      less = ::CompareStringOrdinal(ItemText(column, a).c_str(), -1, ItemText(column, b).c_str(), -1,
                                     TRUE) == CSTR_LESS_THAN;
     }
-    return asc ? less : !less;
+    return ascending ? less : !less;
   });
 }
 
-bool MatchFilter(const Item& it) {
+bool MatchFilter(const Item& item) {
   if (g_filter.empty()) return true;
-  return ::StrStrIW(it.name.c_str(), g_filter.c_str()) != nullptr;
+  return ::StrStrIW(item.name.c_str(), g_filter.c_str()) != nullptr;
 }
 
 void RebuildRows() {
@@ -102,72 +104,76 @@ void RebuildRows() {
 // 可见行下标 -> g_app.items 下标
 const Item* RowItem(int row) {
   if (row < 0 || row >= static_cast<int>(g_rows.size())) return nullptr;
-  const int idx = g_rows[row];
-  if (idx < 0 || idx >= static_cast<int>(g_app.items.size())) return nullptr;
-  return &g_app.items[idx];
+  const int index = g_rows[row];
+  if (index < 0 || index >= static_cast<int>(g_app.items.size())) return nullptr;
+  return &g_app.items[index];
 }
 
-// 行首图标：文件夹用系统图标，文件用系统关联图标
-void DrawFileGlyph(AUI::Painter& p, const Item& it, const RECT& rc) {
-  if (it.isDir) {
-    p.Icon(AUI::IconId::kFolder, rc, RGB(0x9a, 0xa3, 0xaf));
+// 行首图标：文件夹用矢量图标，文件用系统关联图标
+void DrawFileGlyph(AiUI::Painter& painter, int row, const AiUI::Rect& rect) {
+  const Item* item = RowItem(row);
+  if (!item) return;
+
+  if (item->isDir) {
+    painter.drawIcon(AiUI::IconId::kFolder, rect, AiUI::kColorTextFaint);
     return;
   }
-  HICON icon = AUI::ShellIconFor(it.fullPath.empty() ? it.name : it.fullPath, false);
-  if (icon) {
-    p.BitmapIcon(icon, rc);
+  const AiUI::Image icon =
+      AiUI::fileIcon(item->fullPath.empty() ? item->name : item->fullPath, false);
+  if (icon.isValid()) {
+    painter.drawImage(icon, rect);
     return;
   }
-  p.Icon(AUI::IconId::kFile, rc, RGB(0x9a, 0xa3, 0xaf));
+  painter.drawIcon(AiUI::IconId::kFile, rect, AiUI::kColorTextFaint);
 }
 
 void OnActivate(HWND mainWnd, int row) {
-  const Item* it = RowItem(row);
-  if (!it) return;
+  const Item* item = RowItem(row);
+  if (!item) return;
 
   if (g_app.archiveMode) {
-    if (it->isDir) {
-      g_app.innerPath = g_app.innerPath.empty() ? it->name : g_app.innerPath + L"\\" + it->name;
+    if (item->isDir) {
+      g_app.innerPath =
+          g_app.innerPath.empty() ? item->name : g_app.innerPath + L"\\" + item->name;
       AppRefreshView();
       return;
     }
-    const int idx = g_rows[row];
-    ShowExtractDialog(mainWnd, {idx});
+    ShowExtractDialog(mainWnd, {g_rows[row]});
     return;
   }
 
-  if (it->isDir) {
-    AppNavigateTo(it->fullPath);
+  if (item->isDir) {
+    AppNavigateTo(item->fullPath);
     return;
   }
-  if (arc::Archive::IsArchiveFile(it->fullPath)) {
-    AppOpenArchive(it->fullPath);
+  if (arc::Archive::IsArchiveFile(item->fullPath)) {
+    AppOpenArchive(item->fullPath);
     return;
   }
-  ::ShellExecuteW(mainWnd, L"open", it->fullPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+  ::ShellExecuteW(mainWnd, L"open", item->fullPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
 void OnRightClick(HWND mainWnd) {
-  const auto sel = GetSelectedItems();
-  const bool hasSel = !sel.empty();
+  const auto selected = GetSelectedItems();
+  const bool hasSelection = !selected.empty();
 
   HMENU menu = ::CreatePopupMenu();
   const bool canExtract = CanExtractSelected();
   ::AppendMenuW(menu, MF_STRING | (canExtract ? 0 : MF_GRAYED), 1, L"解压到...");
   ::AppendMenuW(menu, MF_STRING, 2, L"压缩为...");
   ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-  ::AppendMenuW(menu, MF_STRING | (hasSel ? 0 : MF_GRAYED), 3, L"删除");
+  ::AppendMenuW(menu, MF_STRING | (hasSelection ? 0 : MF_GRAYED), 3, L"删除");
   ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   ::AppendMenuW(menu, MF_STRING, 4, L"刷新");
-  ::AppendMenuW(menu, MF_STRING | (hasSel ? 0 : MF_GRAYED), 5, L"属性");
+  ::AppendMenuW(menu, MF_STRING | (hasSelection ? 0 : MF_GRAYED), 5, L"属性");
 
   POINT pt;
   ::GetCursorPos(&pt);
-  const UINT cmd = ::TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, mainWnd,
-                                    nullptr);
+  const UINT command = ::TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0,
+                                        mainWnd, nullptr);
   ::DestroyMenu(menu);
 
-  switch (cmd) {
+  switch (command) {
     case 1:
       ExtractSelection(mainWnd);
       break;
@@ -178,23 +184,24 @@ void OnRightClick(HWND mainWnd) {
         break;
       }
       std::vector<std::wstring> paths;
-      for (int idx : sel) {
-        if (idx >= 0 && idx < static_cast<int>(g_app.items.size()))
-          paths.push_back(g_app.items[idx].fullPath);
+      for (int index : selected) {
+        if (index >= 0 && index < static_cast<int>(g_app.items.size())) {
+          paths.push_back(g_app.items[index].fullPath);
+        }
       }
       if (paths.empty()) paths.push_back(g_app.curDir);
       ShowCompressDialog(mainWnd, paths);
       break;
     }
     case 3:
-      DeleteItems(mainWnd, sel);
+      DeleteItems(mainWnd, selected);
       break;
     case 4:
       AppRefreshView();
       break;
     case 5:
-      if (hasSel && !g_app.archiveMode) {
-        ::ShellExecuteW(mainWnd, L"properties", g_app.items[sel[0]].fullPath.c_str(), nullptr,
+      if (hasSelection && !g_app.archiveMode) {
+        ::ShellExecuteW(mainWnd, L"properties", g_app.items[selected[0]].fullPath.c_str(), nullptr,
                         nullptr, SW_SHOW);
       }
       break;
@@ -203,12 +210,12 @@ void OnRightClick(HWND mainWnd) {
   }
 }
 
-void OnListKeyDown(HWND mainWnd, int vk) {
-  switch (vk) {
-    case VK_DELETE:
+void OnListKeyDown(HWND mainWnd, AiUI::Key key) {
+  switch (key) {
+    case AiUI::Key::kDelete:
       DeleteItems(mainWnd, GetSelectedItems());
       break;
-    case VK_BACK:
+    case AiUI::Key::kBackspace:
       AppGoUp();
       break;
     default:
@@ -216,105 +223,100 @@ void OnListKeyDown(HWND mainWnd, int vk) {
   }
 }
 
-std::vector<AUI::ListColumn> BuildColumns() {
-  std::vector<AUI::ListColumn> out;
+std::vector<AiUI::ListColumn> BuildColumns() {
+  std::vector<AiUI::ListColumn> out;
   out.reserve(kColCount);
   for (int i = 0; i < kColCount; ++i) {
-    AUI::ListColumn c;
-    c.title = kCols[i].title;
-    c.width = kCols[i].width;  // 设计值，AUI 内部乘 DPI
-    c.align = kCols[i].rightAligned ? AUI::ListAlign::kRight : AUI::ListAlign::kLeft;
-    c.stretch = kCols[i].stretch;
-    out.push_back(c);
+    AiUI::ListColumn column;
+    column.title = kCols[i].title;
+    column.width = kCols[i].width;  // 设计值，库内按 DPI 换算
+    column.align = kCols[i].rightAligned ? AiUI::ListAlign::kRight : AiUI::ListAlign::kLeft;
+    column.stretch = kCols[i].stretch;
+    out.push_back(column);
   }
   return out;
 }
 
 }  // namespace
 
-HWND CreateFileList(HWND parent, HINSTANCE inst, int id) {
-  g_view = std::make_unique<AUI::ListView>();
+void AttachFileList(AiUI::ListView* view) {
+  if (!view || g_view) return;
+  g_view = view;
 
-  AUI::ListStyle style;
-  style.headH = kHeadH;  // 设计值，AUI 内部按 DPI 换算
-  style.rowH = kRowH;
+  AiUI::ListStyle style;
+  style.headHeight = AiUI::kSizeHeaderH;
+  style.rowHeight = AiUI::kSizeRowH;
   style.padX = 16;
   style.iconSize = 18;
-  g_view->SetStyle(style);
+  view->setStyle(style);
 
   g_sortColumn = g_app.settings.listSortColumn;
   g_sortAsc = g_app.settings.listSortAsc;
   if (g_sortColumn >= kColCount) g_sortColumn = kColName;
 
-  g_view->SetColumns(BuildColumns());
+  view->setColumns(BuildColumns());
   // 持久化的是物理像素，恢复时直接给，避免再乘一次 DPI
-  for (int i = 0; i < kColCount; ++i) g_view->SetUserWidth(i, g_app.settings.listColWidth[i]);
-  g_view->SetSort(g_sortColumn, g_sortAsc);
+  for (int i = 0; i < kColCount; ++i) view->setUserWidth(i, g_app.settings.listColWidth[i]);
+  view->setSort(g_sortColumn, g_sortAsc);
+  view->setScrollable(true);
 
   HWND mainWnd = g_app.mainWnd;
 
-  AUI::ListCallbacks cb;
-  cb.rowCount = [] { return static_cast<int>(g_rows.size()); };
-  cb.text = [](int row, int column) -> std::wstring {
-    const Item* it = RowItem(row);
-    return it ? ItemText(column, *it) : std::wstring();
+  AiUI::ListCallbacks callbacks;
+  callbacks.rowCount = [] { return static_cast<int>(g_rows.size()); };
+  callbacks.text = [](int row, int column) -> std::wstring {
+    const Item* item = RowItem(row);
+    return item ? ItemText(column, *item) : std::wstring();
   };
-  cb.drawIcon = [](AUI::Painter& p, int row, const RECT& rc) {
-    if (const Item* it = RowItem(row)) DrawFileGlyph(p, *it, rc);
+  callbacks.drawIcon = [](AiUI::Painter& painter, int row, const AiUI::Rect& rect) {
+    DrawFileGlyph(painter, row, rect);
   };
-  cb.onActivate = [mainWnd](int row) { OnActivate(mainWnd, row); };
-  cb.onSelectionChanged = [mainWnd] {
-    RefreshStatusBar(mainWnd);
+  callbacks.onActivate = [mainWnd](int row) { OnActivate(mainWnd, row); };
+  callbacks.onSelectionChanged = [mainWnd] {
+    RefreshStatusBarData();
     RefreshToolbarState();
   };
-  cb.onSort = [](int column, bool asc) {
+  callbacks.onSort = [](int column, bool ascending) {
     g_sortColumn = column;
-    g_sortAsc = asc;
+    g_sortAsc = ascending;
     g_app.settings.listSortColumn = column;
-    g_app.settings.listSortAsc = asc;
+    g_app.settings.listSortAsc = ascending;
     RefreshFileList();
   };
-  cb.onContextMenu = [mainWnd] { OnRightClick(mainWnd); };
-  cb.onKeyDown = [mainWnd](int vk) { OnListKeyDown(mainWnd, vk); };
-  cb.onColumnResized = [] {
+  callbacks.onContextMenu = [mainWnd] { OnRightClick(mainWnd); };
+  callbacks.onKeyDown = [mainWnd](AiUI::Key key) { OnListKeyDown(mainWnd, key); };
+  callbacks.onColumnResized = [] {
     for (int i = 0; i < kColCount; ++i) {
-      const int w = g_view->ColumnWidth(i);
-      if (w > 0) g_app.settings.listColWidth[i] = w;
+      const int width = g_view->columnWidth(i);
+      if (width > 0) g_app.settings.listColWidth[i] = width;
     }
   };
-  g_view->SetCallbacks(std::move(cb));
+  view->setCallbacks(std::move(callbacks));
 
-  return g_view->Create(parent, inst, id, L"AIZipFileList",
-                        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL);
-}
-
-void LayoutFileList(HWND) {
-  if (!g_view || !g_view->hwnd()) return;
-  g_view->LayoutColumns();
-  g_view->Invalidate();
+  RefreshFileList();
 }
 
 void RefreshFileList() {
   if (!g_view) return;
   SortItems(g_sortColumn, g_sortAsc);
   RebuildRows();
-  g_view->SetSort(g_sortColumn, g_sortAsc);
-  g_view->Reload();
+  g_view->setSort(g_sortColumn, g_sortAsc);
+  g_view->reload();
   // 内容整体换了（换目录/改过滤/重排），按行号保留选中会落到别的条目上
-  g_view->ClearSelection();
+  g_view->clearSelection();
 }
 
 void SetFilterText(const std::wstring& text) {
   if (text == g_filter) return;
   g_filter = text;
   RefreshFileList();
-  RefreshStatusBar(g_app.mainWnd);
+  RefreshStatusBarData();
 }
 
 std::vector<int> GetSelectedItems() {
   std::vector<int> out;
   if (!g_view) return out;
-  for (int row : g_view->SelectedRows()) {
+  for (int row : g_view->selectedRows()) {
     if (row >= 0 && row < static_cast<int>(g_rows.size())) out.push_back(g_rows[row]);
   }
   return out;
@@ -325,29 +327,28 @@ const std::vector<int>& VisibleRows() { return g_rows; }
 // 包内模式天然可解压；文件系统下只认单个受支持的压缩包，多选或普通文件一律不可。
 // 右侧没有选中项时，退回左侧树当前节点判断。
 bool CanExtractSelected() {
-  const auto sel = GetSelectedItems();
-  if (!sel.empty()) {
+  const auto selected = GetSelectedItems();
+  if (!selected.empty()) {
     if (g_app.archiveMode) return true;
-    if (sel.size() != 1) return false;
-    const int idx = sel[0];
-    if (idx < 0 || idx >= static_cast<int>(g_app.items.size())) return false;
-    const Item& it = g_app.items[idx];
-    return !it.isDir && arc::Archive::IsArchiveFile(it.fullPath);
+    if (selected.size() != 1) return false;
+    const int index = selected[0];
+    if (index < 0 || index >= static_cast<int>(g_app.items.size())) return false;
+    const Item& item = g_app.items[index];
+    return !item.isDir && arc::Archive::IsArchiveFile(item.fullPath);
   }
-  // 右侧没选中时退回左侧树：树上的目标同样可以解压
   return TreeActiveCanExtract();
 }
 
 // 解压入口：右侧有选中项就按选中项，否则用左侧树的当前节点
 void ExtractSelection(HWND owner) {
-  const auto sel = GetSelectedItems();
-  if (!sel.empty()) {
+  const auto selected = GetSelectedItems();
+  if (!selected.empty()) {
     if (g_app.archiveMode) {
-      ShowExtractDialog(owner, sel);
-    } else if (sel.size() == 1) {
-      const int idx = sel[0];
-      if (idx >= 0 && idx < static_cast<int>(g_app.items.size())) {
-        AppExtractArchive(owner, g_app.items[idx].fullPath);
+      ShowExtractDialog(owner, selected);
+    } else if (selected.size() == 1) {
+      const int index = selected[0];
+      if (index >= 0 && index < static_cast<int>(g_app.items.size())) {
+        AppExtractArchive(owner, g_app.items[index].fullPath);
       }
     }
     return;
@@ -375,16 +376,17 @@ void DeleteItems(HWND mainWnd, const std::vector<int>& indices) {
     return;
   }
 
-  const std::wstring msg = L"确定把选中的 " + std::to_wstring(indices.size()) + L" 项移到回收站吗？";
-  if (::MessageBoxW(mainWnd, msg.c_str(), L"确认删除",
+  const std::wstring message =
+      L"确定把选中的 " + std::to_wstring(indices.size()) + L" 项移到回收站吗？";
+  if (::MessageBoxW(mainWnd, message.c_str(), L"确认删除",
                     MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) {
     return;
   }
 
   std::wstring list;
-  for (int idx : indices) {
-    if (idx < 0 || idx >= static_cast<int>(g_app.items.size())) continue;
-    list += g_app.items[idx].fullPath;
+  for (int index : indices) {
+    if (index < 0 || index >= static_cast<int>(g_app.items.size())) continue;
+    list += g_app.items[index].fullPath;
     list.push_back(L'\0');
   }
   list.push_back(L'\0');
@@ -394,8 +396,7 @@ void DeleteItems(HWND mainWnd, const std::vector<int>& indices) {
   op.wFunc = FO_DELETE;
   op.pFrom = list.c_str();
   op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI;
-  const int r = ::SHFileOperationW(&op);
-  if (r != 0) {
+  if (::SHFileOperationW(&op) != 0) {
     ::MessageBoxW(mainWnd, L"部分项目删除失败。", L"AIZip", MB_OK | MB_ICONWARNING);
   }
   AppRefreshView();

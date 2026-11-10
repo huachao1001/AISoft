@@ -1,12 +1,10 @@
-// 轻量输入框
+﻿// 轻量输入框
 #include "dlg_input.h"
 
 #include "app.h"
 #include "ui.h"
 
 #include <commctrl.h>
-
-using namespace AUI;
 
 namespace ui {
 namespace {
@@ -35,7 +33,7 @@ void CreateControls(HWND hwnd) {
   CreateDlgItem(hwnd, L"BUTTON", L"取消", BS_PUSHBUTTON | WS_TABSTOP, 266, 74, 66, 26, kIdCancel);
 
   for (HWND c = ::GetWindow(hwnd, GW_CHILD); c; c = ::GetWindow(c, GW_HWNDNEXT)) {
-    ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(fonts.ui), TRUE);
+    ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(DialogFont()), TRUE);
   }
 }
 

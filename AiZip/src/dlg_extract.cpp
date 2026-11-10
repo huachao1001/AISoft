@@ -1,4 +1,4 @@
-// 解压对话框
+﻿// 解压对话框
 #include "dlg_extract.h"
 
 #include "app.h"
@@ -16,8 +16,6 @@
 
 #include <string>
 #include <vector>
-
-using namespace AUI;
 
 namespace ui {
 namespace {
@@ -114,7 +112,7 @@ void CreateControls(HWND hwnd) {
   make(L"BUTTON", L"取消(C)", BS_PUSHBUTTON | WS_TABSTOP, 394, 360, 68, 26, kIdCancel);
 
   for (HWND c = ::GetWindow(hwnd, GW_CHILD); c; c = ::GetWindow(c, GW_HWNDNEXT)) {
-    ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(fonts.ui), TRUE);
+    ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(DialogFont()), TRUE);
   }
 }
 

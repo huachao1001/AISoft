@@ -1,4 +1,4 @@
-﻿// 文件列表：数据与交互编排，控件由 AUI::ListView 提供
+﻿// 文件列表：数据与交互编排，控件由 AiUI::ListView 提供
 #pragma once
 
 #include <windows.h>
@@ -6,10 +6,13 @@
 #include <string>
 #include <vector>
 
+namespace AiUI {
+class ListView;
+}
+
 namespace ui {
 
-HWND CreateFileList(HWND parent, HINSTANCE inst, int id);
-void LayoutFileList(HWND list);
+void AttachFileList(AiUI::ListView* view);
 void RefreshFileList();
 
 // 当前选中项在 g_app.items 中的下标

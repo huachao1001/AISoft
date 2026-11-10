@@ -10,12 +10,13 @@
 | 项 | 选择 | 理由 |
 |---|---|---|
 | 语言 | C++17 | 无 CRT 以外依赖，编译产物小 |
-| 界面 | 纯 Win32 + GDI | 不引入 Duilib/MFC/Qt；启动快、体积小 |
+| 界面 | 自绘 UI 库 `AiUI`：GDI+ 离屏双缓冲 + 抽象平台层 | 不引入 Duilib/MFC/Qt；启动快、体积小，控件可换后端复用 |
+| 布局 | `FrameLayout` / `LinearLayout` + XML 构建期生成 C++ | 手写装配代码改成声明式，缩放交给布局系统 |
 | 压缩内核 | 官方 7-Zip 26.05（静态库） | 格式/算法/参数直接复用上游 |
 | 运行时 | 静态链接 CRT (`/MT`) | 免安装 VC++ 运行库 |
 | 构建 | CMake + MSVC | 单命令出包 |
 
-体积预算：exe ≈ 2 MB（内核已链入，无外部 dll）。
+体积预算：exe ≈ 2.2 MB（内核已链入，无外部 dll）。
 
 ## 功能范围
 
@@ -60,7 +61,7 @@ AIZip 有两种用法：双击 exe 打开文件浏览窗口，或从 Windows 资
 
 | 产物 | 大小 |
 |---|---|
-| AIZip.exe（7-Zip 静态链接） | 2.0 MB |
+| AIZip.exe（7-Zip 静态链接） | 2.2 MB |
 
 单文件分发，无需附带任何 dll，只依赖系统 DLL。
 
@@ -90,37 +91,41 @@ AIZip 有两种用法：双击 exe 打开文件浏览窗口，或从 Windows 资
 根目录只放 `README.md` 与 git 元数据，两个工程并列且各自独立构建：
 
 ```
-AUI/
+AiUI/
 ├─ CMakeLists.txt
-├─ include/AUI/           公开头文件（按 "AUI/xxx.h" 引用）
-│  ├─ widget.h            自绘子窗口基类：窗口类注册、消息分发、DPI 换算
-│  ├─ painter.h           Painter（HDC 封装）/ Canvas（离屏双缓冲）
+├─ include/AiUI/          公开头文件（按 "AiUI/xxx.h" 引用）
+│  ├─ widget.h            控件基类：树结构、测量、布局、事件分发、DPI 换算
+│  ├─ painter.h           PaintBackend（最小图元）+ Painter（组合绘制）+ Canvas（离屏双缓冲）
 │  ├─ theme.h             配色与尺寸常量
-│  ├─ font.h              字体
-│  ├─ icon.h              图标字体渲染与资源管理器图标缓存
-│  ├─ platform.h          DPI 查询、扩展名
-│  ├─ button.h / button_bar.h   按钮与按钮条
-│  ├─ input_box.h         输入框（自绘文本、光标、选区、IME）
-│  ├─ list_view.h         文件列表（表头/行自绘、虚拟数据、多选、列宽拖动）
-│  ├─ tree_view.h         树控件视图层
-│  ├─ status_bar.h        状态栏
-│  └─ dialog.h            模态对话框外壳
-└─ src/                   上述组件的实现
+│  ├─ font.h              FontSet：按 DPI 创建的一组界面字体
+│  ├─ icon.h              矢量图标 ID
+│  ├─ platform.h          平台后端接口：窗口、字体、图片、绘制子系统生命周期
+│  ├─ layouts/            FrameLayout / LinearLayout
+│  └─ widgets/            Button / ButtonBar / InputBox / ListView / TreeView /
+│                         StatusBar / TextView / ImageView
+├─ src/
+│  ├─ layouts/            布局实现
+│  ├─ widgets/            控件实现
+│  └─ win32/              仅此目录出现 HWND / HDC / GDI+，公开头文件不含平台类型
+├─ tools/layoutgen/       XML → C++ 布局代码生成器
+└─ cmake/                 aiui_add_layouts() 构建规则
 
 AiZip/
-├─ CMakeLists.txt         add_subdirectory(../AUI) 引入同级 UI 库
+├─ CMakeLists.txt         add_subdirectory(../AiUI) 引入同级 UI 库
+├─ assets/layouts/        XML 界面布局（构建期自动转 C++）
 ├─ src/
 │  ├─ main.cpp            程序入口、单实例、命令行分发
 │  ├─ app.h/.cpp          应用状态、视图/导航编排、启动请求分发
 │  ├─ archive.h/.cpp      7-Zip 封装：打开/枚举/解压/压缩
-│  ├─ ui_main.h/.cpp      主窗口：布局、拖放、子窗口编排
-│  ├─ ui_list.h/.cpp      列表的数据与交互编排（控件用 AUI::ListView）
-│  ├─ ui_toolbar.h/.cpp   工具按钮条的装配（控件用 AUI::ButtonBar）
-│  ├─ ui_crumb.h/.cpp     面包屑导航 + 可编辑地址栏 + 搜索框宿主
-│  ├─ ui_tree.h/.cpp      左侧文件夹树的数据编排（控件用 AUI::TreeView）
-│  ├─ ui_status.h/.cpp    状态栏文案与字段来源（控件用 AUI::StatusBar）
-│  ├─ ui_theme.h          应用侧配色与尺寸常量
-│  ├─ ui.h                界面公共入口（转发 AUI 头文件）
+│  ├─ ui_main.h/.cpp      主窗口：装配生成的 MainFrame、拖放、窗口消息
+│  ├─ ui_list.h/.cpp      列表的数据与交互编排（控件用 AiUI::ListView）
+│  ├─ ui_toolbar.h/.cpp   工具按钮条的装配（控件用 AiUI::ButtonBar）
+│  ├─ ui_crumb.h/.cpp     CrumbBar：面包屑 + 可编辑地址栏 + 搜索框（自绘 Widget）
+│  ├─ ui_tree.h/.cpp      左侧文件夹树的数据编排（控件用 AiUI::TreeView）
+│  ├─ ui_status.h/.cpp    状态栏文案与字段来源（控件用 AiUI::StatusBar）
+│  ├─ ui_theme.h          对话框底色分量（GDI 与 GDI+ 共用）
+│  ├─ ui.h                界面公共入口（转发对话框辅助头文件）
+│  ├─ dlg_util.h/.cpp     对话框宿主辅助：窗口类、居中、模态循环、背景绘制
 │  ├─ dlg_compress.h/.cpp 压缩对话框
 │  ├─ dlg_extract.h/.cpp  解压对话框
 │  ├─ dlg_input.h/.cpp    密码/文本输入框
@@ -135,10 +140,15 @@ AiZip/
 
 ### 分层约定
 
-- `AUI` 只依赖 Win32 GDI，不引用任何应用代码；DPI、扩展名这类通用能力
-  由 `AUI/platform.h` 自带一份，避免反向依赖。
+- `AiUI` 不引用任何应用代码，只对外暴露抽象层；平台细节（`HWND` / `HDC` /
+  GDI+）全部收在 `src/win32/`，换平台只需重写 `PaintBackend` 与 `Platform`。
+- `widgets/dialog.h` 是唯一的例外：它是宿主接入层，允许出现 `HWND` / `WNDPROC`，
+  控件头文件不引用它。原生对话框（压缩/解压/输入/进度）保留系统控件，其 Win32
+  辅助走应用侧 `ui::dlg_util`。
 - 主界面全部自绘：`ListView` 取代 `SysListView32` + `SysHeader32`，
   `InputBox` 取代内嵌 `EDIT`（自己维护文本、光标、选区与 IME 组合串），
   `TreeView` / `ButtonBar` / `StatusBar` 同样没有原生控件。
-- 应用侧的 `ui_*.cpp` 只做数据与交互编排，控件能力全部来自 `AUI`，
+- 主界面结构由 `assets/layouts/main_frame.xml` 描述，构建期生成
+  `AiUI::generated::MainFrame`，`WM_SIZE` 直接交给布局系统。
+- 应用侧的 `ui_*.cpp` 只做数据与交互编排，控件能力全部来自 `AiUI`，
   不再为单个控件写适配层。

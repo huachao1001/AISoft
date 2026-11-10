@@ -1,4 +1,4 @@
-// 进度对话框：工作线程跑压缩/解压，UI 线程只负责刷新
+﻿// 进度对话框：工作线程跑压缩/解压，UI 线程只负责刷新
 #include "dlg_progress.h"
 
 #include "app.h"
@@ -11,8 +11,6 @@
 #include <deque>
 #include <mutex>
 #include <thread>
-
-using namespace AUI;
 
 namespace ui {
 namespace {
@@ -86,7 +84,7 @@ void CreateControls(HWND hwnd) {
   ::SendMessageW(g_state->bar, PBM_SETPOS, 0, 0);
 
   for (HWND c = ::GetWindow(hwnd, GW_CHILD); c; c = ::GetWindow(c, GW_HWNDNEXT)) {
-    ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(fonts.ui), TRUE);
+    ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(DialogFont()), TRUE);
   }
 }
 

@@ -1,0 +1,75 @@
+// Button：圆角描边按钮，支持图标 + 文字
+#pragma once
+
+#include "AiUI/painter.h"
+#include "AiUI/theme.h"
+#include "AiUI/widget.h"
+
+#include <functional>
+#include <string>
+
+namespace AiUI {
+
+// 按钮外观
+enum class ButtonStyle {
+  kOutline,  // 圆角描边 + 白底（工具条）
+  kSubtle,   // 无边框，仅悬停底色
+  kFlat,     // 完全平铺
+};
+
+// 图标与文字的相对位置
+enum class IconPlacement { kNone, kLeft, kTop, kOnly };
+
+struct ButtonSpec {
+  std::wstring label;
+  IconId icon = IconId::kNone;
+  bool hasIcon = false;
+  IconPlacement placement = IconPlacement::kLeft;
+  ButtonStyle style = ButtonStyle::kOutline;
+
+  // 尺寸（96 DPI 设计值）；0 表示按内容自适应
+  int width = 0;
+  int height = 32;
+  int iconSize = 18;
+  int padX = 12;
+  int iconGap = 6;
+  int radius = 7;
+
+  Color background = kNoColor;
+  Color border = kNoColor;
+  Color ink = kNoColor;
+};
+
+class Button : public Widget {
+ public:
+  Button() { className_ = L"AiUIButton"; }
+
+  void setSpec(const ButtonSpec& spec);
+  const ButtonSpec& spec() const { return spec_; }
+
+  void setLabel(const std::wstring& label);
+  void setIcon(IconId icon);
+  void setEnabled(bool enabled);
+
+  // 内容自适应宽度（物理像素）
+  int preferredWidth();
+
+ protected:
+  void onPaint(Painter& painter, const Rect& rect) override;
+  Size onMeasure(const Size& available) override;
+  void onMouseDown(const MouseEvent& e) override;
+  void onMouseUp(const MouseEvent& e) override;
+  void onMouseMove(const MouseEvent& e) override;
+  void onMouseLeave() override;
+  void onDoubleClick(const MouseEvent& e) override;
+
+ private:
+  // 按状态解析出背景、边框、墨色
+  void resolvePalette(Color& background, Color& border, Color& ink) const;
+
+  ButtonSpec spec_{};
+  bool hot_ = false;
+  bool pressed_ = false;
+};
+
+}  // namespace AiUI

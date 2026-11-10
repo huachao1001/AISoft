@@ -7,6 +7,8 @@
 #include "ui.h"
 #include "ui_list.h"
 #include "ui_main.h"
+#include "ui_status.h"
+#include "ui_toolbar.h"
 #include "util.h"
 
 #include <shellapi.h>
@@ -164,7 +166,7 @@ void AppRefreshView() {
   ui::UpdateMainTitle(g_app.mainWnd);
   ui::RefreshFileList();
   ui::RefreshAddressBar(g_app.mainWnd);
-  ui::RefreshStatusBar(g_app.mainWnd);
+  ui::RefreshStatusBarData();
   ui::RefreshToolbarState();
 }
 

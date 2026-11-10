@@ -1,0 +1,28 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<!--
+  主窗口整体布局。
+
+  纵向四段：导航条、工具栏、内容区（左树右列表）、状态栏。
+  控件的行为都在代码里配置，这里只描述"放在哪、多大"。
+
+  标签名直接就是控件类名。AiUI 内置控件不需要额外属性；
+  应用自定义的控件（如 CrumbBar）用 header 指明头文件、ns 指明命名空间。
+-->
+<LinearLayout orientation="vertical">
+
+  <!-- 导航条：面包屑 + 搜索框，由 CrumbBar 自绘 -->
+  <CrumbBar id="crumb" ns="ui" header="ui_crumb.h" height="48"/>
+
+  <!-- 工具栏：五个按钮由 ui_toolbar.cpp 在创建后装配 -->
+  <ButtonBar id="toolBar" height="52"/>
+
+  <!-- 内容区：左树右列表，列表吃掉剩余宽度 -->
+  <LinearLayout id="content" orientation="horizontal" weight="1">
+    <TreeView id="tree" width="230" height="match"/>
+    <ListView id="list" weight="1" height="match"/>
+  </LinearLayout>
+
+  <!-- 状态栏 -->
+  <StatusBar id="status" height="36"/>
+
+</LinearLayout>

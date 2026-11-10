@@ -5,6 +5,9 @@
 #include "ui.h"
 #include "ui_main.h"
 #include "util.h"
+#include "AiUI/font.h"
+#include "AiUI/icon.h"
+#include "AiUI/platform.h"
 
 #include <commctrl.h>
 #include <shellapi.h>
@@ -38,8 +41,6 @@ bool ForwardToRunningWindow(const std::wstring& path) {
 
 }  // namespace
 
-using namespace AUI;
-
 int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
   util::EnableDpiAwareness();
 
@@ -51,7 +52,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
   g_app.instance = hInst;
   g_app.settings = util::LoadSettings();
   g_app.dpi = util::DpiForWindow(nullptr);
-  AUI::fonts.Create(g_app.dpi);
+  AiUI::startupPlatform();
+  AiUI::fonts.create(g_app.dpi);
 
   // 右键菜单默认注册到当前用户（不需要管理员，也不改任何文件关联）。
   // 程序换位置后旧菜单会指向失效路径，所以每次启动都校对一遍。
@@ -69,7 +71,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
   if (req.explicitAction && req.action != LaunchRequest::Action::kExtract) {
     LaunchRequest merged;
     if (!inst::Collect(req, merged)) {  // 已转交给先启动的实例
-      AUI::fonts.Destroy();
+      AiUI::fonts.destroy();
       return 0;
     }
     req = std::move(merged);
@@ -78,7 +80,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
   // 资源管理器右键：只弹对话框，不创建主窗口
   if (req.explicitAction) {
     AppDispatchLaunch(req);
-    AUI::fonts.Destroy();
+    AiUI::fonts.destroy();
     return 0;
   }
 
@@ -98,13 +100,13 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
     }
     if (!forwarded) ForwardToRunningWindow(L"");
     ::CloseHandle(browserLock);
-    AUI::fonts.Destroy();
+    AiUI::fonts.destroy();
     return 0;
   }
   // 主窗口可能已存在但互斥体被上次崩溃遗留（极少见），补一次检查
   if (!req.paths.empty() && ForwardToRunningWindow(req.paths[0])) {
     if (browserLock) ::CloseHandle(browserLock);
-    AUI::fonts.Destroy();
+    AiUI::fonts.destroy();
     return 0;
   }
 
@@ -127,14 +129,14 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
 
   if (!ui::RegisterMainWindow(hInst)) {
     ShowFatal(L"窗口类注册失败。");
-    AUI::fonts.Destroy();
+    AiUI::fonts.destroy();
     if (browserLock) ::CloseHandle(browserLock);
     return 1;
   }
   HWND mainWnd = ui::CreateMainWindow(hInst);
   if (!mainWnd) {
     ShowFatal(L"主窗口创建失败。");
-    AUI::fonts.Destroy();
+    AiUI::fonts.destroy();
     if (browserLock) ::CloseHandle(browserLock);
     return 1;
   }
@@ -159,20 +161,16 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
 
   MSG msg;
   while (::GetMessageW(&msg, nullptr, 0, 0) > 0) {
-    if (ui::HandleMainKeyMessage(&msg)) {
-      ::TranslateMessage(&msg);
-      ::DispatchMessageW(&msg);
-      continue;
-    }
-    // 编辑框的按键直接派发，别让 IsDialogMessage 把回车吃掉
-    if (ui::IsEditKeystroke(&msg) || !::IsDialogMessageW(mainWnd, &msg)) {
-      ::TranslateMessage(&msg);
-      ::DispatchMessageW(&msg);
-    }
+    // 主窗口快捷键（Ctrl+L / Ctrl+F）先消费，再走普通派发
+    if (ui::HandleMainShortcut(msg)) continue;
+    // 自绘控件的按键直接派发：IsDialogMessage 会把回车吃掉
+    ::TranslateMessage(&msg);
+    ::DispatchMessageW(&msg);
   }
 
-  AUI::ClearShellIconCache();
-  AUI::fonts.Destroy();
+  AiUI::releaseFileIcons();
+  AiUI::fonts.destroy();
+  AiUI::shutdownPlatform();
   if (browserLock) ::CloseHandle(browserLock);
   return static_cast<int>(msg.wParam);
 }

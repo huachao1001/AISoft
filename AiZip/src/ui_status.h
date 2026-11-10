@@ -1,12 +1,15 @@
-// 底部状态栏：自绘，左边位置/格式/大小，右边条目统计
+// 底部状态栏：把应用状态翻译成 StatusFields
 #pragma once
 
-#include <windows.h>
+namespace AiUI {
+class StatusBar;
+}
 
 namespace ui {
 
-HWND CreateStatusBar(HWND parent, HINSTANCE inst, int id);
+// 布局建好状态栏后调用
+void AttachStatusBar(AiUI::StatusBar* bar);
+// 视图或选中项变化后刷新文案
 void RefreshStatusBarData();
-void InvalidateStatusBar();
 
 }  // namespace ui

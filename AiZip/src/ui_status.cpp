@@ -1,90 +1,85 @@
-// 底部状态栏：业务适配层，绘制由 widgets::StatusBar 负责
+// 底部状态栏：把应用状态翻译成 StatusFields
 #include "ui_status.h"
 
 #include "app.h"
 #include "sevenzip_loader.h"
-#include "ui.h"
 #include "ui_list.h"
 #include "util.h"
-#include "AUI/status_bar.h"
+#include "AiUI/widgets/status_bar.h"
 
-#include <memory>
-
-using namespace AUI;
+#include <cstdint>
 
 namespace ui {
 namespace {
 
-std::unique_ptr<StatusBar> g_statusBar;
+AiUI::StatusBar* g_statusBar = nullptr;
 
 }  // namespace
 
-HWND CreateStatusBar(HWND parent, HINSTANCE inst, int id) {
-  if (!g_statusBar) {
-    g_statusBar = std::make_unique<StatusBar>();
-    g_statusBar->Create(parent, inst, id, L"AIZipStatusBar");
-  }
-  return g_statusBar->hwnd();
+void AttachStatusBar(AiUI::StatusBar* bar) {
+  if (!bar || g_statusBar) return;
+  g_statusBar = bar;
+
+  AiUI::StatusStyle style;
+  style.background = AiUI::kColorTool;
+  bar->setStyle(style);
+  RefreshStatusBarData();
 }
 
 void RefreshStatusBarData() {
-  if (!g_statusBar || !g_statusBar->hwnd()) return;
+  if (!g_statusBar) return;
 
-  StatusFields f;
+  AiUI::StatusFields fields;
   if (g_app.archiveMode) {
-    f.left = g_app.archivePath;
-    const std::wstring ext = util::FileExtension(g_app.archivePath);
-    f.tag = z7::FormatNameFromExtension(ext);
-    LARGE_INTEGER li{};
-    HANDLE h = ::CreateFileW(g_app.archivePath.c_str(), GENERIC_READ,
-                             FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
-                             FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h != INVALID_HANDLE_VALUE) {
-      ::GetFileSizeEx(h, &li);
-      ::CloseHandle(h);
+    fields.left = g_app.archivePath;
+    fields.tag = z7::FormatNameFromExtension(util::FileExtension(g_app.archivePath));
+    LARGE_INTEGER size{};
+    HANDLE file = ::CreateFileW(g_app.archivePath.c_str(), GENERIC_READ,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+                                FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file != INVALID_HANDLE_VALUE) {
+      ::GetFileSizeEx(file, &size);
+      ::CloseHandle(file);
     }
-    f.size = util::FormatSize(static_cast<uint64_t>(li.QuadPart));
-    f.showHome = true;
+    fields.size = util::FormatSize(static_cast<uint64_t>(size.QuadPart));
+    fields.showHome = true;
   } else {
-    f.left = g_app.curDir;
+    fields.left = g_app.curDir;
   }
 
-  size_t files = 0, dirs = 0;
+  size_t files = 0;
+  size_t dirs = 0;
   uint64_t total = 0;
-  for (int idx : VisibleRows()) {
-    if (idx < 0 || idx >= static_cast<int>(g_app.items.size())) continue;
-    const Item& it = g_app.items[idx];
-    if (it.isDir) {
+  for (int index : VisibleRows()) {
+    if (index < 0 || index >= static_cast<int>(g_app.items.size())) continue;
+    const Item& item = g_app.items[index];
+    if (item.isDir) {
       ++dirs;
     } else {
       ++files;
-      total += it.size;
+      total += item.size;
     }
   }
 
   if (g_app.archiveMode) {
-    f.right = L"压缩包内：总计 " + std::to_wstring(dirs) + L" 个文件夹，" +
-              std::to_wstring(files) + L" 个文件";
+    fields.right = L"压缩包内：总计 " + std::to_wstring(dirs) + L" 个文件夹，" +
+                   std::to_wstring(files) + L" 个文件";
   } else if (files > 0 && dirs > 0) {
-    f.right = L"总计 " + std::to_wstring(files) + L" 个文件、" + std::to_wstring(dirs) +
-              L" 个文件夹";
+    fields.right = L"总计 " + std::to_wstring(files) + L" 个文件、" + std::to_wstring(dirs) +
+                   L" 个文件夹";
   } else if (dirs > 0) {
-    f.right = L"总计 " + std::to_wstring(dirs) + L" 个文件夹";
+    fields.right = L"总计 " + std::to_wstring(dirs) + L" 个文件夹";
   } else if (files > 0) {
-    f.right = L"总计 " + std::to_wstring(files) + L" 个文件";
+    fields.right = L"总计 " + std::to_wstring(files) + L" 个文件";
   } else {
-    f.right = L"没有项目";
+    fields.right = L"没有项目";
   }
-  if (!g_app.archiveMode && files > 0) f.right += L"（" + util::FormatSize(total) + L"）";
+  if (!g_app.archiveMode && files > 0) fields.right += L"（" + util::FormatSize(total) + L"）";
 
-  const int selCount = static_cast<int>(GetSelectedItems().size());
-  if (selCount > 0) f.right += L"，已选中 " + std::to_wstring(selCount) + L" 项";
+  const int selected = static_cast<int>(GetSelectedItems().size());
+  if (selected > 0) fields.right += L"，已选中 " + std::to_wstring(selected) + L" 项";
 
-  g_statusBar->SetFields(f);
-}
-
-void InvalidateStatusBar() {
-  if (g_statusBar && g_statusBar->hwnd()) g_statusBar->Invalidate();
+  g_statusBar->setFields(fields);
 }
 
 }  // namespace ui

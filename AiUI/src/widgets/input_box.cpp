@@ -1,0 +1,384 @@
+﻿// InputBox 实现：文本、光标、选区、剪贴板、IME
+#include "AiUI/widgets/input_box.h"
+
+#include "AiUI/font.h"
+
+#include <windows.h>
+
+#include <algorithm>
+#include <cwctype>
+
+namespace AiUI {
+
+void InputBox::setSpec(const InputSpec& spec) {
+  spec_ = spec;
+  ensureCaretVisible();
+  invalidate();
+}
+
+void InputBox::setText(const std::wstring& text) {
+  text_ = text;
+  caret_ = static_cast<int>(text_.size());
+  selectionBegin_ = selectionEnd_ = caret_;
+  scrollX_ = 0;
+  clampCaret();
+  ensureCaretVisible();
+  resetBlink();
+  syncTextToWindow();
+  invalidate();
+}
+
+void InputBox::setCue(const std::wstring& cue) {
+  spec_.cue = cue;
+  invalidate();
+}
+
+void InputBox::selectAll() {
+  selectionBegin_ = 0;
+  selectionEnd_ = static_cast<int>(text_.size());
+  caret_ = selectionEnd_;
+  resetBlink();
+  invalidate();
+}
+
+int InputBox::textLeft() const {
+  const int d = dpi();
+  return spec_.padX * d / 96 +
+         (spec_.hasLeadIcon ? (spec_.leadIconSize + spec_.leadIconGap) * d / 96 : 0);
+}
+
+Rect InputBox::textRect() const {
+  const Rect rc = clientRect();
+  const int d = dpi();
+  const int lineHeight = (std::max)(16 * d / 96, fonts.ui.pixelHeight());
+  const int top = rc.top + (rc.height() - lineHeight) / 2;
+  // 右侧留 2px，光标贴边时不被圆角裁掉
+  return Rect{textLeft() - scrollX_, top, rc.right - spec_.padX * d / 96 - 2 * d / 96,
+              top + lineHeight};
+}
+
+int InputBox::xForPosition(int pos) const {
+  const int clamped = std::clamp(pos, 0, static_cast<int>(text_.size()));
+  const int width =
+      clamped > 0 ? platform()->measureText(text_.substr(0, clamped), fonts.ui) : 0;
+  return textLeft() + width - scrollX_;
+}
+
+int InputBox::hitTest(int x) const {
+  const int target = x - textLeft() + scrollX_;
+  int best = 0;
+  int bestDiff = INT_MAX;
+  const int n = static_cast<int>(text_.size());
+  for (int i = 0; i <= n; ++i) {
+    const int width = i > 0 ? platform()->measureText(text_.substr(0, i), fonts.ui) : 0;
+    const int diff = std::abs(width - target);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = i;
+    }
+  }
+  return best;
+}
+
+void InputBox::clampCaret() {
+  const int n = static_cast<int>(text_.size());
+  caret_ = std::clamp(caret_, 0, n);
+  selectionBegin_ = std::clamp(selectionBegin_, 0, n);
+  selectionEnd_ = std::clamp(selectionEnd_, 0, n);
+}
+
+void InputBox::ensureCaretVisible() {
+  if (!window()) return;
+  const Rect rc = clientRect();
+  const int d = dpi();
+  const int available = rc.right - spec_.padX * d / 96 - 2 * d / 96 - textLeft();
+  if (available <= 0) return;
+
+  const int caretWidth =
+      caret_ > 0 ? platform()->measureText(text_.substr(0, caret_), fonts.ui) : 0;
+
+  if (caretWidth - scrollX_ < 0) {
+    scrollX_ = caretWidth;
+  } else if (caretWidth - scrollX_ > available) {
+    scrollX_ = caretWidth - available;
+  }
+  scrollX_ = (std::max)(0, scrollX_);
+}
+
+void InputBox::resetBlink() {
+  caretVisible_ = true;
+  if (window()) window()->setBlinkTimer(true);
+  invalidate();
+}
+
+void InputBox::deleteSelection() {
+  if (!hasSelection()) return;
+  const int low = selectionLow();
+  const int high = selectionHigh();
+  text_.erase(low, high - low);
+  caret_ = low;
+  selectionBegin_ = selectionEnd_ = low;
+  clampCaret();
+  syncTextToWindow();
+}
+
+void InputBox::insertText(const std::wstring& s) {
+  if (s.empty()) return;
+  deleteSelection();
+  text_.insert(caret_, s);
+  caret_ += static_cast<int>(s.size());
+  selectionBegin_ = selectionEnd_ = caret_;
+  clampCaret();
+  ensureCaretVisible();
+  resetBlink();
+  syncTextToWindow();
+  invalidate();
+  if (onChange_) onChange_();
+}
+
+void InputBox::moveCaret(int pos, bool extend) {
+  const int n = static_cast<int>(text_.size());
+  caret_ = std::clamp(pos, 0, n);
+  if (extend) {
+    selectionEnd_ = caret_;
+  } else {
+    selectionBegin_ = selectionEnd_ = caret_;
+  }
+  ensureCaretVisible();
+  resetBlink();
+  invalidate();
+}
+
+void InputBox::moveWord(bool right, bool extend) {
+  int pos = caret_;
+  const int n = static_cast<int>(text_.size());
+  auto isWord = [](wchar_t c) {
+    return std::iswalnum(c) != 0 || c == L'_' || c == L'.' || c == L'-';
+  };
+  if (right) {
+    while (pos < n && isWord(text_[pos])) ++pos;
+    while (pos < n && !isWord(text_[pos])) ++pos;
+  } else {
+    while (pos > 0 && !isWord(text_[pos - 1])) --pos;
+    while (pos > 0 && isWord(text_[pos - 1])) --pos;
+  }
+  moveCaret(pos, extend);
+}
+
+void InputBox::copyToClipboard() const {
+  if (!hasSelection()) return;
+  const std::wstring part = text_.substr(selectionLow(), selectionHigh() - selectionLow());
+  if (!::OpenClipboard(nullptr)) return;
+  ::EmptyClipboard();
+  const size_t bytes = (part.size() + 1) * sizeof(wchar_t);
+  if (HGLOBAL memory = ::GlobalAlloc(GMEM_MOVEABLE, bytes)) {
+    if (void* dst = ::GlobalLock(memory)) {
+      memcpy(dst, part.c_str(), bytes);
+      ::GlobalUnlock(memory);
+      ::SetClipboardData(CF_UNICODETEXT, memory);
+    }
+  }
+  ::CloseClipboard();
+}
+
+void InputBox::cutToClipboard() {
+  copyToClipboard();
+  deleteSelection();
+  ensureCaretVisible();
+  invalidate();
+  if (onChange_) onChange_();
+}
+
+void InputBox::pasteFromClipboard() {
+  if (!::IsClipboardFormatAvailable(CF_UNICODETEXT)) return;
+  if (!::OpenClipboard(nullptr)) return;
+  std::wstring data;
+  if (HANDLE handle = ::GetClipboardData(CF_UNICODETEXT)) {
+    if (const auto* text = static_cast<const wchar_t*>(::GlobalLock(handle))) {
+      data = text;
+      ::GlobalUnlock(handle);
+    }
+  }
+  ::CloseClipboard();
+  // 单行输入框：换行统一折成空格
+  for (auto& c : data) {
+    if (c == L'\r' || c == L'\n' || c == L'\t') c = L' ';
+  }
+  insertText(data);
+}
+
+void InputBox::syncTextToWindow() {
+  // 平台窗口没有文本存储，文本只在控件里；这里保留钩子便于扩展
+}
+
+Size InputBox::onMeasure(const Size& available) {
+  (void)available;
+  return Size{0, 34};
+}
+
+void InputBox::onPaint(Painter& painter, const Rect& rect) {
+  const int d = dpi();
+  const int radius = spec_.radius * d / 96;
+
+  painter.fillRoundRect(rect, kColorInputBg, radius);
+  painter.strokeRoundRect(rect, focused_ ? kColorInputFocus : kColorInputBorder, radius);
+
+  const Rect textArea = textRect();
+  if (spec_.hasLeadIcon) {
+    const int size = spec_.leadIconSize * d / 96;
+    const Rect iconRect{spec_.padX * d / 96, rect.center().y - size / 2,
+                        spec_.padX * d / 96 + size, rect.center().y + size / 2};
+    painter.drawIcon(spec_.leadIcon, iconRect, kColorTextFaint);
+  }
+
+  // 文本裁剪到输入区，滚动时不会溢出圆角
+  painter.setClip(Rect{spec_.padX * d / 96, rect.top, rect.right - spec_.padX * d / 96,
+                       rect.bottom});
+
+  if (text_.empty()) {
+    painter.drawTextEllipsis(textArea, spec_.cue, kColorTextFaint, fonts.ui);
+  } else {
+    if (hasSelection()) {
+      const int x1 = xForPosition(selectionLow());
+      const int x2 = xForPosition(selectionHigh());
+      painter.fillRect(Rect{x1, textArea.top, x2, textArea.bottom}, kColorSelBg);
+    }
+    painter.drawText(textArea, text_, kColorText, fonts.ui, TextAlign::kLeft);
+
+    if (focused_ && caretVisible_) {
+      const int x = xForPosition(caret_);
+      painter.fillRect(Rect{x, textArea.top, x + (std::max)(1, d / 96), textArea.bottom},
+                       kColorText);
+    }
+  }
+
+  painter.resetClip();
+}
+
+void InputBox::onMouseDown(const MouseEvent& e) {
+  setFocus();
+  dragging_ = true;
+  captureMouse();
+  moveCaret(hitTest(e.position.x), e.modifiers.shift);
+}
+
+void InputBox::onMouseUp(const MouseEvent& e) {
+  (void)e;
+  if (dragging_) {
+    dragging_ = false;
+    releaseMouse();
+  }
+}
+
+void InputBox::onMouseMove(const MouseEvent& e) {
+  if (dragging_) moveCaret(hitTest(e.position.x), true);
+}
+
+void InputBox::onDoubleClick(const MouseEvent& e) {
+  (void)e;
+  selectAll();
+}
+
+bool InputBox::onKeyDown(const Key& key, const Modifiers& mods) {
+  switch (key) {
+    case Key::kHome: moveCaret(0, mods.shift); return true;
+    case Key::kEnd: moveCaret(static_cast<int>(text_.size()), mods.shift); return true;
+    case Key::kLeft:
+      if (mods.ctrl) {
+        moveWord(false, mods.shift);
+      } else {
+        moveCaret(hasSelection() && !mods.shift ? selectionLow() : caret_ - 1, mods.shift);
+      }
+      return true;
+    case Key::kRight:
+      if (mods.ctrl) {
+        moveWord(true, mods.shift);
+      } else {
+        moveCaret(hasSelection() && !mods.shift ? selectionHigh() : caret_ + 1, mods.shift);
+      }
+      return true;
+    case Key::kBackspace:
+      if (hasSelection()) {
+        deleteSelection();
+      } else if (caret_ > 0) {
+        text_.erase(caret_ - 1, 1);
+        --caret_;
+        selectionBegin_ = selectionEnd_ = caret_;
+      }
+      ensureCaretVisible();
+      resetBlink();
+      invalidate();
+      if (onChange_) onChange_();
+      return true;
+    case Key::kDelete:
+      if (hasSelection()) {
+        deleteSelection();
+      } else if (caret_ < static_cast<int>(text_.size())) {
+        text_.erase(caret_, 1);
+      }
+      selectionBegin_ = selectionEnd_ = caret_;
+      ensureCaretVisible();
+      resetBlink();
+      invalidate();
+      if (onChange_) onChange_();
+      return true;
+    case Key::kEnter:
+      if (onSubmit_) onSubmit_(true);
+      return true;
+    case Key::kEscape:
+      if (onSubmit_) onSubmit_(false);
+      return true;
+    case Key::kA:
+      if (mods.ctrl) {
+        selectAll();
+        return true;
+      }
+      return false;
+    case Key::kC:
+      if (mods.ctrl) {
+        copyToClipboard();
+        return true;
+      }
+      return false;
+    case Key::kX:
+      if (mods.ctrl) {
+        cutToClipboard();
+        return true;
+      }
+      return false;
+    case Key::kV:
+      if (mods.ctrl) {
+        pasteFromClipboard();
+        return true;
+      }
+      return false;
+    default:
+      return false;
+  }
+}
+
+bool InputBox::onChar(wchar_t ch) {
+  if (ch == L'\r' || ch == L'\n' || ch == L'\t') return true;
+  if (ch < L' ') return true;
+  insertText(std::wstring(1, ch));
+  return true;
+}
+
+void InputBox::onFocusChanged(bool focused) {
+  focused_ = focused;
+  dragging_ = false;
+  if (window()) window()->setBlinkTimer(focused);
+  if (focused) {
+    caretVisible_ = true;
+  }
+  invalidate();
+  if (!focused && onBlur_) onBlur_();
+}
+
+void InputBox::onTimer() {
+  if (!focused_) return;
+  caretVisible_ = !caretVisible_;
+  invalidate();
+}
+
+}  // namespace AiUI

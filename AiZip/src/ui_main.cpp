@@ -1,39 +1,46 @@
-﻿// 主窗口：面包屑 + 工具栏 + 树 + 列表 + 状态栏
+﻿// 主窗口：导航条 + 工具栏 + 树 + 列表 + 状态栏
+//
+// 窗口本身只做原生宿主（拖放、标题、设置持久化），内部界面全部由
+// XML 生成的 MainFrame 布局搭起来，尺寸交给布局系统计算。
 #include "ui_main.h"
 
 #include "app.h"
 #include "dlg_compress.h"
-#include "dlg_extract.h"
+#include "dlg_util.h"
 #include "sevenzip_loader.h"
-#include "ui.h"
 #include "ui_crumb.h"
 #include "ui_list.h"
 #include "ui_status.h"
 #include "ui_toolbar.h"
 #include "ui_tree.h"
 #include "util.h"
+#include "AiUI/font.h"
+#include "AiUI/platform.h"
+#include "AiUI/theme.h"
+#include "AiUI/widgets/button_bar.h"
+#include "AiUI/widgets/list_view.h"
+#include "AiUI/widgets/status_bar.h"
+#include "AiUI/widgets/tree_view.h"
+
+#include "main_frame.h"
 
 #include <commctrl.h>
 #include <shellapi.h>
-#include <windowsx.h>
 
-using namespace AUI;
+#include <memory>
 
 namespace ui {
 namespace {
 
-MainParts g_parts;
 constexpr const wchar_t* kMainClass = L"AIZipMainWindow";
-constexpr int kMinWidth = 860;
-constexpr int kMinHeight = 520;
+
+std::unique_ptr<AiUI::generated::MainFrame> g_frame;
 
 // 拖放转发：子窗口各自注册，统一转交主窗口
 HWND DropOwner(HWND child) {
   HWND parent = ::GetParent(child);
   return parent ? parent : child;
 }
-
-void EnableDrop(HWND hwnd) { ::DragAcceptFiles(hwnd, TRUE); }
 
 LRESULT CALLBACK DropForwardProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR id,
                                  DWORD_PTR) {
@@ -45,58 +52,37 @@ LRESULT CALLBACK DropForwardProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
   return ::DefSubclassProc(hwnd, msg, wParam, lParam);
 }
 
-void CreateChildren(HWND hwnd) {
-  HINSTANCE inst = reinterpret_cast<HINSTANCE>(::GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
-
-  g_parts.toolbar = CreateToolBar(hwnd, inst, kToolbarId);
-  g_parts.crumb = CreateCrumbBar(hwnd, inst, kCrumbId);
-  g_parts.tree = CreateSideTree(hwnd, inst, kTreeId);
-  g_parts.list = CreateFileList(hwnd, inst, kListId);
-  g_parts.status = CreateStatusBar(hwnd, inst, kStatusId);
-
-  // 搜索框内部有自己的 EDIT，只给列表设字体
-  ::SendMessageW(g_parts.list, WM_SETFONT, reinterpret_cast<WPARAM>(fonts.ui), TRUE);
-
-  // 顶部区域也要能接文件拖放
-  int subId = 1;
-  for (HWND c : {g_parts.toolbar, g_parts.crumb, CrumbSearchEdit(), g_parts.tree, g_parts.status}) {
-    EnableDrop(c);
-    ::SetWindowSubclass(c, DropForwardProc, static_cast<UINT_PTR>(subId++), 0);
-  }
-}
-
-void OnSize(HWND hwnd, int cx, int cy) {
-  if (!g_parts.toolbar) return;
-  const int toolH = g_app.px(kToolH);
-  const int crumbH = g_app.px(kCrumbH);
-  const int statusH = g_app.px(kStatusH);
-
-  ::MoveWindow(g_parts.crumb, 0, 0, cx, crumbH, TRUE);
-  ::MoveWindow(g_parts.toolbar, 0, crumbH, cx, toolH, TRUE);
-
-  const int contentY = toolH + crumbH;
-  const int statusTop = cy - statusH;
-  const int contentH = statusTop - contentY;
-  if (contentH > 0) {
-    const int treeW = g_app.px(kSidebarW);
-    ::MoveWindow(g_parts.tree, 0, contentY, treeW, contentH, TRUE);
-    ::MoveWindow(g_parts.list, treeW, contentY, cx - treeW, contentH, TRUE);
-    LayoutSideTree();
-    LayoutFileList(g_parts.list);
-  }
-  ::MoveWindow(g_parts.status, 0, statusTop, cx, statusH, TRUE);
-  RefreshStatusBar(hwnd);
+void EnableDrop(HWND hwnd) {
+  if (!hwnd) return;
+  ::DragAcceptFiles(hwnd, TRUE);
+  ::SetWindowSubclass(hwnd, DropForwardProc, 1, 0);
 }
 
 void OnCreate(HWND hwnd) {
-  CreateChildren(hwnd);
-  RefreshCrumbBar();
-  RefreshSideTree();
-  RECT rc;
-  ::GetClientRect(hwnd, &rc);
-  OnSize(hwnd, rc.right, rc.bottom);
+  g_frame = std::make_unique<AiUI::generated::MainFrame>();
+  g_frame->create(hwnd, 0, AiUI::Rect{});
+
+  // 各模块只负责“拿到控件后怎么用”，不再关心摆放
+  AttachToolBar(g_frame->toolBar);
+  AttachSideTree(g_frame->tree);
+  AttachFileList(g_frame->list);
+  AttachStatusBar(g_frame->status);
+
+  // 顶部区域与树也要能接收拖放
+  EnableDrop(hwnd);
+  EnableDrop(static_cast<HWND>(g_frame->tree->handle()));
+  EnableDrop(static_cast<HWND>(g_frame->status->handle()));
+
+  RefreshAddressBar(hwnd);
   AppRefreshView();
 }
+
+void OnSize(int width, int height) {
+  if (!g_frame) return;
+  g_frame->layout(AiUI::Rect{0, 0, width, height});
+}
+
+}  // namespace
 
 LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
   switch (msg) {
@@ -105,7 +91,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
       return 0;
 
     case WM_SIZE:
-      OnSize(hwnd, LOWORD(lParam), HIWORD(lParam));
+      OnSize(LOWORD(lParam), HIWORD(lParam));
       return 0;
 
     case WM_GETMINMAXINFO: {
@@ -115,46 +101,36 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
       return 0;
     }
 
-    case WM_COMMAND: {
-      const int id = LOWORD(wParam);
-      const int code = HIWORD(wParam);
-      // 搜索框的 EN_CHANGE 由 AUI 控件的回调处理，地址编辑框的提交在
-      // HandleMainKeyMessage 里消费回车/Esc，这里不需要额外分支。
-      (void)id;
-      (void)code;
-      return 0;
-    }
-
-    case WM_ERASEBKGND: {
-      HDC dc = reinterpret_cast<HDC>(wParam);
-      RECT rc;
-      ::GetClientRect(hwnd, &rc);
-      Painter(dc).Fill(rc, kBodyBg);
-      return 1;
-    }
+    case WM_ERASEBKGND:
+      return 1;  // 全部自绘
 
     case WM_PAINT: {
       PAINTSTRUCT ps;
       HDC dc = ::BeginPaint(hwnd, &ps);
-      RECT rc;
+      // 布局覆盖整个客户区，这里只兜底铺一层底色，防止缩放瞬间露出白边
+      RECT rc{};
       ::GetClientRect(hwnd, &rc);
-      Painter(dc).Fill(rc, kBodyBg);
+      const COLORREF body = RGB(AiUI::colorRed(AiUI::kColorBody), AiUI::colorGreen(AiUI::kColorBody),
+                                AiUI::colorBlue(AiUI::kColorBody));
+      HBRUSH brush = ::CreateSolidBrush(body);
+      ::FillRect(dc, &rc, brush);
+      ::DeleteObject(brush);
       ::EndPaint(hwnd, &ps);
       return 0;
     }
 
     case WM_SETFOCUS:
-      if (g_parts.list) ::SetFocus(g_parts.list);
+      FocusFileList();
       return 0;
 
     case WM_DROPFILES: {
       HDROP drop = reinterpret_cast<HDROP>(wParam);
-      const UINT n = ::DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+      const UINT count = ::DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
       std::vector<std::wstring> paths;
-      for (UINT i = 0; i < n; ++i) {
-        wchar_t buf[MAX_PATH * 2];
-        ::DragQueryFileW(drop, i, buf, MAX_PATH * 2);
-        paths.push_back(buf);
+      for (UINT i = 0; i < count; ++i) {
+        wchar_t buffer[MAX_PATH * 2];
+        ::DragQueryFileW(drop, i, buffer, MAX_PATH * 2);
+        paths.push_back(buffer);
       }
       ::DragFinish(drop);
       if (!paths.empty()) {
@@ -185,6 +161,8 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
       return 0;
 
     case WM_DESTROY: {
+      g_frame.reset();
+
       WINDOWPLACEMENT wp{};
       wp.length = sizeof(wp);
       if (::GetWindowPlacement(hwnd, &wp)) {
@@ -205,11 +183,8 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
   return ::DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
-}  // namespace
-
 bool RegisterMainWindow(HINSTANCE inst) {
-  return RegisterWindowClass(kMainClass, MainProc, inst, CS_HREDRAW | CS_VREDRAW,
-                             ::CreateSolidBrush(kBodyBg), 101);
+  return RegisterWindowClass(kMainClass, MainProc, inst, CS_HREDRAW | CS_VREDRAW, nullptr, 101);
 }
 
 void CenterOnWorkArea(HWND hwnd) {
@@ -257,41 +232,26 @@ void UpdateMainTitle(HWND hwnd) {
 }
 
 void RefreshAddressBar(HWND) {
-  RefreshCrumbBar();
-  RefreshSideTree();
+  if (g_frame) {
+    g_frame->crumb->refresh();
+    RefreshSideTree();
+  }
 }
 
-void RefreshToolbarState() { InvalidateToolBar(); }
-
-HWND MainList() { return g_parts.list; }
-
-void RefreshStatusBar(HWND hwnd) {
-  (void)hwnd;
-  if (!g_parts.status) return;
-  RefreshStatusBarData();
+void FocusFileList() {
+  if (g_frame) g_frame->list->setFocus();
 }
 
-bool HandleMainKeyMessage(MSG* msg) {
-  if (msg->message == WM_KEYDOWN && ::GetKeyState(VK_CONTROL) < 0) {
-    if (msg->wParam == 'L') {
-      BeginCrumbEdit();
+bool HandleMainShortcut(const MSG& msg) {
+  if (msg.message != WM_KEYDOWN) return false;
+  if (::GetKeyState(VK_CONTROL) >= 0) return false;
+
+  switch (msg.wParam) {
+    case 'L':
+      if (g_frame) g_frame->crumb->beginEdit();
       return true;
-    }
-  }
-  return false;
-}
-
-// 自绘输入框里的按键必须直接派发：IsDialogMessage 会把回车当默认按钮吞掉，
-// 地址栏/搜索框就收不到 WM_KEYDOWN。
-bool IsEditKeystroke(const MSG* msg) {
-  if (!msg || !msg->hwnd) return false;
-  if (msg->message != WM_KEYDOWN && msg->message != WM_CHAR && msg->message != WM_SYSKEYDOWN) {
-    return false;
-  }
-  // 输入框已全部自绘，按控件 ID 识别（1006 地址栏、1007 搜索框）
-  switch (::GetDlgCtrlID(msg->hwnd)) {
-    case kPathEditId:
-    case kSearchId:
+    case 'F':
+      if (g_frame) g_frame->crumb->focusSearch();
       return true;
     default:
       return false;
