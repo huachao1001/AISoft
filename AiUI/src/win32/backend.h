@@ -23,6 +23,12 @@ namespace win32 {
 bool ensureGdiplus();
 void releaseGdiplus();
 
+// ── 平台后端选择 ──
+Platform* backendPlatform();
+// 测试替换：非空时 platform() 返回它，空则回到底层 Win32
+Platform* testPlatformOverride();
+void markTestOverride(Platform* platform);
+
 // ── 绘制 ──
 std::unique_ptr<PaintBackend> makePaintBackend(Gdiplus::Graphics* g);
 std::unique_ptr<Canvas> makeCanvas(HDC target, const Rect& rect);

@@ -1,10 +1,13 @@
 // TreeView：自绘扁平列表 + 懒加载子节点
+//
+// 继承 ScrollView：滚动位置与滚动条由基类管，这里只管行数据与绘制。
+// 选中、悬停这类变化只重绘受影响的几行，不整树重建。
 #pragma once
 
 #include "AiUI/icon.h"
 #include "AiUI/painter.h"
+#include "AiUI/scroll_view.h"
 #include "AiUI/theme.h"
-#include "AiUI/widget.h"
 
 #include <functional>
 #include <memory>
@@ -49,9 +52,10 @@ struct TreeStyle {
 using TreeChildrenLoader = std::function<std::vector<std::unique_ptr<TreeNode>>(TreeNode*)>;
 using TreeSelectHandler = std::function<void(TreeNode*)>;
 
-class TreeView : public Widget {
+class TreeView : public ScrollView {
  public:
-  TreeView() { className_ = L"AiUITreeView"; }
+  TreeView();
+  ~TreeView() override;
 
   void setStyle(const TreeStyle& style);
   void setRoot(std::unique_ptr<TreeNode> root);
@@ -66,15 +70,21 @@ class TreeView : public Widget {
   std::wstring activePath() const { return active_ ? active_->path : std::wstring(); }
   bool collapseActive();
 
+  // ── ScrollView ──
+  int contentHeight() const override;
+  int viewportHeight() const override { return clientRect().height(); }
+
  protected:
   void onPaint(Painter& painter, const Rect& rect) override;
   Size onMeasure(const Size& available) override;
-  void onMouseDown(const MouseEvent& e) override;
+  bool onMouseDown(const MouseEvent& e) override;
+  void onMouseUp(const MouseEvent& e) override;
   void onMouseMove(const MouseEvent& e) override;
   void onMouseLeave() override;
-  void onMouseWheel(const MouseEvent& e) override;
-  void onScroll(const ScrollEvent& e) override;
+  void onScrollChanged() override;
   Color backgroundColor() const override { return style_.background; }
+  // 一格滚三行，与列表手感一致
+  int wheelStep() const override { return style_.rowHeight * 3; }
 
  private:
   int rowHeight() const;
@@ -83,10 +93,6 @@ class TreeView : public Widget {
   void loadChildren(TreeNode* node);
   TreeNode* syncTo(TreeNode* node, const std::wstring& target);
   void scrollToActive();
-  void updateScrollBar();
-  void scrollBy(int delta);
-  void setScroll(int position);
-  int maxScroll() const;
   // 只重绘一行；悬停、选中这类局部变化用
   void invalidateRow(int index);
   // 节点当前对应的可见行号；不在可见区返回 -1
@@ -97,7 +103,6 @@ class TreeView : public Widget {
   TreeSelectHandler onSelect_;
   std::unique_ptr<TreeNode> root_;
   std::vector<TreeNode*> rows_;
-  int scroll_ = 0;
   int hot_ = -1;
   TreeNode* active_ = nullptr;
 };

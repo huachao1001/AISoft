@@ -25,17 +25,20 @@ bool isAncestorOrSelf(const std::wstring& path, const std::wstring& target) {
 
 }  // namespace
 
+TreeView::TreeView() { setFocusable(true); }
+
+TreeView::~TreeView() = default;
+
 void TreeView::setStyle(const TreeStyle& style) {
   style_ = style;
-  updateScrollBar();
   invalidate();
 }
 
 void TreeView::setRoot(std::unique_ptr<TreeNode> root) {
   root_ = std::move(root);
   active_ = nullptr;
-  scroll_ = 0;
   hot_ = -1;
+  setScrollOffset(0);
   rebuild();
 }
 
@@ -44,6 +47,10 @@ void TreeView::setChildrenLoader(TreeChildrenLoader loader) { loader_ = std::mov
 void TreeView::setSelectHandler(TreeSelectHandler fn) { onSelect_ = std::move(fn); }
 
 int TreeView::rowHeight() const { return style_.rowHeight * dpi() / 96; }
+
+int TreeView::contentHeight() const {
+  return static_cast<int>(rows_.size()) * rowHeight();
+}
 
 Size TreeView::onMeasure(const Size& available) { return available; }
 
@@ -57,7 +64,11 @@ void TreeView::loadChildren(TreeNode* node) {
 
 void TreeView::rebuild() {
   rows_.clear();
-  if (!root_) return;
+  if (!root_) {
+    setScrollOffset(0);
+    invalidate();
+    return;
+  }
   // 只收集展开节点的子树
   std::function<void(TreeNode*)> flatten = [&](TreeNode* node) {
     for (auto& child : node->children) {
@@ -66,7 +77,8 @@ void TreeView::rebuild() {
     }
   };
   flatten(root_.get());
-  updateScrollBar();
+  // 行数变了，滚动位置可能越界，交给基类夹紧
+  setScrollOffset(scrollOffset());
   invalidate();
 }
 
@@ -93,7 +105,6 @@ void TreeView::selectPath(const std::wstring& path) {
   }
   rebuild();
   scrollToActive();
-  updateScrollBar();
   invalidate();
 }
 
@@ -107,7 +118,7 @@ bool TreeView::collapseActive() {
 Rect TreeView::rowRect(int index) const {
   const int d = dpi();
   const int height = rowHeight();
-  const int top = index * height - scroll_;
+  const int top = index * height - scrollOffset();
   const Rect rc = clientRect();
   return Rect{style_.padLeft * d / 96 - 4 * d / 96, top,
               rc.right - style_.padLeft * d / 96 + 4 * d / 96, top + height};
@@ -115,20 +126,9 @@ Rect TreeView::rowRect(int index) const {
 
 int TreeView::hitRow(Point pt) const {
   if (pt.x < 0) return -1;
-  const int index = (pt.y + scroll_) / rowHeight();
+  const int index = (pt.y + scrollOffset()) / rowHeight();
   if (index < 0 || index >= static_cast<int>(rows_.size())) return -1;
   return index;
-}
-
-int TreeView::maxScroll() const {
-  const int total = static_cast<int>(rows_.size()) * rowHeight();
-  return (std::max)(0, total - clientRect().height());
-}
-
-void TreeView::updateScrollBar() {
-  if (!window()) return;
-  window()->setScrollInfo(static_cast<int>(rows_.size()) * rowHeight(), clientRect().height(),
-                          scroll_);
 }
 
 void TreeView::scrollToActive() {
@@ -138,23 +138,14 @@ void TreeView::scrollToActive() {
 
   const int index = static_cast<int>(it - rows_.begin());
   const int top = index * rowHeight();
-  const int page = clientRect().height();
-  if (top < scroll_) {
-    scroll_ = top;
-  } else if (top + rowHeight() > scroll_ + page) {
-    scroll_ = top + rowHeight() - page;
+  const int page = viewportHeight();
+  int target = scrollOffset();
+  if (top < target) {
+    target = top;
+  } else if (top + rowHeight() > target + page) {
+    target = top + rowHeight() - page;
   }
-  scroll_ = std::clamp(scroll_, 0, maxScroll());
-}
-
-void TreeView::scrollBy(int delta) { setScroll(scroll_ + delta); }
-
-void TreeView::setScroll(int position) {
-  const int next = std::clamp(position, 0, maxScroll());
-  if (next == scroll_) return;
-  scroll_ = next;
-  updateScrollBar();
-  invalidate();
+  setScrollOffset(target);
 }
 
 void TreeView::invalidateRow(int index) {
@@ -174,14 +165,25 @@ int TreeView::indexOfNode(const TreeNode* node) const {
   return static_cast<int>(it - rows_.begin());
 }
 
+void TreeView::onScrollChanged() {
+  // 整行平移，重画即可；滚动条由基类前景层补画
+  invalidate();
+}
+
 void TreeView::onPaint(Painter& painter, const Rect& rect) {
   const int d = dpi();
+  const int height = rowHeight();
 
-  for (int i = 0; i < static_cast<int>(rows_.size()); ++i) {
-    TreeNode* node = rows_[i];
+  // 只画与脏区相交的行
+  const int first = (std::max)(0, scrollOffset() / height);
+  const int last = (std::min)(static_cast<int>(rows_.size()) - 1,
+                              (scrollOffset() + rect.bottom) / height);
+
+  for (int i = first; i <= last; ++i) {
+    TreeNode* node = rows_[static_cast<size_t>(i)];
     const Rect rr = rowRect(i);
-    if (rr.bottom < 0) continue;
-    if (rr.top > rect.bottom) break;
+    if (rr.bottom <= rect.top) continue;
+    if (rr.top >= rect.bottom) break;
 
     const bool active = (node == active_);
     const bool hot = (hot_ == i);
@@ -198,7 +200,7 @@ void TreeView::onPaint(Painter& painter, const Rect& rect) {
       painter.fillRoundRect(pill, style_.hoverBg, style_.pillRadius * d / 96);
     }
 
-    int x = style_.padLeft * d / 96 + node->depth * style_.indent * d / 96;
+    int x = rect.left + style_.padLeft * d / 96 + node->depth * style_.indent * d / 96;
     const int iconSize = style_.iconSize * d / 96;
     const Rect iconRect{x, rr.center().y - iconSize / 2, x + iconSize,
                         rr.center().y + iconSize / 2};
@@ -213,16 +215,22 @@ void TreeView::onPaint(Painter& painter, const Rect& rect) {
   painter.drawVLine(rect.top, rect.bottom, rect.right - 1, style_.divider);
 }
 
-void TreeView::onMouseDown(const MouseEvent& e) {
-  const int hit = hitRow(e.position);
-  if (hit < 0) return;
+bool TreeView::onMouseDown(const MouseEvent& e) {
+  if (e.button != MouseButton::kLeft) return false;
 
-  TreeNode* node = rows_[hit];
+  // 先给滚动条：点在滑块或轨道上就由基类处理
+  if (ScrollView::onMouseDown(e)) return true;
+  setFocus();
+
+  const int hit = hitRow(e.position);
+  if (hit < 0) return true;
+
+  TreeNode* node = rows_[static_cast<size_t>(hit)];
   // 点击已展开的节点即折叠，其余情况选中并展开
   if (node == active_ && node->hasChildren && node->expanded) {
     node->expanded = false;
     rebuild();
-    return;
+    return true;
   }
 
   const int previousIndex = indexOfNode(active_);
@@ -237,9 +245,17 @@ void TreeView::onMouseDown(const MouseEvent& e) {
     invalidateRow(hit);
   }
   if (onSelect_) onSelect_(node);
+  return true;
+}
+
+void TreeView::onMouseUp(const MouseEvent& e) {
+  // 滚动条拖动结束后由基类收尾并重画滑块
+  ScrollView::onMouseUp(e);
 }
 
 void TreeView::onMouseMove(const MouseEvent& e) {
+  ScrollView::onMouseMove(e);
+
   const int hit = hitRow(e.position);
   if (hit != hot_) {
     const int previous = hot_;
@@ -251,27 +267,11 @@ void TreeView::onMouseMove(const MouseEvent& e) {
 }
 
 void TreeView::onMouseLeave() {
+  ScrollView::onMouseLeave();
   if (hot_ == -1) return;
   const int previous = hot_;
   hot_ = -1;
   invalidateRow(previous);
-}
-
-void TreeView::onMouseWheel(const MouseEvent& e) {
-  // 一格滚动三行，与列表手感一致
-  scrollBy(-e.wheelDelta * rowHeight() * 3 / 120);
-}
-
-void TreeView::onScroll(const ScrollEvent& e) {
-  switch (e.code) {
-    case ScrollCode::kLineUp: scrollBy(-rowHeight()); break;
-    case ScrollCode::kLineDown: scrollBy(rowHeight()); break;
-    case ScrollCode::kPageUp: scrollBy(-clientRect().height()); break;
-    case ScrollCode::kPageDown: scrollBy(clientRect().height()); break;
-    case ScrollCode::kThumb: setScroll(e.position); break;
-    case ScrollCode::kTop: setScroll(0); break;
-    case ScrollCode::kBottom: setScroll(maxScroll()); break;
-  }
 }
 
 }  // namespace AiUI

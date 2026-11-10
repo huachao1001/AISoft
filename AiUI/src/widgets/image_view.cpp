@@ -1,6 +1,7 @@
 // ImageView 实现
 #include "AiUI/widgets/image_view.h"
 
+#include "AiUI/platform.h"
 #include "AiUI/theme.h"
 
 #include <algorithm>
@@ -21,19 +22,16 @@ float fitScale(int srcW, int srcH, int dstW, int dstH) {
 bool ImageView::loadFile(const std::wstring& path) {
   image_ = platform()->loadImage(path);
   icon_ = IconId::kNone;
-  sourceSize_ = Size{};
-  if (!image_.isValid()) {
-    invalidate();
-    return false;
-  }
-  // 图片原始尺寸在绘制时按后端能力读取，这里不复测
+  // 原始尺寸用来保持长宽比；解析不到就按控件大小铺满
+  sourceSize_ = image_.isValid() ? platform()->imageSize(image_) : Size{};
   invalidate();
-  return true;
+  return image_.isValid();
 }
 
 void ImageView::setImage(const Image& image) {
   image_ = image;
   icon_ = IconId::kNone;
+  sourceSize_ = image_.isValid() ? platform()->imageSize(image) : Size{};
   invalidate();
 }
 
@@ -52,6 +50,12 @@ void ImageView::clearImage() {
 void ImageView::setScale(ImageScale scale) {
   scale_ = scale;
   invalidate();
+}
+
+void ImageView::onAttach() {
+  // 图片原始尺寸只有挂载后（平台绘制已就绪）才查得到
+  if (image_.isValid()) sourceSize_ = platform()->imageSize(image_);
+  else sourceSize_ = Size{};
 }
 
 void ImageView::setPlaceholderColor(Color color) {

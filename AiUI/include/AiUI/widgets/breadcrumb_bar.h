@@ -1,12 +1,13 @@
 // BreadcrumbBar：后退按钮 + 路径节点 + 搜索框，全部自绘
 //
 // 调用方只负责传路径段和回调，节点宽度、省略、命中区都在内部算。
+// 地址编辑用内嵌 InputBox，输入框自己画圆角，不需要原生 EDIT。
 #pragma once
 
 #include "AiUI/icon.h"
 #include "AiUI/painter.h"
 #include "AiUI/theme.h"
-#include "AiUI/widget.h"
+#include "AiUI/view_group.h"
 
 #include <functional>
 #include <string>
@@ -60,9 +61,9 @@ struct BreadcrumbCallbacks {
   std::function<void()> onEditClosed;
 };
 
-class BreadcrumbBar : public Widget {
+class BreadcrumbBar : public ViewGroup {
  public:
-  BreadcrumbBar() { className_ = L"AiUIBreadcrumbBar"; }
+  BreadcrumbBar();
   ~BreadcrumbBar() override;
 
   void setSegments(std::vector<BreadcrumbSegment> segments);
@@ -82,11 +83,10 @@ class BreadcrumbBar : public Widget {
  protected:
   void onCreated() override;
   void onPaint(Painter& painter, const Rect& rect) override;
-  void onMouseDown(const MouseEvent& e) override;
+  bool onMouseDown(const MouseEvent& e) override;
   void onMouseUp(const MouseEvent& e) override;
   void onMouseMove(const MouseEvent& e) override;
   void onMouseLeave() override;
-  void onLayout(const Rect& frame) override;
   void arrangeChildren(const Rect& content) override;
   Color backgroundColor() const override { return style_.background; }
 

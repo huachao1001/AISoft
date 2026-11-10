@@ -1,25 +1,30 @@
 // ButtonBar 实现
 #include "AiUI/widgets/button_bar.h"
 
+#include <algorithm>
+
 namespace AiUI {
 
-Button* ButtonBar::add(const ButtonSpec& spec, int group) {
+Button* ButtonBar::addButton(const ButtonSpec& spec, int group) {
   auto* button = new Button();
   button->setSpec(spec);
+  button->setFocusable(false);
 
   items_.push_back(ButtonBarItem{button, group});
-  addChild(button, LayoutParams::fixed(spec.width, spec.height));
+  // 宽度由内容自适应，高度按设计值固定
+  addView(button, LayoutParams{}.withSize(LayoutParams::kWrapContent, spec.height));
   relayout();
   return button;
 }
 
-Button* ButtonBar::at(size_t index) {
-  return index < items_.size() ? items_[index].button : nullptr;
+Button* ButtonBar::buttonAt(int index) {
+  if (index < 0 || index >= static_cast<int>(items_.size())) return nullptr;
+  return items_[static_cast<size_t>(index)].button;
 }
 
 void ButtonBar::clear() {
-  // removeChild 会连带 delete，不要重复销毁
-  for (auto& item : items_) removeChild(item.button);
+  // removeView 会连带 delete，不要重复销毁
+  for (auto& item : items_) removeView(item.button);
   items_.clear();
   groupLines_.clear();
   invalidate();
@@ -41,7 +46,7 @@ Size ButtonBar::onMeasure(const Size& available) {
 }
 
 void ButtonBar::relayout() {
-  arrangeChildren(Rect{0, 0, clientRect().width(), clientRect().height()});
+  arrangeChildren(contentRect());
   invalidate();
 }
 
@@ -71,9 +76,11 @@ void ButtonBar::arrangeChildren(const Rect& content) {
     }
     previousGroup = item.group;
 
+    // 每个按钮按内容自适应宽度，不占满整段
     const int width = item.button->preferredWidth();
     item.button->layout(Rect{x, top, x + width, top + barHeight});
-    x += width;  }
+    x += width;
+  }
 }
 
 void ButtonBar::onPaint(Painter& painter, const Rect& rect) {

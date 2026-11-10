@@ -17,8 +17,10 @@ constexpr int kChevronWidth = 16;
 
 }  // namespace
 
+BreadcrumbBar::BreadcrumbBar() = default;
+
 BreadcrumbBar::~BreadcrumbBar() {
-  // 子控件归基类所有，这里只断开引用
+  // 子视图归基类所有，这里只断开引用
   search_ = nullptr;
   edit_ = nullptr;
 }
@@ -44,11 +46,8 @@ void BreadcrumbBar::setStyle(const BreadcrumbStyle& style) {
 
 void BreadcrumbBar::setCallbacks(BreadcrumbCallbacks callbacks) {
   callbacks_ = std::move(callbacks);
-  // 回调里带地址文本，这里顺手刷新提示
-  if (search_) {
-    const Rect rc = search_->bounds();
-    search_->layout(rc);
-  }
+  // 回调里带地址文本，尺寸变化后重排一次让输入框拿到新宽度
+  if (search_) search_->layout(searchRect());
 }
 
 void BreadcrumbBar::setBackEnabled(bool enabled) {
@@ -80,7 +79,7 @@ void BreadcrumbBar::onCreated() {
   search_->setOnChange([this] {
     if (callbacks_.onSearch) callbacks_.onSearch(search_->text());
   });
-  addChild(search_, LayoutParams{});
+  addView(search_);
   layoutNodes();
 }
 
@@ -90,8 +89,8 @@ Rect BreadcrumbBar::backRect() const {
   const Rect rc = clientRect();
   const int w = px(style_.backWidth);
   const int h = px(style_.backHeight);
-  const int y = (rc.height() - h) / 2;
-  const int x = px(style_.padX);
+  const int y = rc.top + (rc.height() - h) / 2;
+  const int x = rc.left + px(style_.padX);
   return Rect{x, y, x + w, y + h};
 }
 
@@ -103,7 +102,7 @@ Rect BreadcrumbBar::searchRect() const {
   const int minCrumb = px(style_.backWidth) + px(120);
   const int available = rc.width() - pad * 2 - minCrumb;
   const int w = (std::max)(px(120), (std::min)(px(style_.searchWidth), available));
-  const int y = (rc.height() - h) / 2;
+  const int y = rc.top + (rc.height() - h) / 2;
   return Rect{rc.right - pad - w, y, rc.right - pad, y + h};
 }
 
@@ -118,7 +117,7 @@ void BreadcrumbBar::layoutNodes() {
     int w = platform()->measureText(node.data.label, fonts.ui) + px(style_.nodePadX) * 2;
     if (node.data.home) w += px(style_.iconSize) + px(style_.iconGap);
     const int h = px(style_.nodePadY) * 2 + px(20);
-    const int y = (bar.height() - h) / 2;
+    const int y = bar.top + (bar.height() - h) / 2;
     node.rect = Rect{x, y, x + w, y + h};
 
     if (node.rect.right > limit) {
@@ -132,25 +131,19 @@ void BreadcrumbBar::layoutNodes() {
 
 void BreadcrumbBar::arrangeChildren(const Rect& content) {
   (void)content;
+  // 节点与搜索框不按布局参数走，位置由自身宽度算出
   layoutNodes();
-
   if (search_) search_->layout(searchRect());
 
   if (editing_ && edit_) {
     const Rect bar = clientRect();
     const int h = px(style_.editHeight);
-    const int y = (bar.height() - h) / 2;
-    const int left = px(style_.padX);
+    const int y = bar.top + (bar.height() - h) / 2;
+    // 地址框占住整个路径区，右侧停在搜索框左边
+    const int left = bar.left + px(style_.padX);
     const int right = searchRect().left - px(8);
     edit_->layout(Rect{left, y, right, y + h});
   }
-}
-
-void BreadcrumbBar::onLayout(const Rect& frame) {
-  (void)frame;
-  // 宽度变化后节点宽度与搜索框位置都要重算
-  layoutNodes();
-  if (search_) search_->layout(searchRect());
 }
 
 int BreadcrumbBar::hitNode(Point pt) const {
@@ -243,9 +236,11 @@ void BreadcrumbBar::onMouseLeave() {
   }
 }
 
-void BreadcrumbBar::onMouseDown(const MouseEvent& e) {
-  // 只认落在自身范围内的按下，丢掉切窗残留的抬起消息
+bool BreadcrumbBar::onMouseDown(const MouseEvent& e) {
+  if (e.button != MouseButton::kLeft) return false;
+  // 只认落在自身范围内的按下，丢掉切窗残留的消息
   pressed_ = clientRect().contains(e.position);
+  return pressed_;
 }
 
 void BreadcrumbBar::onMouseUp(const MouseEvent& e) {
@@ -302,7 +297,7 @@ void BreadcrumbBar::showEdit() {
       hideEdit();
       if (callbacks_.onEditClosed) callbacks_.onEditClosed();
     });
-    addChild(edit_, LayoutParams{});
+    addView(edit_);
   }
 
   const std::wstring text = callbacks_.addressText ? callbacks_.addressText() : std::wstring();
@@ -311,7 +306,7 @@ void BreadcrumbBar::showEdit() {
   edit_->show(true);
 
   editing_ = true;
-  arrangeChildren(clientRect());
+  arrangeChildren(contentRect());
   edit_->setFocus();
   invalidate();
 }

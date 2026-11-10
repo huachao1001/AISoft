@@ -3,7 +3,7 @@
 
 #include "AiUI/painter.h"
 #include "AiUI/theme.h"
-#include "AiUI/widget.h"
+#include "AiUI/view.h"
 
 #include <functional>
 #include <string>
@@ -40,16 +40,16 @@ struct ButtonSpec {
   Color ink = kNoColor;
 };
 
-class Button : public Widget {
+class Button : public View {
  public:
-  Button() { className_ = L"AiUIButton"; }
+  Button() = default;
 
   void setSpec(const ButtonSpec& spec);
   const ButtonSpec& spec() const { return spec_; }
 
   void setLabel(const std::wstring& label);
   void setIcon(IconId icon);
-  void setEnabled(bool enabled);
+  void setEnabled(bool enabled) override;
 
   // 内容自适应宽度（物理像素）
   int preferredWidth();
@@ -57,11 +57,10 @@ class Button : public Widget {
  protected:
   void onPaint(Painter& painter, const Rect& rect) override;
   Size onMeasure(const Size& available) override;
-  void onMouseDown(const MouseEvent& e) override;
+  bool onMouseDown(const MouseEvent& e) override;
   void onMouseUp(const MouseEvent& e) override;
   void onMouseMove(const MouseEvent& e) override;
   void onMouseLeave() override;
-  void onDoubleClick(const MouseEvent& e) override;
 
  private:
   // 按状态解析出背景、边框、墨色

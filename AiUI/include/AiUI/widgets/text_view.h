@@ -3,7 +3,7 @@
 
 #include "AiUI/painter.h"
 #include "AiUI/theme.h"
-#include "AiUI/widget.h"
+#include "AiUI/view.h"
 
 #include <string>
 
@@ -12,19 +12,19 @@ namespace AiUI {
 struct TextStyle {
   Color color = kColorText;
   TextAlign align = TextAlign::kLeft;
-  bool ellipsis = true;       // 超宽时显示省略号
+  bool ellipsis = true;  // 超宽时显示省略号
   bool bold = false;
-  bool small = false;         // 用小字号
+  bool small = false;  // 用小字号
   int paddingLeft = 0;
   int paddingTop = 0;
   int paddingRight = 0;
   int paddingBottom = 0;
 };
 
-class TextView : public Widget {
+class TextView : public View {
  public:
-  TextView() { className_ = L"AiUITextView"; }
-  explicit TextView(std::wstring text) : TextView() { setText(std::move(text)); }
+  TextView() = default;
+  explicit TextView(std::wstring text) { setText(std::move(text)); }
 
   void setText(const std::wstring& text);
   const std::wstring& text() const { return text_; }

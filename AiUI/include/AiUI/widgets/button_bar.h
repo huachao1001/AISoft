@@ -2,28 +2,28 @@
 #pragma once
 
 #include "AiUI/theme.h"
+#include "AiUI/view_group.h"
 #include "AiUI/widgets/button.h"
-#include "AiUI/widget.h"
 
-#include <memory>
 #include <vector>
 
 namespace AiUI {
 
 // 按钮条里的一项：按钮实例 + 所属分组。
-// 按钮的所有权归基类的子控件列表，这里只记裸指针。
+// 按钮的所有权归基类的子视图列表，这里只记裸指针。
 struct ButtonBarItem {
   Button* button = nullptr;
   int group = 0;
 };
 
-class ButtonBar : public Widget {
+class ButtonBar : public ViewGroup {
  public:
-  ButtonBar() { className_ = L"AiUIButtonBar"; }
+  ButtonBar() = default;
 
   // 追加按钮并返回裸指针，调用方挂回调
-  Button* add(const ButtonSpec& spec, int group = 0);
-  Button* at(size_t index);
+  Button* addButton(const ButtonSpec& spec, int group = 0);
+  Button* buttonAt(int index);
+  int buttonCount() const { return static_cast<int>(items_.size()); }
   void clear();
 
   // 重排全部按钮（内容变化后调用）

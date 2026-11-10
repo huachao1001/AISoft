@@ -2,15 +2,14 @@
 #include "AiUI/layouts/linear_layout.h"
 
 #include <algorithm>
+#include <vector>
 
 namespace AiUI {
 
-LinearLayout::LinearLayout(Orientation orientation) : orientation_(orientation) {
-  className_ = L"AiUILinearLayout";
-}
+LinearLayout::LinearLayout(Orientation orientation) : orientation_(orientation) {}
 
-LinearLayout& LinearLayout::add(Widget* child, const LayoutParams& params) {
-  addChild(child, params);
+LinearLayout& LinearLayout::addChildView(View* child, const LayoutParams& params) {
+  addView(child, params);
   return *this;
 }
 
@@ -18,49 +17,33 @@ void LinearLayout::setOrientation(Orientation orientation) {
   if (orientation_ == orientation) return;
   orientation_ = orientation;
   invalidate();
+  requestLayout();
 }
 
 void LinearLayout::setSpacing(int spacing) {
+  if (spacing_ == spacing) return;
   spacing_ = spacing;
   invalidate();
-}
-
-void LinearLayout::setPadding(int all) {
-  padding_ = Insets::all(all);
-  invalidate();
-}
-
-void LinearLayout::setPadding(int horizontal, int vertical) {
-  padding_ = Insets::symmetric(horizontal, vertical);
-  invalidate();
-}
-
-void LinearLayout::setPadding(int left, int top, int right, int bottom) {
-  padding_ = Insets{left, top, right, bottom};
-  invalidate();
-}
-
-void LinearLayout::onPaint(Painter& painter, const Rect& rect) {
-  (void)painter;
-  (void)rect;
+  requestLayout();
 }
 
 Size LinearLayout::onMeasure(const Size& available) {
   const int d = dpi();
   const bool horizontal = (orientation_ == Orientation::kHorizontal);
-  const int padH = (padding_.left + padding_.right) * d / 96;
-  const int padV = (padding_.top + padding_.bottom) * d / 96;
+  const Insets& padding = this->padding();
+  const int padH = (padding.left + padding.right) * d / 96;
+  const int padV = (padding.top + padding.bottom) * d / 96;
   const int gap = spacing_ * d / 96;
 
   int total = 0;
   int cross = 0;
   int visibleCount = 0;
 
-  for (Widget* child : children()) {
+  for (View* child : children()) {
     if (!child->isVisible()) continue;
     ++visibleCount;
 
-    const Size inner{available.width - padH, available.height - padV};
+    const Size inner{(std::max)(0, available.width - padH), (std::max)(0, available.height - padV)};
     const Size size = childMeasureSize(child, inner);
     const LayoutParams& lp = child->layoutParams();
 
@@ -82,21 +65,21 @@ void LinearLayout::arrangeChildren(const Rect& content) {
   const bool horizontal = (orientation_ == Orientation::kHorizontal);
   const int gap = spacing_ * d / 96;
 
-  const Rect inner = content.deflated(padding_.left * d / 96, padding_.top * d / 96)
-                         .deflated(padding_.right * d / 96, padding_.bottom * d / 96);
-
-  // 第一遍：固定尺寸的子控件先占位，统计剩余空间与总权重
+  // 第一遍：固定尺寸的子视图先占位，统计剩余空间与总权重
   struct Slot {
-    Widget* child = nullptr;
-    Size desired{};   // 物理像素
-    int ml = 0, mt = 0, mr = 0, mb = 0;
+    View* child = nullptr;
+    Size desired{};  // 物理像素
+    int ml = 0;
+    int mt = 0;
+    int mr = 0;
+    int mb = 0;
   };
   std::vector<Slot> slots;
   slots.reserve(children().size());
 
   int used = 0;
   float totalWeight = 0.0f;
-  for (Widget* child : children()) {
+  for (View* child : children()) {
     if (!child->isVisible()) continue;
 
     const LayoutParams& lp = child->layoutParams();
@@ -107,9 +90,10 @@ void LinearLayout::arrangeChildren(const Rect& content) {
     slot.mr = lp.marginRight * d / 96;
     slot.mb = lp.marginBottom * d / 96;
 
-    const Size available{inner.width() - slot.ml - slot.mr, inner.height() - slot.mt - slot.mb};
+    const Size available{(std::max)(0, content.width() - slot.ml - slot.mr),
+                         (std::max)(0, content.height() - slot.mt - slot.mb)};
     slot.desired = child->measure(available);
-    // 带权重的子控件不占固定空间，剩余空间全部分给它们
+    // 带权重的子视图不占固定空间，剩余空间全部分给它们
     if (lp.weight <= 0.0f) {
       used += horizontal ? (slot.desired.width + slot.ml + slot.mr)
                          : (slot.desired.height + slot.mt + slot.mb);
@@ -120,10 +104,10 @@ void LinearLayout::arrangeChildren(const Rect& content) {
   if (slots.size() > 1) used += gap * (static_cast<int>(slots.size()) - 1);
 
   // 剩余空间按权重分配；权重为 0 的保持自身尺寸
-  const int available = horizontal ? inner.width() : inner.height();
-  const int remaining = available - used;
+  const int available = horizontal ? content.width() : content.height();
+  const int remaining = (std::max)(0, available - used);
 
-  int cursor = horizontal ? inner.left : inner.top;
+  int cursor = horizontal ? content.left : content.top;
   for (size_t i = 0; i < slots.size(); ++i) {
     Slot& slot = slots[i];
     const LayoutParams& lp = slot.child->layoutParams();
@@ -135,19 +119,19 @@ void LinearLayout::arrangeChildren(const Rect& content) {
 
     int crossSize = horizontal ? slot.desired.height : slot.desired.width;
     const int crossAvailable =
-        horizontal ? (inner.height() - slot.mt - slot.mb) : (inner.width() - slot.ml - slot.mr);
+        horizontal ? (content.height() - slot.mt - slot.mb) : (content.width() - slot.ml - slot.mr);
     if ((horizontal ? lp.height : lp.width) == LayoutParams::kMatchParent) {
       crossSize = crossAvailable;
     }
 
     // 交叉轴对齐
-    int crossPos = horizontal ? (inner.top + slot.mt) : (inner.left + slot.ml);
+    int crossPos = horizontal ? (content.top + slot.mt) : (content.left + slot.ml);
     if (gravity_ == Gravity::kCenter) {
-      crossPos = horizontal ? (inner.top + (inner.height() - crossSize) / 2)
-                            : (inner.left + (inner.width() - crossSize) / 2);
+      crossPos = horizontal ? (content.top + (content.height() - crossSize) / 2)
+                            : (content.left + (content.width() - crossSize) / 2);
     } else if (gravity_ == Gravity::kEnd) {
-      crossPos = horizontal ? (inner.bottom - slot.mb - crossSize)
-                            : (inner.right - slot.mr - crossSize);
+      crossPos = horizontal ? (content.bottom - slot.mb - crossSize)
+                            : (content.right - slot.mr - crossSize);
     }
 
     Rect frame;

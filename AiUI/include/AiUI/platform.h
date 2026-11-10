@@ -1,7 +1,10 @@
 // 平台后端接口
 //
-// 控件只通过这里与操作系统打交道。所有平台相关实现集中在 src/win32，
+// 视图只通过这里与操作系统打交道。所有平台相关实现集中在 src/win32，
 // 换平台时新增一份实现即可，控件代码一行不用改。
+//
+// 关键约束：整棵视图树共用一个窗口。ViewRoot 是唯一持有 PlatformWindow 的
+// 对象，子视图不创建任何原生句柄，因此这里不再提供“每个控件一个窗口”的入口。
 #pragma once
 
 #include "AiUI/events.h"
@@ -16,12 +19,14 @@ namespace AiUI {
 
 class Canvas;
 
-// 平台窗口把原生事件翻译成中性事件后回调宿主
+// 窗口把原生事件翻译成中性事件后回调宿主。
+// 整棵树共用一个窗口，所以这里只有一套回调。
 class WindowHost {
  public:
   virtual ~WindowHost() = default;
 
-  virtual void onPaint(Canvas& canvas) = 0;
+  // 需要重绘；update 是本次要重画的窗口区域
+  virtual void onExpose(const Rect& update) = 0;
   virtual void onResize(int width, int height) = 0;
 
   virtual void onMouseDown(const MouseEvent& e) = 0;
@@ -37,19 +42,16 @@ class WindowHost {
   virtual bool onChar(wchar_t ch) = 0;
   virtual void onFocusChanged(bool focused) = 0;
   virtual void onTimer() = 0;
-  virtual void onScroll(const ScrollEvent& e) = 0;
 };
 
 // 窗口创建参数
 struct WindowParams {
-  int id = 0;
   bool visible = true;
-  bool tabStop = false;
-  bool scrollable = false;
+  bool tabStop = true;
   std::wstring className;  // 窗口类名，需在进程内唯一
 };
 
-// 平台窗口：承载一个控件
+// 平台窗口：整棵视图树共用一个
 class PlatformWindow {
  public:
   virtual ~PlatformWindow() = default;
@@ -58,10 +60,8 @@ class PlatformWindow {
   virtual Rect clientRect() const = 0;
   virtual int dpi() const = 0;
 
-  // 离屏画布；nullptr 表示当前无法绘制
-  virtual std::unique_ptr<Canvas> createCanvas() = 0;
-  // 直接往窗口画的画笔（用于测量等场景）
-  virtual std::unique_ptr<Painter> createPainter() = 0;
+  // 离屏画布，只覆盖 area（窗口客户区坐标）；nullptr 表示当前无法绘制
+  virtual std::unique_ptr<Canvas> createCanvas(const Rect& area) = 0;
 
   virtual void setBounds(const Rect& bounds) = 0;
   virtual void show(bool visible) = 0;
@@ -72,12 +72,9 @@ class PlatformWindow {
   virtual void setCursorShape(CursorShape shape) = 0;
   virtual void captureMouse(bool capture) = 0;
 
-  // 滚动信息，单位物理像素
-  virtual void setScrollInfo(int total, int page, int position) = 0;
-
-  // 光标闪烁定时器
+  // 光标闪烁定时器：整棵树共用一个
   virtual void setBlinkTimer(bool on) = 0;
-  // 让输入法候选框跟随光标
+  // 让输入法候选框跟随光标（客户区坐标）
   virtual void setImeCaret(int x, int y) = 0;
 };
 
@@ -112,6 +109,9 @@ class Platform {
 
 // 当前平台后端；进程内唯一
 Platform* platform();
+
+// 测试用：替换当前平台后端，传 nullptr 恢复默认实现
+void setPlatformForTesting(Platform* platform);
 
 // 宿主启动/退出时调用
 void startupPlatform();

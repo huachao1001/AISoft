@@ -540,7 +540,8 @@ class Generator {
 
     line(1, named ? (variable + " = new " + type + "();")
                   : ("auto* " + variable + " = new " + type + "();"));
-    line(1, parentVar + "->add(" + variable + ", " + layoutParams(node) + ");");
+    // 布局容器与普通容器都走 ViewGroup::addView，布局参数由它转交
+    line(1, parentVar + "->addView(" + variable + ", " + layoutParams(node) + ");");
 
     if (isContainer(node.tag)) emitContainerProperties(node, variable);
     else emitWidgetProperties(node, variable);

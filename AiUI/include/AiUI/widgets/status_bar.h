@@ -3,7 +3,7 @@
 
 #include "AiUI/painter.h"
 #include "AiUI/theme.h"
-#include "AiUI/widget.h"
+#include "AiUI/view.h"
 
 #include <string>
 
@@ -28,9 +28,9 @@ struct StatusStyle {
   Color divider = kColorLine;
 };
 
-class StatusBar : public Widget {
+class StatusBar : public View {
  public:
-  StatusBar() { className_ = L"AiUIStatusBar"; }
+  StatusBar() = default;
 
   void setFields(const StatusFields& fields);
   void setStyle(const StatusStyle& style);

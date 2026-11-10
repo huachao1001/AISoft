@@ -2,6 +2,7 @@
 #include "backend.h"
 
 #include <algorithm>
+#include <vector>
 
 namespace AiUI {
 namespace win32 {
@@ -58,7 +59,7 @@ class GdiplusBackend : public PaintBackend {
   void strokeRoundRect(const Rect& rc, Color color, int radius, int lineWidth) override {
     if (!g_ || rc.isEmpty()) return;
     const int inset = (std::max)(0, lineWidth / 2);
-    Rect inner = rc.deflated(inset, inset);
+    const Rect inner = rc.deflated(inset, inset);
     if (inner.isEmpty()) return;
     GraphicsPath path;
     buildRoundPath(path, inner, (std::max)(0, radius - inset));
@@ -139,9 +140,28 @@ class GdiplusBackend : public PaintBackend {
   void resetClip() override {
     if (g_) g_->ResetClip();
   }
+  void clipRect(const Rect& rc) override {
+    if (!g_) return;
+    // Intersect 与当前裁剪区求交，配合 save/restore 逐层收缩
+    g_->SetClip(toGdiplus(rc), CombineModeIntersect);
+  }
+
+  void translate(int dx, int dy) override {
+    if (g_) g_->TranslateTransform(static_cast<REAL>(dx), static_cast<REAL>(dy));
+  }
+  void save() override {
+    if (!g_) return;
+    states_.push_back(g_->Save());
+  }
+  void restore() override {
+    if (!g_ || states_.empty()) return;
+    g_->Restore(states_.back());
+    states_.pop_back();
+  }
 
  private:
   Graphics* g_ = nullptr;
+  std::vector<GraphicsState> states_;
 };
 
 // ── 离屏画布 ──
@@ -156,7 +176,7 @@ class GdiplusCanvas : public Canvas {
       graphics_->SetSmoothingMode(SmoothingModeAntiAlias);
       graphics_->SetPixelOffsetMode(PixelOffsetModeHalf);
       graphics_->SetTextRenderingHint(TextRenderingHintClearTypeGridFit);
-      // 调用方用客户区绝对坐标绘制，位图里只装 rc 这一块
+      // 调用方用窗口坐标绘制，位图里只装 rc 这一块
       graphics_->TranslateTransform(static_cast<REAL>(-rc.left), static_cast<REAL>(-rc.top));
     }
     backend_ = std::make_unique<GdiplusBackend>(graphics_);
@@ -175,6 +195,7 @@ class GdiplusCanvas : public Canvas {
   void commit() override {
     if (!target_ || !bitmap_) return;
     Graphics target(target_);
+    // SourceCopy：位图内容直接覆盖，透明像素也一并写回
     target.SetCompositingMode(CompositingModeSourceCopy);
     target.DrawImage(bitmap_, Gdiplus::Rect(rc_.left, rc_.top, rc_.width(), rc_.height()), 0, 0,
                      bitmap_->GetWidth(), bitmap_->GetHeight(), UnitPixel);
@@ -225,8 +246,7 @@ Font makeFont(const wchar_t* family, float pointSize, bool bold, int dpi) {
 
   const Gdiplus::FontFamily preferred(family);
   const Gdiplus::FontFamily fallback(L"Microsoft YaHei UI");
-  const Gdiplus::FontFamily* use =
-      preferred.IsAvailable() ? &preferred : &fallback;
+  const Gdiplus::FontFamily* use = preferred.IsAvailable() ? &preferred : &fallback;
 
   auto* font = new Gdiplus::Font(use, pixelSize, style, Gdiplus::UnitPixel);
   if (!font->IsAvailable()) {

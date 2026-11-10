@@ -2,6 +2,7 @@
 #include "AiUI/widgets/button.h"
 
 #include "AiUI/font.h"
+#include "AiUI/platform.h"
 
 namespace AiUI {
 
@@ -23,10 +24,12 @@ void Button::setIcon(IconId icon) {
 
 void Button::setEnabled(bool enabled) {
   if (isEnabled() == enabled) return;
-  Widget::setEnabled(enabled);
+  View::setEnabled(enabled);
+  // 置灰时清掉悬停/按下，避免残留高亮
   if (!enabled) {
     hot_ = false;
     pressed_ = false;
+    invalidate();
   }
 }
 
@@ -136,12 +139,12 @@ void Button::onPaint(Painter& painter, const Rect& rect) {
   }
 }
 
-void Button::onMouseDown(const MouseEvent& e) {
-  (void)e;
-  if (!isEnabled()) return;
+bool Button::onMouseDown(const MouseEvent& e) {
+  if (!isEnabled() || e.button != MouseButton::kLeft) return false;
   pressed_ = true;
   captureMouse();
   invalidate();
+  return true;
 }
 
 void Button::onMouseUp(const MouseEvent& e) {
@@ -149,13 +152,9 @@ void Button::onMouseUp(const MouseEvent& e) {
   pressed_ = false;
 
   // 只有抬起仍在按钮内才算点击
-  const bool inside = e.position.x >= 0 && e.position.x < bounds().width() &&
-                      e.position.y >= 0 && e.position.y < bounds().height();
+  const bool inside = clientRect().contains(e.position);
   invalidate();
-  if (inside && isEnabled()) {
-    // 回调由基类的 onClick_ 承担
-    dispatchClick();
-  }
+  if (inside && isEnabled()) dispatchClick();
 }
 
 void Button::onMouseMove(const MouseEvent& e) {
@@ -165,6 +164,7 @@ void Button::onMouseMove(const MouseEvent& e) {
     hot_ = true;
     invalidate();
   }
+  setCursor(CursorShape::kHand);
 }
 
 void Button::onMouseLeave() {
@@ -172,8 +172,7 @@ void Button::onMouseLeave() {
     hot_ = false;
     invalidate();
   }
+  setCursor(CursorShape::kArrow);
 }
-
-void Button::onDoubleClick(const MouseEvent& e) { (void)e; }
 
 }  // namespace AiUI

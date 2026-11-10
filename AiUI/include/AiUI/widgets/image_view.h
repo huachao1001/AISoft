@@ -6,15 +6,15 @@
 
 #include "AiUI/icon.h"
 #include "AiUI/theme.h"
-#include "AiUI/widget.h"
+#include "AiUI/view.h"
 
 #include <string>
 
 namespace AiUI {
 
-class ImageView : public Widget {
+class ImageView : public View {
  public:
-  ImageView() { className_ = L"AiUIImageView"; }
+  ImageView() = default;
 
   // 从文件加载：按扩展名选解码器，支持 png/jpeg/gif/bmp/ico/webp
   bool loadFile(const std::wstring& path);
@@ -34,6 +34,7 @@ class ImageView : public Widget {
  protected:
   void onPaint(Painter& painter, const Rect& rect) override;
   Size onMeasure(const Size& available) override;
+  void onAttach() override;
 
  private:
   // 按适配方式算出图片实际占用的矩形

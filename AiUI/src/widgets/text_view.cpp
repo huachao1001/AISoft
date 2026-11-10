@@ -2,6 +2,7 @@
 #include "AiUI/widgets/text_view.h"
 
 #include "AiUI/font.h"
+#include "AiUI/platform.h"
 #include "AiUI/theme.h"
 
 namespace AiUI {

@@ -2,6 +2,7 @@
 #include "AiUI/widgets/input_box.h"
 
 #include "AiUI/font.h"
+#include "AiUI/platform.h"
 
 #include <windows.h>
 
@@ -9,6 +10,11 @@
 #include <cwctype>
 
 namespace AiUI {
+
+InputBox::InputBox() {
+  // 输入框是键盘焦点目标；容器上的 setFocus() 会落到这里
+  setFocusable(true);
+}
 
 void InputBox::setSpec(const InputSpec& spec) {
   spec_ = spec;
@@ -88,8 +94,9 @@ void InputBox::clampCaret() {
 }
 
 void InputBox::ensureCaretVisible() {
-  if (!window()) return;
+  // 没挂载时没有真实宽度，等布局完成后再校正
   const Rect rc = clientRect();
+  if (rc.isEmpty()) return;
   const int d = dpi();
   const int available = rc.right - spec_.padX * d / 96 - 2 * d / 96 - textLeft();
   if (available <= 0) return;
@@ -107,8 +114,14 @@ void InputBox::ensureCaretVisible() {
 
 void InputBox::resetBlink() {
   caretVisible_ = true;
-  if (window()) window()->setBlinkTimer(true);
+  // 只有真正持有焦点时才需要定时器
+  if (focused_) startBlinkTimer();
   invalidate();
+}
+
+void InputBox::updateCaretIme() {
+  const Rect area = textRect();
+  updateImeCaret(xForPosition(caret_), area.top);
 }
 
 void InputBox::deleteSelection() {
@@ -146,6 +159,7 @@ void InputBox::moveCaret(int pos, bool extend) {
   }
   ensureCaretVisible();
   resetBlink();
+  updateCaretIme();
   invalidate();
 }
 
@@ -226,14 +240,14 @@ void InputBox::onPaint(Painter& painter, const Rect& rect) {
   const Rect textArea = textRect();
   if (spec_.hasLeadIcon) {
     const int size = spec_.leadIconSize * d / 96;
-    const Rect iconRect{spec_.padX * d / 96, rect.center().y - size / 2,
-                        spec_.padX * d / 96 + size, rect.center().y + size / 2};
+    const Rect iconRect{rect.left + spec_.padX * d / 96, rect.center().y - size / 2,
+                        rect.left + spec_.padX * d / 96 + size, rect.center().y + size / 2};
     painter.drawIcon(spec_.leadIcon, iconRect, kColorTextFaint);
   }
 
   // 文本裁剪到输入区，滚动时不会溢出圆角
-  painter.setClip(Rect{spec_.padX * d / 96, rect.top, rect.right - spec_.padX * d / 96,
-                       rect.bottom});
+  painter.clipRect(Rect{rect.left + spec_.padX * d / 96, rect.top,
+                        rect.right - spec_.padX * d / 96, rect.bottom});
 
   if (text_.empty()) {
     painter.drawTextEllipsis(textArea, spec_.cue, kColorTextFaint, fonts.ui);
@@ -251,15 +265,15 @@ void InputBox::onPaint(Painter& painter, const Rect& rect) {
                        kColorText);
     }
   }
-
-  painter.resetClip();
 }
 
-void InputBox::onMouseDown(const MouseEvent& e) {
+bool InputBox::onMouseDown(const MouseEvent& e) {
+  if (e.button != MouseButton::kLeft) return false;
   setFocus();
   dragging_ = true;
   captureMouse();
   moveCaret(hitTest(e.position.x), e.modifiers.shift);
+  return true;
 }
 
 void InputBox::onMouseUp(const MouseEvent& e) {
@@ -271,7 +285,12 @@ void InputBox::onMouseUp(const MouseEvent& e) {
 }
 
 void InputBox::onMouseMove(const MouseEvent& e) {
-  if (dragging_) moveCaret(hitTest(e.position.x), true);
+  if (dragging_) {
+    moveCaret(hitTest(e.position.x), true);
+    return;
+  }
+  // 输入框内一律用文本光标
+  setCursor(CursorShape::kIBeam);
 }
 
 void InputBox::onDoubleClick(const MouseEvent& e) {
@@ -367,9 +386,14 @@ bool InputBox::onChar(wchar_t ch) {
 void InputBox::onFocusChanged(bool focused) {
   focused_ = focused;
   dragging_ = false;
-  if (window()) window()->setBlinkTimer(focused);
   if (focused) {
     caretVisible_ = true;
+    // 光标闪烁定时器由基类转给 ViewRoot，整棵树共用一个
+    startBlinkTimer();
+    ensureCaretVisible();
+    updateCaretIme();
+  } else {
+    stopBlinkTimer();
   }
   invalidate();
   if (!focused && onBlur_) onBlur_();

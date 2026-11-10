@@ -78,30 +78,11 @@ class DcCanvas : public Canvas {
   HDC dc_ = nullptr;
 };
 
-// 画笔守卫：销毁后端与 Graphics，并释放 DC
-class DcPainter : public Painter {
- public:
-  DcPainter(std::unique_ptr<PaintBackend> backend, HWND hwnd, HDC dc, Gdiplus::Graphics* g)
-      : Painter(*backend), backend_(std::move(backend)), hwnd_(hwnd), dc_(dc), graphics_(g) {}
-  ~DcPainter() override {
-    backend_.reset();
-    delete graphics_;
-    ::ReleaseDC(hwnd_, dc_);
-  }
-
- private:
-  std::unique_ptr<PaintBackend> backend_;
-  HWND hwnd_ = nullptr;
-  HDC dc_ = nullptr;
-  Gdiplus::Graphics* graphics_ = nullptr;
-};
-
 }  // namespace
 
 class Win32Window : public PlatformWindow {
  public:
-  Win32Window(WindowHost& host, const WindowParams& params)
-      : host_(host), id_(params.id) {}
+  explicit Win32Window(WindowHost& host) : host_(host) {}
 
   ~Win32Window() override {
     if (blinkTimer_) ::KillTimer(hwnd_, kBlinkTimerId);
@@ -117,10 +98,10 @@ class Win32Window : public PlatformWindow {
     DWORD style = WS_CHILD;
     if (params.visible) style |= WS_VISIBLE;
     if (params.tabStop) style |= WS_TABSTOP;
-    if (params.scrollable) style |= WS_VSCROLL;
 
-    hwnd_ = ::CreateWindowExW(0, params.className.c_str(), L"", style, 0, 0, 0, 0, parent,
-                              reinterpret_cast<HMENU>(static_cast<INT_PTR>(id_)), instance, this);
+    // 单一窗口，不再需要 id；HMENU 位置传 0 即可
+    hwnd_ = ::CreateWindowExW(0, params.className.c_str(), L"", style, 0, 0, 0, 0, parent, nullptr,
+                              instance, this);
     if (!hwnd_) return false;
     dpi_ = ::GetDpiForWindow(hwnd_);
     return true;
@@ -137,32 +118,16 @@ class Win32Window : public PlatformWindow {
 
   int dpi() const override { return dpi_; }
 
-  std::unique_ptr<Canvas> createCanvas() override {
-    if (!hwnd_) return nullptr;
+  std::unique_ptr<Canvas> createCanvas(const Rect& area) override {
+    if (!hwnd_ || area.isEmpty()) return nullptr;
     HDC dc = ::GetDC(hwnd_);
-    auto inner = makeCanvas(dc, clientRect());
+    if (!dc) return nullptr;
+    auto inner = makeCanvas(dc, area);
     if (!inner) {
       ::ReleaseDC(hwnd_, dc);
       return nullptr;
     }
     return std::make_unique<DcCanvas>(std::move(inner), hwnd_, dc);
-  }
-
-  std::unique_ptr<Painter> createPainter() override {
-    if (!hwnd_) return nullptr;
-    HDC dc = ::GetDC(hwnd_);
-    if (!ensureGdiplus()) {
-      ::ReleaseDC(hwnd_, dc);
-      return nullptr;
-    }
-    auto* graphics = new Gdiplus::Graphics(dc);
-    auto backend = makePaintBackend(graphics);
-    if (!backend) {
-      delete graphics;
-      ::ReleaseDC(hwnd_, dc);
-      return nullptr;
-    }
-    return std::make_unique<DcPainter>(std::move(backend), hwnd_, dc, graphics);
   }
 
   void setBounds(const Rect& bounds) override {
@@ -180,6 +145,7 @@ class Win32Window : public PlatformWindow {
 
   void invalidateRect(const Rect& rc) override {
     if (!hwnd_ || rc.isEmpty()) return;
+    // 右/下边界是开区间，交给 Win32 时就是原值
     RECT r{rc.left, rc.top, rc.right, rc.bottom};
     ::InvalidateRect(hwnd_, &r, FALSE);
   }
@@ -200,17 +166,6 @@ class Win32Window : public PlatformWindow {
     } else {
       ::ReleaseCapture();
     }
-  }
-
-  void setScrollInfo(int total, int page, int position) override {
-    if (!hwnd_) return;
-    SCROLLINFO si{sizeof(si)};
-    si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
-    si.nMin = 0;
-    si.nMax = total > 0 ? total - 1 : 0;
-    si.nPage = page > 0 ? static_cast<UINT>(page) : 0;
-    si.nPos = position;
-    ::SetScrollInfo(hwnd_, SB_VERT, &si, TRUE);
   }
 
   void setBlinkTimer(bool on) override {
@@ -254,10 +209,11 @@ class Win32Window : public PlatformWindow {
       case WM_PAINT: {
         PAINTSTRUCT ps;
         ::BeginPaint(hwnd_, &ps);
-        if (auto canvas = createCanvas()) {
-          host_.onPaint(*canvas);
-          canvas->commit();
-        }
+        // 更新区就是本次要重画的部分；为空时交给 ViewRoot 按整窗处理
+        const RECT& rc = ps.rcPaint;
+        Rect update{rc.left, rc.top, rc.right, rc.bottom};
+        if (update.isEmpty()) update = clientRect();
+        host_.onExpose(update);
         ::EndPaint(hwnd_, &ps);
         return 0;
       }
@@ -335,27 +291,6 @@ class Win32Window : public PlatformWindow {
         }
         break;
 
-      case WM_VSCROLL: {
-        ScrollEvent e;
-        switch (LOWORD(wParam)) {
-          case SB_LINEUP: e.code = ScrollCode::kLineUp; break;
-          case SB_LINEDOWN: e.code = ScrollCode::kLineDown; break;
-          case SB_PAGEUP: e.code = ScrollCode::kPageUp; break;
-          case SB_PAGEDOWN: e.code = ScrollCode::kPageDown; break;
-          case SB_THUMBTRACK:
-          case SB_THUMBPOSITION: e.code = ScrollCode::kThumb; break;
-          case SB_TOP: e.code = ScrollCode::kTop; break;
-          case SB_BOTTOM: e.code = ScrollCode::kBottom; break;
-          default: return 0;
-        }
-        SCROLLINFO si{sizeof(si)};
-        si.fMask = SIF_TRACKPOS;
-        ::GetScrollInfo(hwnd_, SB_VERT, &si);
-        e.position = si.nTrackPos;
-        host_.onScroll(e);
-        return 0;
-      }
-
       case WM_SETCURSOR:
         if (LOWORD(lParam) == HTCLIENT) {
           ::SetCursor(::LoadCursorW(nullptr, cursorId(cursor_)));
@@ -388,8 +323,7 @@ class Win32Window : public PlatformWindow {
     return m;
   }
 
-  MouseEvent mouseEvent(LPARAM lParam,
-                        MouseButton button = MouseButton::kNone) const {
+  MouseEvent mouseEvent(LPARAM lParam, MouseButton button = MouseButton::kNone) const {
     MouseEvent e;
     e.position = Point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
     e.button = button;
@@ -409,7 +343,6 @@ class Win32Window : public PlatformWindow {
   }
 
   WindowHost& host_;
-  int id_ = 0;
   HWND hwnd_ = nullptr;
   int dpi_ = 96;
   bool tracking_ = false;
@@ -423,7 +356,7 @@ class Win32Platform : public Platform {
  public:
   PlatformWindow* createWindow(NativeHandle parent, const WindowParams& params,
                                WindowHost& host) override {
-    auto window = std::make_unique<Win32Window>(host, params);
+    auto window = std::make_unique<Win32Window>(host);
     if (!window->create(static_cast<HWND>(parent), params, instance_)) return nullptr;
     Win32Window* raw = window.get();
     windows_[raw] = std::move(window);
@@ -466,10 +399,12 @@ class Win32Platform : public Platform {
   void releaseImage(Image image) override { win32::releaseLoadedImage(image); }
 
   void startupDrawing() override { win32::ensureGdiplus(); }
+
   void shutdownDrawing() override {
     win32::releaseIconCaches();
     win32::releaseGdiplus();
   }
+
   bool isDrawingReady() override { return win32::ensureGdiplus(); }
 
  private:
@@ -479,17 +414,28 @@ class Win32Platform : public Platform {
 
 Win32Platform g_platform;
 bool g_started = false;
+// 测试替换的平台后端；非空时所有 platform() 调用都走它
+Platform* g_testPlatform = nullptr;
 
 }  // namespace
 
 Platform* backendPlatform() { return &g_platform; }
+
+Platform* testPlatformOverride() { return g_testPlatform ? g_testPlatform : &g_platform; }
+
+void markTestOverride(Platform* platform) { g_testPlatform = platform; }
 
 void markStarted(bool started) { g_started = started; }
 bool hasStarted() { return g_started; }
 
 }  // namespace win32
 
-Platform* platform() { return win32::backendPlatform(); }
+Platform* platform() { return win32::testPlatformOverride(); }
+
+// 测试替换：非空时优先于内置后端；空则回到 Win32
+void setPlatformForTesting(Platform* platform) {
+  win32::markTestOverride(platform);
+}
 
 void startupPlatform() {
   if (win32::hasStarted()) return;

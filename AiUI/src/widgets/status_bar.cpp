@@ -26,7 +26,7 @@ void StatusBar::onPaint(Painter& painter, const Rect& rect) {
   const int d = dpi();
   const int padX = style_.padX * d / 96;
   const int centerY = rect.center().y;
-  int x = padX;
+  int x = rect.left + padX;
 
   // 右侧统计先量宽，左侧被挤时用它做边界
   const int rightWidth = painter.measureText(fields_.right, fonts.uiSmall);

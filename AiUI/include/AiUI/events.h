@@ -23,14 +23,6 @@ struct MouseEvent {
 // 鼠标指针形状
 enum class CursorShape { kArrow, kHand, kSizeHorizontal, kIBeam };
 
-// 滚动请求
-enum class ScrollCode { kLineUp, kLineDown, kPageUp, kPageDown, kThumb, kTop, kBottom };
-
-struct ScrollEvent {
-  ScrollCode code = ScrollCode::kLineUp;
-  int position = 0;  // 拖动滑块时的目标位置
-};
-
 // 键位：只列界面会用到的键，避免绑定具体平台的虚拟键码
 enum class Key {
   kNone = 0,

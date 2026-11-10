@@ -56,6 +56,13 @@ class PaintBackend {
 
   virtual void setClip(const Rect& rc) = 0;
   virtual void resetClip() = 0;
+  // 与当前裁剪区求交；配合 save/restore 逐层收缩
+  virtual void clipRect(const Rect& rc) = 0;
+
+  // 坐标平移与绘制状态栈：子树绘制靠它把原点移到子视图左上角
+  virtual void translate(int dx, int dy) = 0;
+  virtual void save() = 0;
+  virtual void restore() = 0;
 };
 
 // 面向控件的画笔：坐标是控件客户区绝对坐标
@@ -128,6 +135,14 @@ class Painter {
   // ── 裁剪 ──
   void setClip(const Rect& rc) { backend_.setClip(rc); }
   void resetClip() { backend_.resetClip(); }
+  // 与已有裁剪区求交，用于逐层收缩子树可见范围
+  void clipRect(const Rect& rc) { backend_.clipRect(rc); }
+
+  // ── 坐标平移 ──
+  // 进入子视图前平移原点，返回时用 save/restore 还原
+  void translate(int dx, int dy) { backend_.translate(dx, dy); }
+  void save() { backend_.save(); }
+  void restore() { backend_.restore(); }
 
  private:
   PaintBackend& backend_;

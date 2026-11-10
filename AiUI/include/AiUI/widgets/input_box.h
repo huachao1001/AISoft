@@ -4,7 +4,7 @@
 #include "AiUI/icon.h"
 #include "AiUI/painter.h"
 #include "AiUI/theme.h"
-#include "AiUI/widget.h"
+#include "AiUI/view.h"
 
 #include <functional>
 #include <string>
@@ -23,9 +23,9 @@ struct InputSpec {
   Color outerBackground = kColorPane;
 };
 
-class InputBox : public Widget {
+class InputBox : public View {
  public:
-  InputBox() { className_ = L"AiUIInputBox"; }
+  InputBox();
 
   using ChangeHandler = std::function<void()>;
   using SubmitHandler = std::function<void(bool committed)>;
@@ -48,7 +48,7 @@ class InputBox : public Widget {
  protected:
   void onPaint(Painter& painter, const Rect& rect) override;
   Size onMeasure(const Size& available) override;
-  void onMouseDown(const MouseEvent& e) override;
+  bool onMouseDown(const MouseEvent& e) override;
   void onMouseUp(const MouseEvent& e) override;
   void onMouseMove(const MouseEvent& e) override;
   void onDoubleClick(const MouseEvent& e) override;
@@ -78,12 +78,15 @@ class InputBox : public Widget {
   int hitTest(int x) const;
   int xForPosition(int pos) const;
   void syncTextToWindow();
+  // 让输入法候选框跟随自绘光标
+  void updateCaretIme();
 
   std::wstring text_;
   int caret_ = 0;
   int selectionBegin_ = 0;
   int selectionEnd_ = 0;
   int scrollX_ = 0;
+  // 键盘焦点由 ViewRoot 统一管，这里只记录自己的绘制状态
   bool focused_ = false;
   bool dragging_ = false;
   bool caretVisible_ = true;

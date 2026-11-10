@@ -18,8 +18,11 @@ endif()
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
 
 set(AIUI_SOURCES
-  # 核心
-  src/widget.cpp
+  # 核心：视图树与唯一窗口
+  src/view.cpp
+  src/view_group.cpp
+  src/view_root.cpp
+  src/scroll_view.cpp
   src/font.cpp
   # 布局
   src/layouts/frame_layout.cpp
@@ -66,9 +69,19 @@ target_link_libraries(AiUI PUBLIC gdiplus imm32 shell32 shlwapi ole32 oleaut32 u
 # XML 布局自动生成：aiui_add_layouts(<target> assets/layouts/main.xml ...)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/AiUiLayout.cmake)
 
-# 独立构建时顺带验证生成器可用
+# 独立构建时顺带验证生成器可用，并编出单元测试
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   enable_testing()
+
+  add_executable(AiUI_tests
+    tests/test_framework.cpp
+    tests/mock_platform.cpp
+    tests/test_core.cpp
+  )
+  target_include_directories(AiUI_tests PRIVATE tests)
+  target_link_libraries(AiUI_tests PRIVATE AiUI)
+  target_compile_options(AiUI_tests PRIVATE /utf-8 /W4 /permissive-)
+  add_test(NAME AiUI_tests COMMAND AiUI_tests)
 endif()
 
 include(GNUInstallDirs)
