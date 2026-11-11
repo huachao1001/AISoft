@@ -777,15 +777,37 @@ class WindowsPlatform : public Platform {
   void destroyFont(void* handle) override { os::windows::releaseFont(handle); }
 
   int measureText(const std::wstring& text, const Font& font) override {
+    // 与 painter 后端保持一致：测量值偏紧，留 4px 余量防末字被裁
+    const int advance = advanceText(text, font);
+    return advance == 0 ? 0 : advance + 4;
+  }
+
+  int advanceText(const std::wstring& text, const Font& font) override {
     if (text.empty() || !font.isValid()) return 0;
     auto* g = measureGraphics();
     auto* f = static_cast<Gdiplus::Font*>(font.handle());
     if (!g || !f) return 0;
-    Gdiplus::RectF bounds;
-    g->MeasureString(text.c_str(), static_cast<INT>(text.size()), f, Gdiplus::PointF(0, 0),
-                     &bounds);
-    // 与 painter 后端保持一致：MeasureString 偏小，留 4px 余量防末字被裁
-    return static_cast<int>(bounds.Width + 0.5f) + 4;
+    const INT n = static_cast<INT>(text.size());
+
+    // 绘制走默认格式，GDI+ 会在左右各补 em/6 的排版留白，墨迹并不从布局左缘起笔。
+    // 插入点必须落在同一坐标系里：少算留白会压住末字，多算又离得太远。
+    Gdiplus::StringFormat drawFormat;
+    drawFormat.SetAlignment(Gdiplus::StringAlignmentNear);
+    drawFormat.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap |
+                              Gdiplus::StringFormatFlagsNoClip |
+                              Gdiplus::StringFormatFlagsMeasureTrailingSpaces);
+    Gdiplus::RectF box(0, 0, static_cast<Gdiplus::REAL>(n + 1) * 4096.0f, 4096.0f);
+    Gdiplus::RectF loose;
+    g->MeasureString(text.c_str(), n, f, box, &drawFormat, &loose);
+
+    // 排版格式无留白，宽度即纯字形推进
+    Gdiplus::StringFormat tight(Gdiplus::StringFormat::GenericTypographic());
+    Gdiplus::RectF narrow;
+    g->MeasureString(text.c_str(), n, f, box, &tight, &narrow);
+
+    // 两种格式只差两侧留白，取差值一半就是左侧那一份
+    const float inset = (loose.Width > narrow.Width) ? (loose.Width - narrow.Width) * 0.5f : 0.0f;
+    return static_cast<int>(inset + narrow.Width + 0.5f);
   }
 
   Image loadImage(const std::wstring& path) override { return loadImageFile(path); }

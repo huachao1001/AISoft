@@ -63,7 +63,9 @@ Rect InputBox::textRect() const {
 
 int InputBox::xForPosition(int pos) const {
   const int clamped = std::clamp(pos, 0, static_cast<int>(text_.size()));
-  const int width = clamped > 0 ? platform()->measureText(displayPrefix(clamped), fonts.ui) : 0;
+  // 用字形推进而非排版宽度：插入点要贴住末字，不能被安全余量推开
+  const int width =
+      clamped > 0 ? platform()->advanceText(displayPrefix(clamped), fonts.ui) : 0;
   return textLeft() + width - scrollX_;
 }
 
@@ -73,7 +75,7 @@ int InputBox::hitTest(int x) const {
   int bestDiff = INT_MAX;
   const int n = static_cast<int>(text_.size());
   for (int i = 0; i <= n; ++i) {
-    const int width = i > 0 ? platform()->measureText(displayPrefix(i), fonts.ui) : 0;
+    const int width = i > 0 ? platform()->advanceText(displayPrefix(i), fonts.ui) : 0;
     const int diff = std::abs(width - target);
     if (diff < bestDiff) {
       bestDiff = diff;
@@ -106,7 +108,7 @@ void InputBox::ensureCaretVisible() {
   if (available <= 0) return;
 
   const int caretWidth =
-      caret_ > 0 ? platform()->measureText(displayPrefix(caret_), fonts.ui) : 0;
+      caret_ > 0 ? platform()->advanceText(displayPrefix(caret_), fonts.ui) : 0;
 
   if (caretWidth - scrollX_ < 0) {
     scrollX_ = caretWidth;
@@ -248,9 +250,10 @@ void InputBox::onPaint(Painter& painter, const Rect& rect) {
   }
 
   if (focused_ && caretVisible_) {
+    // 按 DPI 四舍五入到物理像素：整数除法会让 150% 下的 1 设计像素退化成 1px
+    const int caretW = (std::max)(1, (spec_.caretWidth * d + 48) / 96);
     const int x = xForPosition(caret_);
-    painter.fillRect(Rect{x, textArea.top, x + (std::max)(1, d / 96), textArea.bottom},
-                     kColorText);
+    painter.fillRect(Rect{x, textArea.top, x + caretW, textArea.bottom}, kColorText);
   }
 }
 

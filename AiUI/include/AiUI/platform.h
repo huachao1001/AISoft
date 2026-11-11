@@ -175,8 +175,14 @@ class Platform {
   // ── 字体 ──
   virtual Font createFont(const wchar_t* family, float pointSize, bool bold, int dpi) = 0;
   virtual void destroyFont(void* handle) = 0;
-  // 文本像素宽度：不依赖任何窗口，测量阶段直接可用
+  // 文本像素宽度：不依赖任何窗口，测量阶段直接可用。
+  // 含少量安全余量，防末字在裁剪边界被切掉；排版与换行判断用这个。
   virtual int measureText(const std::wstring& text, const Font& font) = 0;
+  // 与绘制完全对齐的占位宽度，无安全余量。
+  // 光标定位与点击命中必须用它，否则插入点会与绘制结果错开。
+  virtual int advanceText(const std::wstring& text, const Font& font) {
+    return measureText(text, font);
+  }
 
   // ── 图片 ──
   // 从文件解码位图；失败返回无效 Image

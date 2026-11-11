@@ -19,6 +19,9 @@ struct InputSpec {
   int leadIconGap = 5;
   int padX = 11;
   int radius = 7;
+  // 插入点竖线宽度（96 DPI 设计值），按 DPI 四舍五入到物理像素：
+  // 写死物理像素在 200% 屏上会变成发丝线
+  int caretWidth = 1;
   // 圆角外的四角填充色，需与宿主底色一致
   Color outerBackground = kColorPane;
   // 密码模式：显示为圆点，但仍可选中与复制
