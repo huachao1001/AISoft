@@ -407,9 +407,14 @@ class Generator {
 
     rootTag_ = root.tag;
     include(root.tag);
+    // 生成的代码用 makeId 给带 id 的控件打标，统一在这里引入
+    addInclude("AiUI/id.h");
 
     // 根节点属性作用在 this 上
     emitContainerProperties(root, "this");
+    // 根节点自身的 id 也要能查到；不需要额外成员，this 就是它
+    const std::string rootId = get(root, "id");
+    if (isValidIdentifier(rootId)) line(1, "this->setId(AiUI::makeId(\"" + rootId + "\"));");
     // 先扫描全部 id，保证成员声明顺序与 XML 一致
     for (const XmlNode& child : root.children) {
       if (!emitNode(child, "this")) {
@@ -540,6 +545,8 @@ class Generator {
 
     line(1, named ? (variable + " = new " + type + "();")
                   : ("auto* " + variable + " = new " + type + "();"));
+    // id 要在挂树前设好：宿主可能在 onCreated 里就查它
+    if (named) line(1, variable + "->setId(AiUI::makeId(\"" + id + "\"));");
     // 布局容器与普通容器都走 ViewGroup::addView，布局参数由它转交
     line(1, parentVar + "->addView(" + variable + ", " + layoutParams(node) + ");");
 

@@ -31,6 +31,7 @@ add_executable(AiZip WIN32
   src/archive.cpp
   src/sevenzip_loader.cpp
   src/ui_main.cpp
+  src/main_activity.cpp
   src/ui_list.cpp
   src/ui_toolbar.cpp
   src/ui_tree.cpp

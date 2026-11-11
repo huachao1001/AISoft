@@ -41,6 +41,9 @@ class ViewRoot : public WindowHost {
   // 关闭请求；返回 false 阻止关闭
   using CloseHandler = std::function<bool()>;
   void setCloseHandler(CloseHandler fn) { onClose_ = std::move(fn); }
+  // 焦点视图没消费的按键交给宿主（窗口级快捷键）；返回 true 表示已消费
+  using KeyHandler = std::function<bool(const Key&, const Modifiers&)>;
+  void setKeyHandler(KeyHandler fn) { onKey_ = std::move(fn); }
   // Esc 是否关闭窗口；主窗口通常关闭它，对话框保留
   void setEscapeCloses(bool closes) { escapeCloses_ = closes; }
   // 平台窗口收到关闭请求时调用（Esc、Alt+F4、关闭按钮都走这里）
@@ -133,6 +136,7 @@ class ViewRoot : public WindowHost {
   Color background_ = kNoColor;
   bool layoutPending_ = false;
   CloseHandler onClose_;
+  KeyHandler onKey_;
   std::function<void(bool)> onMaximizeState_;
   bool lastMaximized_ = false;
   bool escapeCloses_ = false;

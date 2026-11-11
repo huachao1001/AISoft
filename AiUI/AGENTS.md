@@ -74,8 +74,16 @@ TitleBar (FrameLayout)
 
 - `Window` 是窗口组件（标题栏 + 内容区），`TitleBar` 是自绘标题栏。
   不要新增直接 `#include <windows.h>` 的窗口封装。
+- **应用界面一律写成 `Activity` 子类**：只声明 `layoutName()`，在
+  `onCreate()` 里用 `findView<T>("id")` 取控件挂回调。不要在 `onCreate`
+  之外的模块里散落文件级全局控件指针——那就是没有 Activity 的后果。
+- 复杂逻辑不塞进 `Activity`：抽成普通工具类，`Activity` 只做装配。
+- XML 的 `id` 由 `layoutgen` 生成 `setId(makeId("..."))`；`findView` 按
+  字符串查，整数在编译期算好，不要手工写数字 id。
 - 模态/非模态由 `Window::showModal` / `show` 提供，模态循环在平台层
   （`runModalLoop`），因为各平台锁父窗口的方式不同。
+- 关闭回调返回 `false` 表示拒绝关闭；`Activity::onCloseRequest` 同理。
+- 主窗口销毁由平台层投递退出信号；带 owner 的窗口是对话框，销毁不退出。
 - 应用侧原生对话框（压缩/解压/进度等）保留系统控件，其 Win32 辅助属于
   应用工程，不要回流到 AiUI。等 AiUI 补齐 ComboBox / CheckBox /
   ProgressBar 后再逐个迁移。

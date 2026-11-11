@@ -436,6 +436,8 @@ void ViewRoot::onContextMenu(const MouseEvent& e) {
 bool ViewRoot::onKeyDown(const Key& key, const Modifiers& mods) {
   // 内容区优先；Esc 在对话框里用于请求关闭
   if (focused_ && focused_->dispatchKeyDown(key, mods)) return true;
+  // 内容区没接住的交给宿主，供窗口级快捷键使用
+  if (onKey_ && onKey_(key, mods)) return true;
   if (key == Key::kEscape && escapeCloses_) {
     requestClose();
     return true;

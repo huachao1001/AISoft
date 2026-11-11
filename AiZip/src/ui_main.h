@@ -1,23 +1,25 @@
-﻿// 主窗口：顶部导航 + 工具栏 + 内容分栏 + 状态栏，全部由 XML 布局生成
+﻿// 主窗口的原生宿主接入
+//
+// 界面本体在 MainActivity（main_activity.h）：XML 布局、控件装配、生命周期。
+// 这里只剩绕不开的平台细节：把拖放与单实例转发挂到 AiUI 建的窗口上。
 #pragma once
 
 #include <windows.h>
+#include <shellapi.h>
+
+#include <string>
 
 namespace ui {
 
-bool RegisterMainWindow(HINSTANCE inst);
-HWND CreateMainWindow(HINSTANCE inst);
-void UpdateMainTitle(HWND hwnd);
-// 视图状态变化后同步面包屑与树（仅根结构变化时才重建树）
-void RefreshAddressBar(HWND hwnd);
-
-// 把焦点交回文件列表
-void FocusFileList();
-
-// 主窗口级快捷键（Ctrl+L 编辑地址、Ctrl+F 搜索）；返回 true 表示已消费
-bool HandleMainShortcut(const MSG& msg);
-
+// 主窗口最小尺寸（96 DPI 设计值）
 constexpr int kMinWidth = 860;
 constexpr int kMinHeight = 520;
+
+// 把拖放与单实例转发挂到主窗口上；MainActivity::onCreate 之后调用
+void AttachHostHooks(HWND host);
+// 处理拖进窗口的文件：单个压缩包直接打开，其余弹压缩对话框
+void HandleDroppedFiles(HWND host, HDROP drop);
+// 单实例转发：把路径送到已在运行的窗口
+bool ForwardPathToRunningWindow(const std::wstring& path);
 
 }  // namespace ui

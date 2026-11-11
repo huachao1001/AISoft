@@ -722,3 +722,51 @@ AIUI_TEST(scroll_bar_thickens_only_on_thumb) {
   list->dispatchMouseMove(mouseAt(track.center().x, thumb.top + 2));
   AIUI_CHECK_EQ(list->vThumbRect().width(), list->px(9));
 }
+
+// ───────────────────────── id 与查找 ─────────────────────────
+
+AIUI_TEST(make_id_is_stable_and_never_zero) {
+  // 同一字符串必须每次算出同一个值：布局生成代码与宿主代码各自算常量
+  AIUI_CHECK_EQ(makeId("tree"), makeId("tree"));
+  // 不同字符串要能区分
+  AIUI_CHECK(makeId("tree") != makeId("list"));
+  // 0 保留给"没有 id"，空串也不能撞上
+  AIUI_CHECK(makeId("") != 0);
+  // 单个字符的边界
+  AIUI_CHECK(makeId("a") != 0);
+  AIUI_CHECK(makeId("a") != makeId("b"));
+}
+
+AIUI_TEST(find_view_by_string_id) {
+  TestEnv env;
+  auto root = std::make_unique<LinearLayout>(Orientation::kVertical);
+
+  auto* first = new TreeView();
+  first->setId(makeId("tree"));
+  root->addView(first, LayoutParams{}.withSize(100, 100));
+
+  auto* second = new ListView();
+  second->setId(makeId("list"));
+  root->addView(second, LayoutParams{}.withSize(100, 100));
+
+  // 按字符串找，且能拿到正确类型
+  AIUI_CHECK(root->findView<TreeView>("tree") == first);
+  AIUI_CHECK(root->findView<ListView>("list") == second);
+  // 类型不符时返回 nullptr，而不是错拿
+  AIUI_CHECK(root->findView<ListView>("tree") == nullptr);
+  // 不存在的 id
+  AIUI_CHECK(root->findView("missing") == nullptr);
+  AIUI_CHECK(root->findView<TreeView>("missing") == nullptr);
+}
+
+AIUI_TEST(find_view_skips_views_without_id) {
+  TestEnv env;
+  auto root = std::make_unique<LinearLayout>(Orientation::kVertical);
+  // 没设 id 的控件不该被任何 id 命中
+  auto* anonymous = new TreeView();
+  root->addView(anonymous, LayoutParams{}.withSize(100, 100));
+
+  AIUI_CHECK(anonymous->id() == 0);
+  AIUI_CHECK(root->findViewById(0) == nullptr);
+  AIUI_CHECK(root->findView("tree") == nullptr);
+}

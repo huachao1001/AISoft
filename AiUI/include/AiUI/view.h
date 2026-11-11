@@ -10,6 +10,7 @@
 #pragma once
 
 #include "AiUI/events.h"
+#include "AiUI/id.h"
 #include "AiUI/painter.h"
 #include "AiUI/platform.h"
 #include "AiUI/types.h"
@@ -124,6 +125,14 @@ class View {
   int id() const { return id_; }
   // 按 id 找后代（含自身）；找不到返回 nullptr
   virtual View* findViewById(int id);
+  // 按字符串 id 找后代；字符串在编译期折成整数，与小写的 makeId 对齐
+  View* findView(const char* id) { return findViewById(makeId(id)); }
+
+  // 按字符串 id 找指定类型的后代；类型不符时返回 nullptr
+  template <typename T>
+  T* findView(const char* id) {
+    return dynamic_cast<T*>(findViewById(makeId(id)));
+  }
 
   // ── 生命周期 ──
   // 挂到宿主窗口；只有根视图建窗口，子视图随树递归挂载

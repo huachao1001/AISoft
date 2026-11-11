@@ -121,6 +121,7 @@ class WindowsWindow : public PlatformWindow {
     DWORD style = WS_CHILD;
     DWORD exStyle = 0;
     HWND owner = parent;
+    owned_ = parent != nullptr;
     if (params.style.topLevel) {
       // 必须保留 WS_CAPTION 这一组样式位，DWM 才会给窗口投影、圆角与贴边吸附；
       // 少了它窗口会退回经典外观。系统标题栏外观靠 WM_NCCALCSIZE 让位 +
@@ -592,6 +593,8 @@ class WindowsWindow : public PlatformWindow {
           ::KillTimer(hwnd_, kDelayTimerId);
           delayTimer_ = 0;
         }
+        // 主窗口销毁即整个程序结束；对话框有 owner，不能顺带退出消息循环
+        if (style_.topLevel && !owned_) ::PostQuitMessage(0);
         return 0;
 
       case WM_NCDESTROY:
@@ -663,6 +666,8 @@ class WindowsWindow : public PlatformWindow {
   UINT_PTR delayTimer_ = 0;
   CursorShape cursor_ = CursorShape::kArrow;
   WindowStyle style_;
+  // 有 owner 的顶层窗口是对话框，销毁时不该结束消息循环
+  bool owned_ = false;
   // 离屏位图跨帧复用，避免每次重绘都重建几十 MB 的图
   CanvasCache canvasCache_;
   // 擦背景用的刷子；窗口变大时先铺底色，避免露出黑底一帧

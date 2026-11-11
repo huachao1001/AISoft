@@ -24,6 +24,7 @@ set(AIUI_SOURCES
   src/view_root.cpp
   src/scroll_view.cpp
   src/window.cpp
+  src/activity.cpp
   src/layout_inflater.cpp
   src/font.cpp
   # 布局

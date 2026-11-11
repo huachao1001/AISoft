@@ -2,6 +2,7 @@
 #include "ui_crumb.h"
 
 #include "app.h"
+#include "main_activity.h"
 #include "ui_list.h"
 #include "ui_main.h"
 #include "util.h"
@@ -186,7 +187,9 @@ void AttachCrumbBar(AiUI::BreadcrumbBar* bar) {
   callbacks.onSearch = SetFilterText;
   callbacks.addressText = CurrentAddress;
   callbacks.onCommitAddress = OnCommitAddress;
-  callbacks.onEditClosed = FocusFileList;
+  callbacks.onEditClosed = [] {
+    if (MainActivity* activity = mainActivity()) activity->focusFileList();
+  };
   bar->setCallbacks(std::move(callbacks));
 
   RefreshCrumbBar();

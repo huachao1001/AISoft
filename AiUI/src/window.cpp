@@ -161,6 +161,10 @@ bool Window::create(NativeHandle owner) {
 
   // 关闭走视图树回调，方便内容拦截（如未保存确认）
   viewRoot->setCloseHandler([this]() { return onClose_ ? onClose_() : true; });
+  // 内容区没消费的按键交给宿主做窗口级快捷键
+  viewRoot->setKeyHandler([this](const Key& key, const Modifiers& mods) {
+    return onKey_ ? onKey_(key, mods) : false;
+  });
   // 对话框用 Esc 关闭；主窗口不响应 Esc
   viewRoot->setEscapeCloses(escapeCloses_);
   // 最大化状态回来后更新标题栏图标

@@ -73,9 +73,13 @@ class Window {
   // Esc 是否关闭窗口；对话框用 true，主窗口保持 false
   void setEscapeCloses(bool closes) { escapeCloses_ = closes; }
 
-  // 关闭请求回调；返回 true 表示已自行处理，不再真正关闭
+  // 关闭请求回调；返回 false 表示拒绝关闭（如"还有未保存的修改"）
   using CloseHandler = std::function<bool()>;
   void setOnClose(CloseHandler fn) { onClose_ = std::move(fn); }
+
+  // 焦点视图没消费的按键交给宿主，用于窗口级快捷键
+  using KeyHandler = std::function<bool(const Key&, const Modifiers&)>;
+  void setOnKeyDown(KeyHandler fn) { onKey_ = std::move(fn); }
 
   // 内容变化后重新排布
   void requestLayout();
@@ -101,6 +105,7 @@ class Window {
   bool escapeCloses_ = false;
 
   CloseHandler onClose_;
+  KeyHandler onKey_;
 };
 
 }  // namespace AiUI

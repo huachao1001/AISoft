@@ -1,5 +1,6 @@
 ﻿// 程序入口：单实例、DPI、命令行分发
 #include "app.h"
+#include "main_activity.h"
 #include "shell_menu.h"
 #include "single_instance.h"
 #include "ui.h"
@@ -15,28 +16,11 @@
 
 namespace {
 
-constexpr const wchar_t* kMainClass = L"AIZipMainWindow";
 // 浏览窗口的单实例锁：只包住"有没有主窗口"，与右键菜单的收件箱互斥体互不干扰
 constexpr const wchar_t* kBrowserMutex = L"Local\\AIZip.Browser.v1";
 
 void ShowFatal(const wchar_t* message) {
   ::MessageBoxW(nullptr, message, L"AIZip", MB_OK | MB_ICONERROR);
-}
-
-// 已在运行的浏览窗口：把路径转过去，避免开出第二个窗口
-bool ForwardToRunningWindow(const std::wstring& path) {
-  HWND existing = ::FindWindowW(kMainClass, nullptr);
-  if (!existing) return false;
-  if (!path.empty()) {
-    COPYDATASTRUCT cds{};
-    cds.dwData = 1;
-    cds.cbData = static_cast<DWORD>((path.size() + 1) * sizeof(wchar_t));
-    cds.lpData = const_cast<wchar_t*>(path.c_str());
-    ::SendMessageW(existing, WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&cds));
-  }
-  if (::IsIconic(existing)) ::ShowWindow(existing, SW_RESTORE);
-  ::SetForegroundWindow(existing);
-  return true;
 }
 
 }  // namespace
@@ -95,16 +79,16 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
     const std::wstring path = req.paths.empty() ? L"" : req.paths[0];
     bool forwarded = false;
     for (int i = 0; i < 20 && !forwarded; ++i) {
-      forwarded = ForwardToRunningWindow(path);
+      forwarded = ui::ForwardPathToRunningWindow(path);
       if (!forwarded) ::Sleep(50);
     }
-    if (!forwarded) ForwardToRunningWindow(L"");
+    if (!forwarded) ui::ForwardPathToRunningWindow(L"");
     ::CloseHandle(browserLock);
     AiUI::fonts.destroy();
     return 0;
   }
   // 主窗口可能已存在但互斥体被上次崩溃遗留（极少见），补一次检查
-  if (!req.paths.empty() && ForwardToRunningWindow(req.paths[0])) {
+  if (!req.paths.empty() && ui::ForwardPathToRunningWindow(req.paths[0])) {
     if (browserLock) ::CloseHandle(browserLock);
     AiUI::fonts.destroy();
     return 0;
@@ -127,20 +111,38 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
   g_app.history.assign(1, g_app.curDir);
   g_app.historyPos = 0;
 
-  if (!ui::RegisterMainWindow(hInst)) {
-    ShowFatal(L"窗口类注册失败。");
-    AiUI::fonts.destroy();
-    if (browserLock) ::CloseHandle(browserLock);
-    return 1;
-  }
-  HWND mainWnd = ui::CreateMainWindow(hInst);
-  if (!mainWnd) {
+  // 主窗口交给 MainActivity：XML 布局与控件装配都在里面
+  ui::MainActivity activity;
+  if (!activity.create(nullptr)) {
     ShowFatal(L"主窗口创建失败。");
     AiUI::fonts.destroy();
     if (browserLock) ::CloseHandle(browserLock);
     return 1;
   }
+  HWND mainWnd = static_cast<HWND>(activity.window()->handle());
   g_app.mainWnd = mainWnd;
+
+  // 恢复上次的窗口尺寸并居中；超出工作区时收进来
+  {
+    const auto& s = g_app.settings;
+    constexpr int kDefW = 1180;
+    constexpr int kDefH = 760;
+    const int minW = g_app.px(ui::kMinWidth);
+    const int minH = g_app.px(ui::kMinHeight);
+    int w = (s.winW >= minW) ? s.winW : g_app.px(kDefW);
+    int h = (s.winH >= minH) ? s.winH : g_app.px(kDefH);
+
+    RECT work{};
+    if (!::SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0)) {
+      work = RECT{0, 0, ::GetSystemMetrics(SM_CXSCREEN), ::GetSystemMetrics(SM_CYSCREEN)};
+    }
+    if (w > work.right - work.left) w = work.right - work.left;
+    if (h > work.bottom - work.top) h = work.bottom - work.top;
+
+    const int x = work.left + ((work.right - work.left) - w) / 2;
+    const int y = work.top + ((work.bottom - work.top) - h) / 2;
+    activity.setInitialBounds(AiUI::Rect{x, y, x + w, y + h});
+  }
 
   // 命令行带的路径：目录进入，压缩包直接浏览，其他文件定位到所在目录
   if (!req.paths.empty()) {
@@ -156,14 +158,14 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
     AppRefreshView();
   }
 
-  ::ShowWindow(mainWnd, g_app.settings.winMax ? SW_SHOWMAXIMIZED : SW_SHOWNORMAL);
+  activity.show();
+  if (g_app.settings.winMax) ::ShowWindow(mainWnd, SW_SHOWMAXIMIZED);
   ::UpdateWindow(mainWnd);
 
   MSG msg;
   while (::GetMessageW(&msg, nullptr, 0, 0) > 0) {
-    // 主窗口快捷键（Ctrl+L / Ctrl+F）先消费，再走普通派发
-    if (ui::HandleMainShortcut(msg)) continue;
-    // 自绘控件的按键直接派发：IsDialogMessage 会把回车吃掉
+    // 快捷键由 MainActivity 通过 ViewRoot 的按键回调接管，这里只管派发。
+    // 不用 IsDialogMessage：它会把回车吃掉，自绘控件收不到。
     ::TranslateMessage(&msg);
     ::DispatchMessageW(&msg);
   }

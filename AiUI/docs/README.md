@@ -31,6 +31,39 @@
 `ViewRoot` 收一次，再按脏区递归绘制。拖动窗口、超出屏幕、跨显示器
 都不会留下空白。
 
+### 界面持有者
+
+| 类 | 职责 |
+| --- | --- |
+| `Activity` | 一个界面的持有者：声明用哪份 XML、管窗口生命周期、按 id 取控件 |
+
+对应 Android 的 `Activity`，但没有 Intent 与任务栈——桌面程序通常就是一个
+主窗口加若干模态对话框。
+
+```cpp
+class MainActivity : public AiUI::Activity {
+ protected:
+  const wchar_t* layoutName() const override { return L"main_frame"; }
+  void onCreate() override {
+    // 布局已建好、id 已生效，可以取控件挂回调了
+    tree_ = findView<TreeView>("tree");
+  }
+ private:
+  TreeView* tree_ = nullptr;
+};
+
+MainActivity act;
+act.create(nullptr);
+act.setInitialBounds(Rect{100, 100, 1100, 800});
+act.show();
+```
+
+复杂逻辑不塞进子类：业务抽成普通类，`Activity` 只负责把控件交给它们。
+
+XML 里的 `id` 在构建期经 `AiUI::makeId` 折成 32 位整数（FNV-1a），
+`findView("tree")` 只是整数比较，运行时不建表也不查表。同一个字符串在
+任何平台、任何编译器下都得到同一个值。
+
 ### 布局
 
 - [FrameLayout](layouts/frame_layout.md) —— 绝对坐标叠放

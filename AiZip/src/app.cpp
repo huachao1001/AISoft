@@ -5,6 +5,7 @@
 #include "dlg_input.h"
 #include "dlg_progress.h"
 #include "ui.h"
+#include "main_activity.h"
 #include "ui_crumb.h"
 #include "ui_list.h"
 #include "ui_main.h"
@@ -164,9 +165,13 @@ void AppRefreshView() {
     LoadDirectoryItems(g_app.curDir);
   }
   // 退出压缩包模式时也要还原标题
-  ui::UpdateMainTitle(g_app.mainWnd);
+  ui::MainActivity* activity = ui::mainActivity();
+  if (activity) {
+    activity->updateTitle();
+    // 根结构变化时才重建树，其余情况只同步选中
+    activity->refreshAddressBar();
+  }
   ui::RefreshFileList();
-  ui::RefreshAddressBar(g_app.mainWnd);
   ui::RefreshStatusBarData();
   ui::RefreshToolbarState();
 }
