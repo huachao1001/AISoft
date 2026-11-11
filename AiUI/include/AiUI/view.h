@@ -11,6 +11,7 @@
 
 #include "AiUI/events.h"
 #include "AiUI/painter.h"
+#include "AiUI/platform.h"
 #include "AiUI/types.h"
 
 #include <functional>
@@ -117,9 +118,18 @@ class View {
   const LayoutParams& layoutParams() const { return params_; }
   void setLayoutParams(const LayoutParams& params);
 
+  // ── 标识 ──
+  // 默认 0 表示没有 id；只有设了 id 的视图才参与 findViewById 匹配
+  void setId(int id) { id_ = id; }
+  int id() const { return id_; }
+  // 按 id 找后代（含自身）；找不到返回 nullptr
+  virtual View* findViewById(int id);
+
   // ── 生命周期 ──
   // 挂到宿主窗口；只有根视图建窗口，子视图随树递归挂载
   bool create(NativeHandle parent, const Rect& bounds = Rect{});
+  // 带窗口参数：顶层窗口、自绘边框等由调用方决定
+  bool create(NativeHandle parent, const WindowParams& params, const Rect& bounds = Rect{});
   bool isCreated() const { return created_; }
   // 根视图对应的原生窗口句柄；子视图返回 nullptr
   NativeHandle handle() const;
@@ -160,6 +170,12 @@ class View {
   // ── 外观与状态 ──
   void show(bool visible = true);
   bool isVisible() const { return visible_; }
+  // 显式底色；传 kNoColor 表示不铺底，让父容器透上来
+  void setBackgroundColor(Color color);
+  // 拖窗区域：开启后在该视图上按住即可拖动整个窗口，与系统标题栏手感一致。
+  // 双击时切换最大化（系统标题栏的默认行为）。
+  void setDragWindow(bool enabled) { dragWindow_ = enabled; }
+  bool isDragWindow() const { return dragWindow_; }
   virtual void setEnabled(bool enabled);
   bool isEnabled() const { return enabled_; }
   void setFocus();
@@ -230,6 +246,14 @@ class View {
   virtual void onFocusChanged(bool) {}
   virtual void onTimer() {}
 
+  // 非客户区命中：windowPoint 是窗口坐标。标题栏这类需要系统拖动/缩放的
+  // 区域返回 kCaption 或边框方向，其余返回 kClient。
+  virtual HitTarget onHitTest(const Point& windowPoint) {
+    (void)windowPoint;
+    // 开启 dragWindow 的视图直接当标题栏：拖动、贴边吸附交给系统
+    return dragWindow_ ? HitTarget::kCaption : HitTarget::kClient;
+  }
+
   // 默认背景色；不想铺底就返回 kNoColor
   virtual Color backgroundColor() const;
   // 自身或最近上级的底色：圆角外露出的四角用它填
@@ -267,10 +291,13 @@ class View {
 
   Rect bounds_{};
   Size measured_{};
+  int id_ = 0;
+  Color explicitBackground_ = kNoColor;
   bool created_ = false;
   bool visible_ = true;
   bool enabled_ = true;
   bool focusable_ = false;
+  bool dragWindow_ = false;
   CursorShape cursorShape_ = CursorShape::kArrow;
 
   Handler onClick_;

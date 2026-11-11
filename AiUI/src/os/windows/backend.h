@@ -1,4 +1,4 @@
-// Win32 后端内部共享声明（不对外暴露）
+﻿// Windows 后端内部共享声明（不对外暴露）
 #pragma once
 
 #include "AiUI/icon.h"
@@ -17,7 +17,8 @@
 #include <string>
 
 namespace AiUI {
-namespace win32 {
+namespace os {
+namespace windows {
 
 // ── GDI+ 进程级初始化 ──
 bool ensureGdiplus();
@@ -47,6 +48,9 @@ Image loadImageFile(const std::wstring& path);
 Size imagePixelSize(const Image& image);
 void releaseLoadedImage(Image image);
 Gdiplus::Bitmap* asBitmap(const Image& image);
+// HICON → ARGB 位图；句柄由调用方释放，返回值由 releaseLoadedImage 释放
+Image imageFromIcon(HICON icon);
 
-}  // namespace win32
+}  // namespace windows
+}  // namespace os
 }  // namespace AiUI

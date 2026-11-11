@@ -1,7 +1,7 @@
 # AiUI
 
-自绘 UI 库。控件不创建系统子控件，所有像素都由 GDI+ 画出来，平台相关代码
-收在 `src/win32/`，公开头文件不出现 `HWND` / `HDC` / `COLORREF`。
+自绘 UI 库。控件不创建系统子控件，所有像素都由系统绘图库画出来，平台相关代码
+收在 `src/os/<platform>/`，公开头文件不出现 `HWND` / `HDC` / `COLORREF`。
 
 ## 架构
 
@@ -18,15 +18,22 @@ include/AiUI/
   view_group.h   ViewGroup：可容纳子视图的容器
   view_root.h    ViewRoot：整棵树唯一的窗口与绘制管理者
   scroll_view.h  ScrollView：可滚动视图基类，滚动条自绘
+  window.h       Window：标题栏 + 内容区的窗口组件（模态/非模态）
+  layout_inflater.h 按 XML 文件名取构建期生成的布局类
   layouts/       FrameLayout / LinearLayout
   widgets/       Button / ButtonBar / BreadcrumbBar / InputBox /
-                 ListView / TreeView / StatusBar / TextView / ImageView
+                 ListView / TreeView / StatusBar / TextView / ImageView /
+                 TitleBar
 src/
   view.cpp / view_group.cpp / view_root.cpp / scroll_view.cpp
+  window.cpp     窗口组件（标题栏 + 内容区）
+  layout_inflater.cpp 布局注册表查找
   font.cpp       字体集
   layouts/       布局实现
   widgets/       控件实现
-  win32/         平台后端：窗口、GDI+ 绘制、图标、位图
+  os/windows/    Windows 后端：窗口、GDI+ 绘制、图标、标题栏外观
+  os/macos/      预留（尚未实现）
+  os/linux/      预留（尚未实现）
 tools/layoutgen/ XML → C++ 布局代码生成器
 cmake/           aiui_add_layouts() 构建规则
 ```

@@ -1,11 +1,12 @@
-// GDI+ 绘制后端：PaintBackend / Canvas / 字体
+﻿// GDI+ 绘制后端：PaintBackend / Canvas / 字体
 #include "backend.h"
 
 #include <algorithm>
 #include <vector>
 
 namespace AiUI {
-namespace win32 {
+namespace os {
+namespace windows {
 namespace {
 
 using namespace Gdiplus;
@@ -262,5 +263,6 @@ void releaseFont(void* handle) {
   delete static_cast<Gdiplus::Font*>(handle);
 }
 
-}  // namespace win32
+}  // namespace windows
+}  // namespace os
 }  // namespace AiUI

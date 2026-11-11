@@ -4,8 +4,6 @@
 #include "AiUI/font.h"
 #include "AiUI/platform.h"
 
-#include <windows.h>
-
 #include <algorithm>
 #include <cwctype>
 
@@ -65,8 +63,7 @@ Rect InputBox::textRect() const {
 
 int InputBox::xForPosition(int pos) const {
   const int clamped = std::clamp(pos, 0, static_cast<int>(text_.size()));
-  const int width =
-      clamped > 0 ? platform()->measureText(text_.substr(0, clamped), fonts.ui) : 0;
+  const int width = clamped > 0 ? platform()->measureText(displayPrefix(clamped), fonts.ui) : 0;
   return textLeft() + width - scrollX_;
 }
 
@@ -76,7 +73,7 @@ int InputBox::hitTest(int x) const {
   int bestDiff = INT_MAX;
   const int n = static_cast<int>(text_.size());
   for (int i = 0; i <= n; ++i) {
-    const int width = i > 0 ? platform()->measureText(text_.substr(0, i), fonts.ui) : 0;
+    const int width = i > 0 ? platform()->measureText(displayPrefix(i), fonts.ui) : 0;
     const int diff = std::abs(width - target);
     if (diff < bestDiff) {
       bestDiff = diff;
@@ -84,6 +81,13 @@ int InputBox::hitTest(int x) const {
     }
   }
   return best;
+}
+
+std::wstring InputBox::displayPrefix(int pos) const {
+  const int n = std::clamp(pos, 0, static_cast<int>(text_.size()));
+  if (!spec_.password) return text_.substr(0, n);
+  // 掩码用 U+2022，与系统密码框观感一致
+  return std::wstring(static_cast<size_t>(n), L'\u2022');
 }
 
 void InputBox::clampCaret() {
@@ -102,7 +106,7 @@ void InputBox::ensureCaretVisible() {
   if (available <= 0) return;
 
   const int caretWidth =
-      caret_ > 0 ? platform()->measureText(text_.substr(0, caret_), fonts.ui) : 0;
+      caret_ > 0 ? platform()->measureText(displayPrefix(caret_), fonts.ui) : 0;
 
   if (caretWidth - scrollX_ < 0) {
     scrollX_ = caretWidth;
@@ -182,17 +186,7 @@ void InputBox::moveWord(bool right, bool extend) {
 void InputBox::copyToClipboard() const {
   if (!hasSelection()) return;
   const std::wstring part = text_.substr(selectionLow(), selectionHigh() - selectionLow());
-  if (!::OpenClipboard(nullptr)) return;
-  ::EmptyClipboard();
-  const size_t bytes = (part.size() + 1) * sizeof(wchar_t);
-  if (HGLOBAL memory = ::GlobalAlloc(GMEM_MOVEABLE, bytes)) {
-    if (void* dst = ::GlobalLock(memory)) {
-      memcpy(dst, part.c_str(), bytes);
-      ::GlobalUnlock(memory);
-      ::SetClipboardData(CF_UNICODETEXT, memory);
-    }
-  }
-  ::CloseClipboard();
+  platform()->setClipboardText(part);
 }
 
 void InputBox::cutToClipboard() {
@@ -204,16 +198,8 @@ void InputBox::cutToClipboard() {
 }
 
 void InputBox::pasteFromClipboard() {
-  if (!::IsClipboardFormatAvailable(CF_UNICODETEXT)) return;
-  if (!::OpenClipboard(nullptr)) return;
-  std::wstring data;
-  if (HANDLE handle = ::GetClipboardData(CF_UNICODETEXT)) {
-    if (const auto* text = static_cast<const wchar_t*>(::GlobalLock(handle))) {
-      data = text;
-      ::GlobalUnlock(handle);
-    }
-  }
-  ::CloseClipboard();
+  std::wstring data = platform()->clipboardText();
+  if (data.empty()) return;
   // 单行输入框：换行统一折成空格
   for (auto& c : data) {
     if (c == L'\r' || c == L'\n' || c == L'\t') c = L' ';
@@ -257,7 +243,7 @@ void InputBox::onPaint(Painter& painter, const Rect& rect) {
       const int x2 = xForPosition(selectionHigh());
       painter.fillRect(Rect{x1, textArea.top, x2, textArea.bottom}, kColorSelBg);
     }
-    painter.drawText(textArea, text_, kColorText, fonts.ui, TextAlign::kLeft);
+    painter.drawText(textArea, displayText(), kColorText, fonts.ui, TextAlign::kLeft);
 
     if (focused_ && caretVisible_) {
       const int x = xForPosition(caret_);

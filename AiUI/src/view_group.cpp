@@ -160,10 +160,22 @@ void ViewGroup::arrangeChildren(const Rect& content) {
   }
 }
 
+// ───────────────────────── 查找 ─────────────────────────
+
+View* ViewGroup::findViewById(int id) {
+  if (id == 0) return nullptr;
+  if (id_ == id) return this;
+  for (View* child : children_) {
+    if (View* hit = child->findViewById(id)) return hit;
+  }
+  return nullptr;
+}
+
 // ───────────────────────── 绘制 ─────────────────────────
 
 void ViewGroup::onDrawChildren(Painter& painter, const Rect& dirty) {
   for (View* child : children_) {
+
     if (!child->isVisible()) continue;
 
     const Rect childRect = child->bounds();
@@ -179,6 +191,17 @@ void ViewGroup::onDrawChildren(Painter& painter, const Rect& dirty) {
 }
 
 // ───────────────────────── 命中 ─────────────────────────
+
+HitTarget ViewGroup::onHitTest(const Point& windowPoint) {
+  for (auto it = children_.rbegin(); it != children_.rend(); ++it) {
+    View* child = *it;
+    if (!child->isVisible()) continue;
+    if (!child->absoluteBounds().contains(windowPoint)) continue;
+    const HitTarget target = child->onHitTest(windowPoint);
+    if (target != HitTarget::kClient) return target;
+  }
+  return HitTarget::kClient;
+}
 
 View* ViewGroup::hitTest(Point localPoint) const {
   // 从上层往下找，后加的画在上面

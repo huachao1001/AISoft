@@ -16,7 +16,8 @@
 #include <vector>
 
 namespace AiUI {
-namespace win32 {
+namespace os {
+namespace windows {
 
 using namespace Gdiplus;
 
@@ -84,6 +85,10 @@ constexpr wchar_t glyphFor(IconId id) {
     case IconId::kFolder: return 0xE8B7;
     case IconId::kFile: return 0xE8A5;
     case IconId::kSearch: return 0xE721;
+    case IconId::kMinimize: return 0xE921;
+    case IconId::kMaximize: return 0xE922;
+    case IconId::kRestore: return 0xE923;
+    case IconId::kClose: return 0xE8BB;
     default: return 0;
   }
 }
@@ -287,7 +292,17 @@ Gdiplus::Bitmap* asBitmap(const Image& image) {
   return static_cast<Gdiplus::Bitmap*>(image.handle());
 }
 
-}  // namespace win32
+Image imageFromIcon(HICON icon) {
+  // bitmapFromIcon 在匿名命名空间里；这里包一层给窗口后端用
+  if (!icon) return Image();
+  Gdiplus::Bitmap* bmp = bitmapFromIcon(icon);
+  if (!bmp) return Image();
+  loadedImages().insert(bmp);
+  return Image(bmp);
+}
+
+}  // namespace windows
+}  // namespace os
 
 // ── 对外接口 ──
 
@@ -299,7 +314,7 @@ Image fileIcon(const std::wstring& path, bool isDirectory) {
     if (dot != std::wstring::npos) key = path.substr(dot);
   }
 
-  auto& cache = win32::fileIconCache();
+  auto& cache = os::windows::fileIconCache();
   auto it = cache.find(key);
   if (it != cache.end()) return it->second;
 
@@ -312,13 +327,13 @@ Image fileIcon(const std::wstring& path, bool isDirectory) {
 
   Image image;
   if (info.hIcon) {
-    if (Gdiplus::Bitmap* bmp = win32::bitmapFromIcon(info.hIcon)) image = Image(bmp);
+    if (Gdiplus::Bitmap* bmp = os::windows::bitmapFromIcon(info.hIcon)) image = Image(bmp);
     ::DestroyIcon(info.hIcon);
   }
   cache[key] = image;
   return image;
 }
 
-void releaseFileIcons() { win32::releaseIconCaches(); }
+void releaseFileIcons() { os::windows::releaseIconCaches(); }
 
 }  // namespace AiUI

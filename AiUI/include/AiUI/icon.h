@@ -29,6 +29,11 @@ enum class IconId {
   kFolder,
   kFile,
   kSearch,
+  // 标题栏系统按钮
+  kMinimize,
+  kMaximize,
+  kRestore,
+  kClose,
 };
 
 // 位图句柄：由平台后端从系统图标转换而来，绘制时按值传递

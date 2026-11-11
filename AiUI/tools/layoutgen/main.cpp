@@ -1,4 +1,4 @@
-// layoutgen：把 XML 布局编译成 C++ 代码
+﻿// layoutgen：把 XML 布局编译成 C++ 代码
 //
 // 用法：layoutgen <输入.xml> <输出.h> <输出.cpp>
 //
@@ -611,7 +611,7 @@ class Generator {
       }
       if (has(node, "align")) line(2, "style.align = " + alignExpr(get(node, "align")) + ";");
       if (getBool(node, "bold", false)) line(2, "style.bold = true;");
-      if (getBool(node, "small", false)) line(2, "style.small = true;");
+      if (getBool(node, "small", false)) line(2, "style.smallFont = true;");
       if (has(node, "ellipsis") && !getBool(node, "ellipsis", true)) {
         line(2, "style.ellipsis = false;");
       }
@@ -693,6 +693,37 @@ std::string classFromPath(const std::string& path) {
   return name;
 }
 
+// 从路径取路径末段（不含扩展名），作为 LayoutInflater 的名字
+std::string stemFromPath(const std::string& path) {
+  size_t begin = path.find_last_of("\\/");
+  begin = (begin == std::string::npos) ? 0 : begin + 1;
+  size_t end = path.find_last_of('.');
+  if (end == std::string::npos || end < begin) end = path.size();
+  return path.substr(begin, end - begin);
+}
+
+// 生成注册文件：把每个 XML 的类名登记进 LayoutInflater，名字用文件名。
+// 这样宿主按 XML 名字取布局，实际调用的是编译期生成好的类。
+std::string registrySource(const std::vector<std::string>& xmlPaths) {
+  std::ostringstream out;
+  out << "// 由 layoutgen 自动生成，请勿手工修改\n";
+  out << "#include \"AiUI/layout_inflater.h\"\n\n";
+  for (const std::string& path : xmlPaths) {
+    out << "#include \"" << stemFromPath(path) << ".h\"\n";
+  }
+  out << "\nnamespace AiUI {\nnamespace generated {\n\n";
+  for (const std::string& path : xmlPaths) {
+    const std::string cls = classFromPath(path);
+    out << "namespace {\n";
+    out << "AiUI::ViewGroup* create" << cls << "() { return new " << cls << "(); }\n";
+    out << "const AiUI::LayoutRegistration kReg" << cls << "(L\"" << stemFromPath(path)
+        << "\", &create" << cls << ");\n";
+    out << "}  // namespace\n\n";
+  }
+  out << "}  // namespace generated\n}  // namespace AiUI\n";
+  return out.str();
+}
+
 bool readFile(const char* path, std::string& out) {
   std::ifstream in(path, std::ios::binary);
   if (!in) return false;
@@ -717,8 +748,21 @@ bool writeFile(const char* path, const std::string& content) {
 }  // namespace
 
 int main(int argc, char** argv) {
+  // 注册表模式：layoutgen --registry <输出.cpp> <file.xml> [<file.xml> ...]
+  if (argc >= 3 && std::string(argv[1]) == "--registry") {
+    std::vector<std::string> xmlPaths;
+    for (int i = 3; i < argc; ++i) xmlPaths.push_back(argv[i]);
+    if (!writeFile(argv[2], registrySource(xmlPaths))) {
+      std::fprintf(stderr, "layoutgen: 无法写入 %s\n", argv[2]);
+      return 1;
+    }
+    return 0;
+  }
+
   if (argc != 4) {
-    std::fprintf(stderr, "用法：layoutgen <输入.xml> <输出.h> <输出.cpp>\n");
+    std::fprintf(stderr,
+                 "用法：layoutgen <输入.xml> <输出.h> <输出.cpp>\n"
+                 "      layoutgen --registry <输出.cpp> <file.xml> [<file.xml> ...]\n");
     return 2;
   }
 
@@ -754,3 +798,4 @@ int main(int argc, char** argv) {
   }
   return 0;
 }
+

@@ -9,11 +9,12 @@ FontSet fonts;
 
 void FontSet::create(int dpi) {
   destroy();
-  if (dpi <= 0) dpi = platform()->screenDpi();
   Platform* p = platform();
-  ui = p->createFont(L"Microsoft YaHei UI", 10.0f, false, dpi);
-  uiBold = p->createFont(L"Microsoft YaHei UI", 10.0f, true, dpi);
-  uiSmall = p->createFont(L"Microsoft YaHei UI", 9.0f, false, dpi);
+  if (dpi <= 0) dpi = p->screenDpi();
+  const wchar_t* family = p->defaultFontFamily();
+  ui = p->createFont(family, 10.0f, false, dpi);
+  uiBold = p->createFont(family, 10.0f, true, dpi);
+  uiSmall = p->createFont(family, 9.0f, false, dpi);
 }
 
 void FontSet::destroy() {

@@ -21,6 +21,8 @@ struct InputSpec {
   int radius = 7;
   // 圆角外的四角填充色，需与宿主底色一致
   Color outerBackground = kColorPane;
+  // 密码模式：显示为圆点，但仍可选中与复制
+  bool password = false;
 };
 
 class InputBox : public View {
@@ -61,6 +63,9 @@ class InputBox : public View {
  private:
   Rect textRect() const;
   int textLeft() const;
+  // 前 pos 个字符的显示形式：密码模式下统一替换为掩码字符
+  std::wstring displayPrefix(int pos) const;
+  std::wstring displayText() const { return displayPrefix(static_cast<int>(text_.size())); }
   bool hasSelection() const { return selectionBegin_ != selectionEnd_; }
   int selectionLow() const { return selectionBegin_ < selectionEnd_ ? selectionBegin_ : selectionEnd_; }
   int selectionHigh() const { return selectionBegin_ < selectionEnd_ ? selectionEnd_ : selectionBegin_; }

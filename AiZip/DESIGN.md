@@ -106,7 +106,7 @@ AiUI/
 ├─ src/
 │  ├─ layouts/            布局实现
 │  ├─ widgets/            控件实现
-│  └─ win32/              仅此目录出现 HWND / HDC / GDI+，公开头文件不含平台类型
+│  └─ os/windows/         仅此目录出现 HWND / HDC / GDI+，公开头文件不含平台类型
 ├─ tools/layoutgen/       XML → C++ 布局代码生成器
 └─ cmake/                 aiui_add_layouts() 构建规则
 
@@ -141,10 +141,9 @@ AiZip/
 ### 分层约定
 
 - `AiUI` 不引用任何应用代码，只对外暴露抽象层；平台细节（`HWND` / `HDC` /
-  GDI+）全部收在 `src/win32/`，换平台只需重写 `PaintBackend` 与 `Platform`。
-- `widgets/dialog.h` 是唯一的例外：它是宿主接入层，允许出现 `HWND` / `WNDPROC`，
-  控件头文件不引用它。原生对话框（压缩/解压/输入/进度）保留系统控件，其 Win32
-  辅助走应用侧 `ui::dlg_util`。
+  GDI+）全部收在 `src/os/windows/`，换平台只需重写 `PaintBackend` 与 `Platform`。
+  `include/` 下的头文件一律不出现平台类型，原生对话框的 Win32 辅助走应用侧
+  `ui::dlg_util`。
 - 主界面全部自绘：`ListView` 取代 `SysListView32` + `SysHeader32`，
   `InputBox` 取代内嵌 `EDIT`（自己维护文本、光标、选区与 IME 组合串），
   `TreeView` / `ButtonBar` / `StatusBar` 同样没有原生控件。

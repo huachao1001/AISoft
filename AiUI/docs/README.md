@@ -1,8 +1,8 @@
 # AiUI 组件文档
 
-自绘 UI 库的使用说明。所有控件都不创建系统子控件，像素由 GDI+ 绘制；
-公开头文件不出现 `HWND` / `HDC` / `COLORREF`（`widgets/dialog.h` 是宿主
-接入层的唯一例外）。
+自绘 UI 库的使用说明。所有控件都不创建系统子控件，像素由系统绘图库绘制；
+`include/` 下的公开头文件不出现 `HWND` / `HDC` / `COLORREF` 等平台类型，
+平台差异全部收在 `src/os/<platform>/` 里（Windows 已实现，macOS / Linux 预留）。
 
 ## 设计约定
 

@@ -37,6 +37,20 @@ bool View::create(NativeHandle parent, const Rect& bounds) {
   return true;
 }
 
+bool View::create(NativeHandle parent, const WindowParams& params, const Rect& bounds) {
+  if (ownedRoot_) return true;
+
+  auto root = std::make_unique<ViewRoot>();
+  if (!root->attach(parent, params, bounds)) return false;
+  ownedRoot_ = std::move(root);
+  root_ = ownedRoot_.get();
+  root_->setContentView(this);
+
+  attachTree();
+  root_->layout(bounds);
+  return true;
+}
+
 void View::attachTree() {
   // 容器可能在 onCreated 里追加子视图，那条路径会立即挂载，这里防重入
   if (created_) return;
@@ -135,6 +149,11 @@ Size View::childMeasureSize(View* child, const Size& available) const {
   return child->measure(Size{(std::max)(0, w), (std::max)(0, h)});
 }
 
+// 叶子视图只可能命中自己
+View* View::findViewById(int id) {
+  return (id != 0 && id_ == id) ? this : nullptr;
+}
+
 // ───────────────────────── 刷新 ─────────────────────────
 
 void View::invalidate() {
@@ -168,6 +187,12 @@ void View::show(bool visible) {
 void View::setEnabled(bool enabled) {
   if (enabled_ == enabled) return;
   enabled_ = enabled;
+  invalidate();
+}
+
+void View::setBackgroundColor(Color color) {
+  if (explicitBackground_ == color) return;
+  explicitBackground_ = color;
   invalidate();
 }
 
@@ -211,7 +236,7 @@ Color View::resolvedBackground() const {
   return kColorBody;
 }
 
-Color View::backgroundColor() const { return kNoColor; }
+Color View::backgroundColor() const { return explicitBackground_; }
 
 // ───────────────────────── 事件 ─────────────────────────
 

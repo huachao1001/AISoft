@@ -102,6 +102,7 @@ class FakeWindow : public AiUI::PlatformWindow {
 
   std::unique_ptr<AiUI::Canvas> createCanvas(const Rect& area) override;
   void setBounds(const Rect& bounds) override;
+  Rect windowRect() const override { return rect_; }
   void show(bool visible) override { visible_ = visible; }
   void invalidate() override { ++fullInvalidations_; }
   void invalidateRect(const Rect& rc) override { invalidRects_.push_back(rc); }
@@ -114,6 +115,18 @@ class FakeWindow : public AiUI::PlatformWindow {
     imeY_ = y;
   }
 
+  // ── 标题栏控制：记录调用，测试据此断言 ──
+  void setTitle(const std::wstring& title) override { title_ = title; }
+  void minimize() override { ++minimizeCalls_; }
+  void toggleMaximize() override {
+    maximized_ = !maximized_;
+    ++toggleCalls_;
+  }
+  bool isMaximized() const override { return maximized_; }
+  void close() override { ++closeCalls_; }
+  void startDragMove() override { ++dragMoveCalls_; }
+  void startDragResize(AiUI::HitTarget edge) override { resizeEdge_ = edge; }
+
   // ── 供测试观察的状态 ──
   const std::vector<Rect>& invalidRects() const { return invalidRects_; }
   void clearInvalidRects() { invalidRects_.clear(); }
@@ -124,6 +137,12 @@ class FakeWindow : public AiUI::PlatformWindow {
   int focusCalls() const { return focusCalls_; }
   int imeX() const { return imeX_; }
   int imeY() const { return imeY_; }
+  const std::wstring& title() const { return title_; }
+  int minimizeCalls() const { return minimizeCalls_; }
+  int toggleMaximizeCalls() const { return toggleCalls_; }
+  int closeCalls() const { return closeCalls_; }
+  int dragMoveCalls() const { return dragMoveCalls_; }
+  AiUI::HitTarget resizeEdge() const { return resizeEdge_; }
 
   // 最近一次提交的绘制结果（画布销毁后仍可查）
   const std::vector<FillCall>& lastFills() const { return lastFills_; }
@@ -146,6 +165,13 @@ class FakeWindow : public AiUI::PlatformWindow {
   int imeY_ = 0;
   AiUI::CursorShape cursor_ = AiUI::CursorShape::kArrow;
   std::vector<Rect> invalidRects_;
+  std::wstring title_;
+  bool maximized_ = false;
+  int minimizeCalls_ = 0;
+  int toggleCalls_ = 0;
+  int closeCalls_ = 0;
+  int dragMoveCalls_ = 0;
+  AiUI::HitTarget resizeEdge_ = AiUI::HitTarget::kClient;
   // 最近一次提交的快照，避免画布销毁后指针悬空
   RecordingBackend backend_;
   std::vector<FillCall> lastFills_;
@@ -163,6 +189,25 @@ class FakePlatform : public AiUI::Platform {
 
   int screenDpi() override { return dpi_; }
 
+  const wchar_t* defaultFontFamily() override { return L"Test Sans"; }
+  bool setClipboardText(const std::wstring& text) override {
+    clipboard_ = text;
+    return true;
+  }
+  std::wstring clipboardText() override { return clipboard_; }
+  bool isPathPrefix(const std::wstring& prefix, const std::wstring& path) override {
+    // 与 Windows 语义一致：不区分大小写、按分隔符边界
+    if (prefix.empty()) return true;
+    if (path.size() < prefix.size()) return false;
+    for (size_t i = 0; i < prefix.size(); ++i) {
+      if (towlower(path[i]) != towlower(prefix[i])) return false;
+    }
+    if (path.size() == prefix.size()) return true;
+    if (prefix.back() == L'\\' || prefix.back() == L'/') return true;
+    return path[prefix.size()] == L'\\' || path[prefix.size()] == L'/';
+  }
+  wchar_t pathSeparator() override { return L'\\'; }
+
   AiUI::Font createFont(const wchar_t* family, float pointSize, bool bold, int dpi) override;
   void destroyFont(void* handle) override { (void)handle; }
   int measureText(const std::wstring& text, const AiUI::Font& font) override;
@@ -175,6 +220,7 @@ class FakePlatform : public AiUI::Platform {
     return AiUI::Size{};
   }
   void releaseImage(AiUI::Image image) override { (void)image; }
+  AiUI::Image appIcon() override { return AiUI::Image(); }
   void startupDrawing() override { drawingReady_ = true; }
   void shutdownDrawing() override { drawingReady_ = false; }
   bool isDrawingReady() override { return drawingReady_; }
@@ -194,6 +240,7 @@ class FakePlatform : public AiUI::Platform {
   int destroyed_ = 0;
   FakeWindow* lastWindow_ = nullptr;
   std::wstring lastName_;
+  std::wstring clipboard_;
 };
 
 // 用法：作用域内把 platform() 换成 fake，析构时恢复

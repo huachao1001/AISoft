@@ -54,12 +54,16 @@ class ViewGroup : public View {
   // ── View ──
   // 命中测试：点落在哪个最上层后代上；落空时返回容器自身
   View* hitTest(Point localPoint) const;
+  // 自身不匹配时深度优先找子树
+  View* findViewById(int id) override;
 
  protected:
   // 摆放子视图；content 是去掉内边距后的区域（局部坐标）
   virtual void arrangeChildren(const Rect& content);
   void onLayout(const Rect& frame) override;
   void onDrawChildren(Painter& painter, const Rect& dirty) override;
+  // 把非客户区命中分发给覆盖该点的子视图
+  HitTarget onHitTest(const Point& windowPoint) override;
 
   // 子树挂载/卸载：只由 View 的递归挂载调用
   void attachChildren();

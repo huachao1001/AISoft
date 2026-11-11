@@ -1,4 +1,4 @@
-// TextView 实现
+﻿// TextView 实现
 #include "AiUI/widgets/text_view.h"
 
 #include "AiUI/font.h"
@@ -35,7 +35,7 @@ void TextView::onPaint(Painter& painter, const Rect& rect) {
   const Rect inner =
       rect.inset(style_.paddingLeft * d / 96, style_.paddingTop * d / 96,
                  style_.paddingRight * d / 96, style_.paddingBottom * d / 96);
-  const Font& font = style_.small ? fonts.uiSmall : (style_.bold ? fonts.uiBold : fonts.ui);
+  const Font& font = style_.smallFont ? fonts.uiSmall : (style_.bold ? fonts.uiBold : fonts.ui);
 
   if (style_.ellipsis && style_.align == TextAlign::kLeft) {
     painter.drawTextEllipsis(inner, text_, style_.color, font);
@@ -47,7 +47,7 @@ void TextView::onPaint(Painter& painter, const Rect& rect) {
 Size TextView::onMeasure(const Size& available) {
   (void)available;
   const int d = dpi();
-  const Font& font = style_.small ? fonts.uiSmall : (style_.bold ? fonts.uiBold : fonts.ui);
+  const Font& font = style_.smallFont ? fonts.uiSmall : (style_.bold ? fonts.uiBold : fonts.ui);
 
   // 文字宽度由平台后端直接测量；控件还没建窗时也能算准
   int textWidth = platform()->measureText(text_, font);
@@ -58,3 +58,4 @@ Size TextView::onMeasure(const Size& available) {
 }
 
 }  // namespace AiUI
+

@@ -57,6 +57,13 @@ void Button::resolvePalette(Color& background, Color& border, Color& ink) const 
   if (spec_.background != kNoColor) background = spec_.background;
   if (spec_.border != kNoColor) border = spec_.border;
   if (spec_.ink != kNoColor) ink = spec_.ink;
+
+  // 悬停/按下态的显式色盖过基础色，标题栏这类需要精确控制外观的按钮靠它
+  if (isEnabled()) {
+    if (pressed_ && spec_.downBackground != kNoColor) background = spec_.downBackground;
+    else if (hot_ && spec_.hoverBackground != kNoColor) background = spec_.hoverBackground;
+    if (hot_ && spec_.hoverInk != kNoColor) ink = spec_.hoverInk;
+  }
 }
 
 int Button::preferredWidth() {
@@ -164,7 +171,7 @@ void Button::onMouseMove(const MouseEvent& e) {
     hot_ = true;
     invalidate();
   }
-  setCursor(CursorShape::kHand);
+  setCursor(spec_.cursor);
 }
 
 void Button::onMouseLeave() {

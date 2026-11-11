@@ -1,7 +1,8 @@
 ﻿// 主窗口：导航条 + 工具栏 + 树 + 列表 + 状态栏
 //
-// 窗口本身只做原生宿主（拖放、标题、设置持久化），内部界面全部由
-// XML 生成的 MainFrame 布局搭起来，尺寸交给布局系统计算。
+// 窗口外壳（标题栏、边框、拖动、缩放、最小化/最大化/关闭）由 AiUI::Window
+// 提供，界面内容由 XML 生成的 MainFrame 布局搭起来。这里只剩原生宿主逻辑：
+// 拖放注册与单实例转发，不涉及任何布局与绘制。
 #include "ui_main.h"
 
 #include "app.h"
@@ -17,6 +18,7 @@
 #include "AiUI/font.h"
 #include "AiUI/platform.h"
 #include "AiUI/theme.h"
+#include "AiUI/window.h"
 #include "AiUI/widgets/button_bar.h"
 #include "AiUI/widgets/list_view.h"
 #include "AiUI/widgets/status_bar.h"
@@ -34,9 +36,10 @@ namespace {
 
 constexpr const wchar_t* kMainClass = L"AIZipMainWindow";
 
-std::unique_ptr<AiUI::generated::MainFrame> g_frame;
+std::unique_ptr<AiUI::Window> g_window;
+AiUI::generated::MainFrame* g_frame = nullptr;
 
-// 拖放转发：子窗口各自注册，统一转交主窗口
+// 拖放转发：ViewRoot 子窗口收不到时转交主窗口
 HWND DropOwner(HWND child) {
   HWND parent = ::GetParent(child);
   return parent ? parent : child;
@@ -58,96 +61,30 @@ void EnableDrop(HWND hwnd) {
   ::SetWindowSubclass(hwnd, DropForwardProc, 1, 0);
 }
 
-void OnCreate(HWND hwnd) {
-  // WM_CREATE 在 CreateWindowExW 内同步触发，早于 main.cpp 赋值，
-  // 这里先补上，后续装配捕获取到的 owner 才不是空
-  g_app.mainWnd = hwnd;
-
-  g_frame = std::make_unique<AiUI::generated::MainFrame>();
-  // 整棵界面只有一个子窗口：MainFrame 自己就是根视图
-  g_frame->create(hwnd, AiUI::Rect{});
-
-  // 各模块只负责“拿到控件后怎么用”，不再关心摆放
-  AttachCrumbBar(g_frame->crumb);
-  AttachToolBar(g_frame->toolBar);
-  AttachSideTree(g_frame->tree);
-  AttachFileList(g_frame->list);
-  AttachStatusBar(g_frame->status);
-
-  // 拖放注册在 ViewRoot 的窗口上：它铺满客户区，是光标实际所在的那个窗口。
-  // 主窗口保留一份，标题栏等非客户区拖入也能收。
-  EnableDrop(hwnd);
-  EnableDrop(static_cast<HWND>(g_frame->handle()));
-
-  RefreshAddressBar(hwnd);
-  AppRefreshView();
+// 主窗口的拖放处理：文件丢进来自动判断是压缩包还是待压缩文件
+void HandleDropFiles(HWND hwnd, HDROP drop) {
+  const UINT count = ::DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+  std::vector<std::wstring> paths;
+  for (UINT i = 0; i < count; ++i) {
+    wchar_t buffer[MAX_PATH * 2];
+    ::DragQueryFileW(drop, i, buffer, MAX_PATH * 2);
+    paths.push_back(buffer);
+  }
+  ::DragFinish(drop);
+  if (paths.empty()) return;
+  if (paths.size() == 1 && arc::Archive::IsArchiveFile(paths[0])) {
+    AppOpenArchive(paths[0]);
+  } else {
+    ShowCompressDialog(hwnd, paths);
+  }
 }
 
-void OnSize(int width, int height) {
-  if (!g_frame) return;
-  g_frame->layout(AiUI::Rect{0, 0, width, height});
-}
-
-}  // namespace
-
-LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+// 原生宿主消息：只处理拖放与单实例转发，其余交给默认窗口过程
+LRESULT CALLBACK HostProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
   switch (msg) {
-    case WM_CREATE:
-      OnCreate(hwnd);
+    case WM_DROPFILES:
+      HandleDropFiles(hwnd, reinterpret_cast<HDROP>(wParam));
       return 0;
-
-    case WM_SIZE:
-      OnSize(LOWORD(lParam), HIWORD(lParam));
-      return 0;
-
-    case WM_GETMINMAXINFO: {
-      auto* mmi = reinterpret_cast<MINMAXINFO*>(lParam);
-      mmi->ptMinTrackSize.x = g_app.px(kMinWidth);
-      mmi->ptMinTrackSize.y = g_app.px(kMinHeight);
-      return 0;
-    }
-
-    case WM_ERASEBKGND:
-      return 1;  // 全部自绘
-
-    case WM_PAINT: {
-      PAINTSTRUCT ps;
-      HDC dc = ::BeginPaint(hwnd, &ps);
-      // 布局覆盖整个客户区，这里只兜底铺一层底色，防止缩放瞬间露出白边
-      RECT rc{};
-      ::GetClientRect(hwnd, &rc);
-      const COLORREF body = RGB(AiUI::colorRed(AiUI::kColorBody), AiUI::colorGreen(AiUI::kColorBody),
-                                AiUI::colorBlue(AiUI::kColorBody));
-      HBRUSH brush = ::CreateSolidBrush(body);
-      ::FillRect(dc, &rc, brush);
-      ::DeleteObject(brush);
-      ::EndPaint(hwnd, &ps);
-      return 0;
-    }
-
-    case WM_SETFOCUS:
-      FocusFileList();
-      return 0;
-
-    case WM_DROPFILES: {
-      HDROP drop = reinterpret_cast<HDROP>(wParam);
-      const UINT count = ::DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
-      std::vector<std::wstring> paths;
-      for (UINT i = 0; i < count; ++i) {
-        wchar_t buffer[MAX_PATH * 2];
-        ::DragQueryFileW(drop, i, buffer, MAX_PATH * 2);
-        paths.push_back(buffer);
-      }
-      ::DragFinish(drop);
-      if (!paths.empty()) {
-        if (paths.size() == 1 && arc::Archive::IsArchiveFile(paths[0])) {
-          AppOpenArchive(paths[0]);
-        } else {
-          ShowCompressDialog(hwnd, paths);
-        }
-      }
-      return 0;
-    }
 
     case WM_COPYDATA: {
       auto* cds = reinterpret_cast<COPYDATASTRUCT*>(lParam);
@@ -162,26 +99,8 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
       return TRUE;
     }
 
-    case WM_CLOSE:
-      ::DestroyWindow(hwnd);
-      return 0;
-
-    case WM_DESTROY: {
-      g_frame.reset();
-
-      WINDOWPLACEMENT wp{};
-      wp.length = sizeof(wp);
-      if (::GetWindowPlacement(hwnd, &wp)) {
-        g_app.settings.winMax = (wp.showCmd == SW_SHOWMAXIMIZED);
-        if (!g_app.settings.winMax) {
-          g_app.settings.winW = wp.rcNormalPosition.right - wp.rcNormalPosition.left;
-          g_app.settings.winH = wp.rcNormalPosition.bottom - wp.rcNormalPosition.top;
-        }
-      }
-      util::SaveSettings(g_app.settings);
-      ::PostQuitMessage(0);
-      return 0;
-    }
+    case WM_ERASEBKGND:
+      return 1;
 
     default:
       break;
@@ -189,28 +108,51 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
   return ::DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
-bool RegisterMainWindow(HINSTANCE inst) {
-  return RegisterWindowClass(kMainClass, MainProc, inst, CS_HREDRAW | CS_VREDRAW, nullptr, 101);
-}
+}  // namespace
 
-void CenterOnWorkArea(HWND hwnd) {
-  RECT wr{};
-  if (!::GetWindowRect(hwnd, &wr)) return;
-  RECT work{};
-  if (!::SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0)) {
-    work = RECT{0, 0, ::GetSystemMetrics(SM_CXSCREEN), ::GetSystemMetrics(SM_CYSCREEN)};
-  }
-  const int w = wr.right - wr.left;
-  const int h = wr.bottom - wr.top;
-  const int x = work.left + ((work.right - work.left) - w) / 2;
-  const int y = work.top + ((work.bottom - work.top) - h) / 2;
-  ::SetWindowPos(hwnd, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+bool RegisterMainWindow(HINSTANCE inst) {
+  return RegisterWindowClass(kMainClass, HostProc, inst, CS_HREDRAW | CS_VREDRAW, nullptr, 101);
 }
 
 HWND CreateMainWindow(HINSTANCE inst) {
+  (void)inst;
   const auto& s = g_app.settings;
   constexpr int kDefW = 1180;
   constexpr int kDefH = 760;
+
+  g_window = std::make_unique<AiUI::Window>();
+
+  AiUI::WindowStyle style;
+  style.topLevel = true;
+  style.resizable = true;
+  style.minimizable = true;
+  style.maximizable = true;
+  style.captionHeight = 0;  // 视觉总高与逻辑带一致
+  g_window->setStyle(style);
+  g_window->setMinSize(kMinWidth, kMinHeight);
+  g_window->setTitle(L"AIZip");
+
+  auto* frame = new AiUI::generated::MainFrame();
+  g_frame = frame;
+  g_window->setContentView(frame);
+
+  // 关闭前保存窗口状态；窗口位置尺寸由平台层处理
+  g_window->setOnClose([] {
+    WINDOWPLACEMENT wp{};
+    wp.length = sizeof(wp);
+    HWND hwnd = g_app.mainWnd;
+    if (hwnd && ::GetWindowPlacement(hwnd, &wp)) {
+      g_app.settings.winMax = (wp.showCmd == SW_SHOWMAXIMIZED);
+      if (!g_app.settings.winMax) {
+        g_app.settings.winW = wp.rcNormalPosition.right - wp.rcNormalPosition.left;
+        g_app.settings.winH = wp.rcNormalPosition.bottom - wp.rcNormalPosition.top;
+      }
+    }
+    util::SaveSettings(g_app.settings);
+    return true;
+  });
+
+  // 先算出初始尺寸，再创建窗口
   const int minW = g_app.px(kMinWidth);
   const int minH = g_app.px(kMinHeight);
   int w = (s.winW >= minW) ? s.winW : g_app.px(kDefW);
@@ -223,28 +165,43 @@ HWND CreateMainWindow(HINSTANCE inst) {
   if (w > work.right - work.left) w = work.right - work.left;
   if (h > work.bottom - work.top) h = work.bottom - work.top;
 
-  HWND hwnd = ::CreateWindowExW(WS_EX_ACCEPTFILES, kMainClass, L"AIZip",
-                                WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, 0, 0, w, h, nullptr,
-                                nullptr, inst, nullptr);
-  if (!hwnd) return nullptr;
-  CenterOnWorkArea(hwnd);
-  return hwnd;
+  const int x = work.left + ((work.right - work.left) - w) / 2;
+  const int y = work.top + ((work.bottom - work.top) - h) / 2;
+
+  if (!g_window->create(nullptr)) return nullptr;
+  g_app.mainWnd = static_cast<HWND>(g_window->handle());
+  g_window->setInitialBounds(AiUI::Rect{x, y, x + w, y + h});
+
+  // 各模块只负责“拿到控件后怎么用”，不再关心摆放
+  AttachCrumbBar(frame->crumb);
+  AttachToolBar(frame->toolBar);
+  AttachSideTree(frame->tree);
+  AttachFileList(frame->list);
+  AttachStatusBar(frame->status);
+
+  // 拖放同时注册在宿主窗口与 ViewRoot 窗口上：光标实际在后者
+  EnableDrop(g_app.mainWnd);
+  EnableDrop(static_cast<HWND>(frame->handle()));
+
+  return g_app.mainWnd;
 }
 
-void UpdateMainTitle(HWND hwnd) {
+void UpdateMainTitle(HWND) {
+  if (!g_window) return;
   const std::wstring title =
       g_app.archiveMode ? util::BaseName(g_app.archivePath) + L" - AIZip" : L"AIZip";
-  ::SetWindowTextW(hwnd, title.c_str());
+  g_window->setTitle(title);
 }
 
 void RefreshAddressBar(HWND) {
-  if (!g_frame) return;
   RefreshCrumbBar();
   SyncSideTree();
 }
 
 void FocusFileList() {
-  if (g_frame) g_frame->list->setFocus();
+  auto* frame = g_window ? dynamic_cast<AiUI::generated::MainFrame*>(g_window->contentView())
+                         : nullptr;
+  if (frame && frame->list) frame->list->setFocus();
 }
 
 bool HandleMainShortcut(const MSG& msg) {

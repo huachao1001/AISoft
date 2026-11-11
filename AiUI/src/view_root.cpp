@@ -15,27 +15,34 @@ ViewRoot::~ViewRoot() {
   hovered_ = nullptr;
   capture_ = nullptr;
   pressed_ = nullptr;
-  if (window_) {
-    window_->setBlinkTimer(false);
-    platform()->destroyWindow(window_);
-    window_ = nullptr;
-  }
+  destroyWindow();
+}
+
+void ViewRoot::destroyWindow() {
+  if (!window_) return;
+  window_->setBlinkTimer(false);
+  platform()->destroyWindow(window_);
+  window_ = nullptr;
 }
 
 // ───────────────────────── 挂载 ─────────────────────────
 
 bool ViewRoot::attach(NativeHandle parent, const Rect& bounds) {
-  if (window_) return true;
-
   WindowParams params;
   params.className = L"AiUIViewRoot";
   params.visible = true;
   params.tabStop = true;
+  return attach(parent, params, bounds);
+}
+
+bool ViewRoot::attach(NativeHandle parent, const WindowParams& params, const Rect& bounds) {
+  if (window_) return true;
 
   window_ = platform()->createWindow(parent, params, *this);
   if (!window_) return false;
 
-  window_->setBounds(bounds);
+  // 顶层窗口的 bounds 指客户区；子窗口同理按客户区铺满
+  if (!bounds.isEmpty()) window_->setBounds(bounds);
   return true;
 }
 
@@ -140,8 +147,16 @@ void ViewRoot::onResize(int width, int height) {
   if (!content_) return;
   // 以真实客户区为准，避免边框与缩放误差
   performLayout(window_ ? window_->clientRect() : Rect{0, 0, width, height});
-}
 
+  // 最大化状态可能在缩放后才稳定，这里统一通知一次
+  if (window_ && onMaximizeState_) {
+    const bool maximized = window_->isMaximized();
+    if (maximized != lastMaximized_) {
+      lastMaximized_ = maximized;
+      onMaximizeState_(maximized);
+    }
+  }
+}
 // ───────────────────────── 焦点 ─────────────────────────
 
 View* ViewRoot::findFocusable(View* view) const {
@@ -357,8 +372,13 @@ void ViewRoot::onContextMenu(const MouseEvent& e) {
 }
 
 bool ViewRoot::onKeyDown(const Key& key, const Modifiers& mods) {
-  if (!focused_) return false;
-  return focused_->dispatchKeyDown(key, mods);
+  // 内容区优先；Esc 在对话框里用于请求关闭
+  if (focused_ && focused_->dispatchKeyDown(key, mods)) return true;
+  if (key == Key::kEscape && escapeCloses_) {
+    requestClose();
+    return true;
+  }
+  return false;
 }
 
 bool ViewRoot::onChar(wchar_t ch) {
@@ -369,6 +389,27 @@ bool ViewRoot::onChar(wchar_t ch) {
 void ViewRoot::setBackgroundColor(Color color) {
   background_ = color;
   invalidate();
+}
+
+// ───────────────────────── 非客户区 ─────────────────────────
+
+HitTarget ViewRoot::onHitTest(const Point& position) {
+  if (!content_) return HitTarget::kClient;
+
+  // 大小与边框由平台窗口负责；这里只问视图树。
+  // 标题栏这类需要系统拖动的区域会返回 kCaption，其余返回 kClient。
+  return content_->onHitTest(position);
+}
+
+void ViewRoot::requestClose() {
+  if (onClose_ && !onClose_()) return;
+  if (window_) window_->close();
+}
+
+bool ViewRoot::onCloseRequest() {
+  // 有回调时由它决定是否放行；返回 false 让平台继续走默认销毁
+  if (onClose_ && !onClose_()) return true;
+  return false;
 }
 
 }  // namespace AiUI

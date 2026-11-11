@@ -6,6 +6,9 @@
 # 生成的 .h/.cpp 放在 ${CMAKE_CURRENT_BINARY_DIR}/aiui_generated 下，
 # 类名取自文件名（main_page.xml → MainPage，命名空间 AiUI::generated）。
 # 修改 XML 后重新构建即自动重新生成，无需手工执行任何工具。
+#
+# 同时生成 aiui_layouts.cpp，把每个布局登记到 LayoutInflater，
+# 宿主即可用 LayoutInflater::inflate(L"main_page") 按名字取到布局类。
 
 # layoutgen 只在需要时构建一次；作为宿主工具，不参与安装
 if(NOT TARGET AiUI::layoutgen)
@@ -37,6 +40,7 @@ function(aiui_add_layouts target)
   file(MAKE_DIRECTORY "${out_dir}")
 
   set(generated_sources)
+  set(registry_inputs)
   foreach(xml IN LISTS ARG_UNPARSED_ARGUMENTS)
     get_filename_component(xml_abs "${xml}" ABSOLUTE)
     if(NOT EXISTS "${xml_abs}")
@@ -55,7 +59,19 @@ function(aiui_add_layouts target)
       VERBATIM
     )
     list(APPEND generated_sources "${header}" "${source}")
+    list(APPEND registry_inputs "${xml_abs}")
   endforeach()
+
+  # 注册表：名字 → 工厂，供 LayoutInflater 按 XML 文件名取布局
+  set(registry "${out_dir}/aiui_layouts.cpp")
+  add_custom_command(
+    OUTPUT "${registry}"
+    COMMAND $<TARGET_FILE:AiUI::layoutgen> --registry "${registry}" ${registry_inputs}
+    DEPENDS ${registry_inputs} AiUI::layoutgen
+    COMMENT "生成布局注册表"
+    VERBATIM
+  )
+  list(APPEND generated_sources "${registry}")
 
   target_sources(${target} PRIVATE ${generated_sources})
   target_include_directories(${target} PRIVATE "${out_dir}")

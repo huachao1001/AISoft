@@ -38,6 +38,12 @@ struct ButtonSpec {
   Color background = kNoColor;
   Color border = kNoColor;
   Color ink = kNoColor;
+  // 悬停与按下态：给了显式值就按它们画，否则用主题色
+  Color hoverBackground = kNoColor;
+  Color downBackground = kNoColor;
+  Color hoverInk = kNoColor;
+  // 悬停时的鼠标形状；标题栏按钮用箭头才与系统一致
+  CursorShape cursor = CursorShape::kHand;
 };
 
 class Button : public View {

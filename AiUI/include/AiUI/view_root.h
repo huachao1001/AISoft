@@ -12,6 +12,7 @@
 #include "AiUI/platform.h"
 #include "AiUI/view.h"
 
+#include <functional>
 #include <memory>
 
 namespace AiUI {
@@ -26,8 +27,24 @@ class ViewRoot : public WindowHost {
 
   // 挂到宿主窗口；bounds 为窗口客户区矩形
   bool attach(NativeHandle parent, const Rect& bounds = Rect{});
+  // 带窗口参数（顶层/边框/最小尺寸）的挂载；Window 组件用这个
+  bool attach(NativeHandle parent, const WindowParams& params, const Rect& bounds = Rect{});
   bool isAttached() const { return window_ != nullptr; }
   NativeHandle handle() const;
+  // 底层平台窗口；自绘标题栏需要它做拖动与缩放
+  PlatformWindow* platformWindow() const { return window_; }
+  // 销毁平台窗口并断开引用；之后可重新 attach
+  void destroyWindow();
+
+  // 关闭请求；返回 false 阻止关闭
+  using CloseHandler = std::function<bool()>;
+  void setCloseHandler(CloseHandler fn) { onClose_ = std::move(fn); }
+  // Esc 是否关闭窗口；主窗口通常关闭它，对话框保留
+  void setEscapeCloses(bool closes) { escapeCloses_ = closes; }
+  // 平台窗口收到关闭请求时调用（Esc、Alt+F4、关闭按钮都走这里）
+  void requestClose();
+  // 最大化状态变化通知；自绘标题栏据此切换按钮图标
+  void setMaximizeStateHandler(std::function<void(bool)> fn) { onMaximizeState_ = std::move(fn); }
 
   // 设置根视图；不接管所有权，调用方负责生命周期
   void setContentView(View* view);
@@ -75,6 +92,8 @@ class ViewRoot : public WindowHost {
   bool onChar(wchar_t ch) override;
   void onFocusChanged(bool focused) override;
   void onTimer() override;
+  HitTarget onHitTest(const Point& position) override;
+  bool onCloseRequest() override;
 
  private:
   // 找到窗口坐标下最上层的可命中视图
@@ -100,6 +119,10 @@ class ViewRoot : public WindowHost {
 
   Color background_ = kNoColor;
   bool layoutPending_ = false;
+  CloseHandler onClose_;
+  std::function<void(bool)> onMaximizeState_;
+  bool lastMaximized_ = false;
+  bool escapeCloses_ = false;
 };
 
 }  // namespace AiUI

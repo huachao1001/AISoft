@@ -5,7 +5,7 @@ project(AiUI CXX)
 #
 # 可独立构建（cmake -S AiUI -B AiUI/build -G Ninja），也可被其它工程用
 # add_subdirectory 引入。公开头文件不含任何平台类型，平台细节封在
-# src/win32 里。
+# src/os/<platform> 里。
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -23,6 +23,8 @@ set(AIUI_SOURCES
   src/view_group.cpp
   src/view_root.cpp
   src/scroll_view.cpp
+  src/window.cpp
+  src/layout_inflater.cpp
   src/font.cpp
   # 布局
   src/layouts/frame_layout.cpp
@@ -31,18 +33,32 @@ set(AIUI_SOURCES
   src/widgets/button.cpp
   src/widgets/button_bar.cpp
   src/widgets/breadcrumb_bar.cpp
-  src/widgets/dialog.cpp
   src/widgets/image_view.cpp
   src/widgets/input_box.cpp
   src/widgets/list_view.cpp
   src/widgets/status_bar.cpp
   src/widgets/text_view.cpp
+  src/widgets/title_bar.cpp
   src/widgets/tree_view.cpp
-  # Win32 后端：唯一接触 Windows API 与 GDI+ 的地方
-  src/win32/window_win32.cpp
-  src/win32/painter_win32.cpp
-  src/win32/icon_win32.cpp
 )
+
+# ── 平台后端 ──
+# src/os/<platform> 是唯一允许接触系统 API 与系统绘图库的地方。
+# 目前只有 Windows；macOS / Linux 各加一个分支即可，通用代码不用改。
+if(WIN32)
+  list(APPEND AIUI_SOURCES
+    src/os/windows/window_windows.cpp
+    src/os/windows/painter_windows.cpp
+    src/os/windows/icon_windows.cpp
+    src/os/windows/title_bar_windows.cpp
+  )
+elseif(APPLE)
+  message(FATAL_ERROR "AiUI 的 macOS 后端尚未实现")
+elseif(UNIX)
+  message(FATAL_ERROR "AiUI 的 Linux 后端尚未实现")
+else()
+  message(FATAL_ERROR "AiUI 没有适配当前操作系统")
+endif()
 
 add_library(AiUI STATIC ${AIUI_SOURCES})
 add_library(AiUI::AiUI ALIAS AiUI)
@@ -64,7 +80,7 @@ target_compile_definitions(AiUI PUBLIC
 
 target_compile_options(AiUI PRIVATE /utf-8 /W4 /permissive- /Zc:__cplusplus)
 
-target_link_libraries(AiUI PUBLIC gdiplus imm32 shell32 shlwapi ole32 oleaut32 uuid)
+target_link_libraries(AiUI PUBLIC gdiplus imm32 shell32 shlwapi ole32 oleaut32 uuid dwmapi)
 
 # XML 布局自动生成：aiui_add_layouts(<target> assets/layouts/main.xml ...)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/AiUiLayout.cmake)

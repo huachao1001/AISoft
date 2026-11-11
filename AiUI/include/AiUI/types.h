@@ -1,7 +1,7 @@
-// 平台无关的基础类型：几何与颜色
+﻿// 平台无关的基础类型：几何与颜色
 //
 // 公开头文件只暴露这些中性类型，不出现 HWND / HDC / COLORREF 等
-// 平台名词。换平台时只需替换 src/win32 下的后端实现。
+// 平台名词。换平台时只需替换 src/os/<platform>/ 下的后端实现。
 #pragma once
 
 #include <cstdint>

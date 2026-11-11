@@ -2,28 +2,11 @@
 #include "AiUI/widgets/tree_view.h"
 
 #include "AiUI/font.h"
-
-#include <windows.h>
+#include "AiUI/platform.h"
 
 #include <algorithm>
 
 namespace AiUI {
-namespace {
-
-// path 是否等于 target 或位于其下；按分隔符边界判断，避免 "a2" 误配 "a"
-bool isAncestorOrSelf(const std::wstring& path, const std::wstring& target) {
-  if (path.empty()) return true;
-  if (target.size() < path.size()) return false;
-  if (::CompareStringOrdinal(target.c_str(), static_cast<int>(path.size()), path.c_str(),
-                             static_cast<int>(path.size()), TRUE) != CSTR_EQUAL) {
-    return false;
-  }
-  if (target.size() == path.size()) return true;
-  if (path.back() == L'\\' || path.back() == L'/') return true;
-  return target[path.size()] == L'\\' || target[path.size()] == L'/';
-}
-
-}  // namespace
 
 TreeView::TreeView() { setFocusable(true); }
 
@@ -84,7 +67,7 @@ void TreeView::rebuild() {
 
 TreeNode* TreeView::syncTo(TreeNode* node, const std::wstring& target) {
   if (!node) return nullptr;
-  if (!isAncestorOrSelf(node->path, target)) return nullptr;
+  if (!platform()->isPathPrefix(node->path, target)) return nullptr;
 
   loadChildren(node);
   node->expanded = true;

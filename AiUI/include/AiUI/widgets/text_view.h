@@ -14,7 +14,7 @@ struct TextStyle {
   TextAlign align = TextAlign::kLeft;
   bool ellipsis = true;  // 超宽时显示省略号
   bool bold = false;
-  bool small = false;  // 用小字号
+  bool smallFont = false;  // 用小字号
   int paddingLeft = 0;
   int paddingTop = 0;
   int paddingRight = 0;
