@@ -26,22 +26,22 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../AiUI ${CMAKE_CURRENT_BINARY_DIR}
 set(Z7_LINK_OPTIONS "/WHOLEARCHIVE:7zstatic")
 
 add_executable(AiZip WIN32
-  src/main.cpp
-  src/app.cpp
-  src/archive.cpp
-  src/sevenzip_loader.cpp
-  src/ui_main.cpp
-  src/main_activity.cpp
-  src/file_list_model.cpp
-  src/tree_model.cpp
-  src/dlg_util.cpp
-  src/dlg_compress.cpp
-  src/dlg_extract.cpp
-  src/dlg_input.cpp
-  src/dlg_progress.cpp
-  src/shell_menu.cpp
-  src/single_instance.cpp
-  src/util.cpp
+  src/app/main.cpp
+  src/app/app.cpp
+  src/app/shell_menu.cpp
+  src/app/single_instance.cpp
+  src/archive/archive.cpp
+  src/archive/sevenzip_loader.cpp
+  src/ui/ui_main.cpp
+  src/ui/main_activity.cpp
+  src/ui/file_list_model.cpp
+  src/ui/tree_model.cpp
+  src/dialogs/dlg_util.cpp
+  src/dialogs/dlg_compress.cpp
+  src/dialogs/dlg_extract.cpp
+  src/dialogs/dlg_input.cpp
+  src/dialogs/dlg_progress.cpp
+  src/common/util.cpp
   src/res/aizip.rc
 )
 
@@ -50,7 +50,15 @@ add_executable(AiZip WIN32
 set_source_files_properties(src/res/aizip.rc PROPERTIES
   OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/res/aizip.ico")
 
-target_include_directories(AiZip PRIVATE src)
+# src 下按域分子目录，头文件按名字互相引用，不再写相对路径
+target_include_directories(AiZip PRIVATE
+  src
+  src/app
+  src/archive
+  src/ui
+  src/dialogs
+  src/common
+)
 
 # XML 布局在构建期自动转成 C++ 并加入编译，改 .xml 后重新构建即可
 aiui_add_layouts(AiZip assets/layouts/main_frame.xml)
@@ -74,11 +82,15 @@ target_link_libraries(AiZip PRIVATE
 # 内核功能回归工具（非发布产物）：命令行驱动压缩/解压，便于端到端校验
 add_executable(test_arc
   tools/test_arc.cpp
-  src/archive.cpp
-  src/sevenzip_loader.cpp
-  src/util.cpp
+  src/archive/archive.cpp
+  src/archive/sevenzip_loader.cpp
+  src/common/util.cpp
 )
-target_include_directories(test_arc PRIVATE src)
+target_include_directories(test_arc PRIVATE
+  src
+  src/archive
+  src/common
+)
 target_compile_definitions(test_arc PRIVATE
   UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS
 )
