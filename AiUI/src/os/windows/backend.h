@@ -32,7 +32,27 @@ void markTestOverride(Platform* platform);
 
 // ── 绘制 ──
 std::unique_ptr<PaintBackend> makePaintBackend(Gdiplus::Graphics* g);
-std::unique_ptr<Canvas> makeCanvas(HDC target, const Rect& rect);
+
+// 离屏位图复用池：满窗重绘一次就是一张几十 MB 的图，每帧重建会拖慢
+// 缩放/最大化动画，所以按窗口常驻一张，按需扩容。
+class CanvasCache {
+ public:
+  CanvasCache() = default;
+  ~CanvasCache();
+  CanvasCache(const CanvasCache&) = delete;
+  CanvasCache& operator=(const CanvasCache&) = delete;
+
+  // 建一个覆盖 rc 的画布；不够大时会自动换更大的位图
+  std::unique_ptr<Canvas> create(HDC target, const Rect& rc);
+
+ private:
+  HDC memdc_ = nullptr;
+  HBITMAP dib_ = nullptr;
+  HBITMAP oldBitmap_ = nullptr;
+  void* bits_ = nullptr;
+  int width_ = 0;
+  int height_ = 0;
+};
 
 // ── 字体 ──
 Font makeFont(const wchar_t* family, float pointSize, bool bold, int dpi);

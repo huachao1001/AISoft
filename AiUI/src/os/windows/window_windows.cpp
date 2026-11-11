@@ -105,6 +105,7 @@ class WindowsWindow : public PlatformWindow {
 
   ~WindowsWindow() override {
     if (blinkTimer_) ::KillTimer(hwnd_, kBlinkTimerId);
+    if (eraseBrush_) ::DeleteObject(eraseBrush_);
     if (hwnd_) {
       ::SetWindowLongPtrW(hwnd_, GWLP_USERDATA, 0);
       ::DestroyWindow(hwnd_);
@@ -141,6 +142,8 @@ class WindowsWindow : public PlatformWindow {
     dpi_ = ::GetDpiForWindow(hwnd_);
     minWidth_ = params.minWidth;
     minHeight_ = params.minHeight;
+    // 首帧之前窗口就是这块中性底色，宿主随后会用 setBackgroundColor 覆盖
+    setBackgroundColor(makeColor(0xf3, 0xf4, 0xf6));
     return true;
   }
 
@@ -159,7 +162,7 @@ class WindowsWindow : public PlatformWindow {
     if (!hwnd_ || area.isEmpty()) return nullptr;
     HDC dc = ::GetDC(hwnd_);
     if (!dc) return nullptr;
-    auto inner = makeCanvas(dc, area);
+    auto inner = canvasCache_.create(dc, area);
     if (!inner) {
       ::ReleaseDC(hwnd_, dc);
       return nullptr;
@@ -200,6 +203,14 @@ class WindowsWindow : public PlatformWindow {
     // 右/下边界是开区间，交给 Windows 时就是原值
     RECT r{rc.left, rc.top, rc.right, rc.bottom};
     ::InvalidateRect(hwnd_, &r, FALSE);
+  }
+
+  void setBackgroundColor(Color color) override {
+    if (eraseBrush_) {
+      ::DeleteObject(eraseBrush_);
+      eraseBrush_ = nullptr;
+    }
+    eraseBrush_ = ::CreateSolidBrush(RGB(colorRed(color), colorGreen(color), colorBlue(color)));
   }
 
   void setFocus() override {
@@ -452,8 +463,16 @@ class WindowsWindow : public PlatformWindow {
         return 0;
       }
 
-      case WM_ERASEBKGND:
-        return 1;  // 全部自绘
+      case WM_ERASEBKGND: {
+        // 窗口刚变大时新增的那圈还没人画过；这里先用背景色填上，
+        // 否则 WM_PAINT 之前会露出一帧黑底。
+        if (eraseBrush_) {
+          RECT rc{};
+          ::GetClientRect(hwnd_, &rc);
+          ::FillRect(reinterpret_cast<HDC>(wParam), &rc, eraseBrush_);
+        }
+        return 1;  // 其余仍由自绘负责
+      }
 
       case WM_SIZE:
         dpi_ = ::GetDpiForWindow(hwnd_);
@@ -620,6 +639,10 @@ class WindowsWindow : public PlatformWindow {
   UINT_PTR blinkTimer_ = 0;
   CursorShape cursor_ = CursorShape::kArrow;
   WindowStyle style_;
+  // 离屏位图跨帧复用，避免每次重绘都重建几十 MB 的图
+  CanvasCache canvasCache_;
+  // 擦背景用的刷子；窗口变大时先铺底色，避免露出黑底一帧
+  HBRUSH eraseBrush_ = nullptr;
   // 最小尺寸（96 DPI 设计值），0 表示不限制
   int minWidth_ = 0;
   int minHeight_ = 0;

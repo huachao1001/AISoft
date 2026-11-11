@@ -120,6 +120,8 @@ class PlatformWindow {
   virtual void invalidate() = 0;
   // 只失效一块区域，用于悬停、选中这类局部更新
   virtual void invalidateRect(const Rect& rc) = 0;
+  // 窗口背景色：窗口变大时系统先铺它，避免新增区域露出黑底
+  virtual void setBackgroundColor(Color color) { (void)color; }
   virtual void setFocus() = 0;
   virtual void setCursorShape(CursorShape shape) = 0;
   virtual void captureMouse(bool capture) = 0;

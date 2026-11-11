@@ -148,6 +148,10 @@ void ViewRoot::onResize(int width, int height) {
   // 以真实客户区为准，避免边框与缩放误差
   performLayout(window_ ? window_->clientRect() : Rect{0, 0, width, height});
 
+  // 尺寸变了就整窗重画：新露出来的那圈没有任何人画过，
+  // 等下一次 WM_PAINT 才补会露出黑底（最大化动画期间最明显）
+  invalidate();
+
   // 最大化状态可能在缩放后才稳定，这里统一通知一次
   if (window_ && onMaximizeState_) {
     const bool maximized = window_->isMaximized();
@@ -388,6 +392,8 @@ bool ViewRoot::onChar(wchar_t ch) {
 
 void ViewRoot::setBackgroundColor(Color color) {
   background_ = color;
+  // 同步给平台窗口：窗口变大时系统先铺它，避免新增区域露出黑底
+  if (window_) window_->setBackgroundColor(color == kNoColor ? kColorBody : color);
   invalidate();
 }
 

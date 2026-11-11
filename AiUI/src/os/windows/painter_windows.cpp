@@ -7,9 +7,10 @@
 namespace AiUI {
 namespace os {
 namespace windows {
-namespace {
 
 using namespace Gdiplus;
+
+namespace {
 
 Gdiplus::Color toGdiplus(Color c) {
   return Gdiplus::Color(colorAlpha(c), colorRed(c), colorGreen(c), colorBlue(c));
@@ -166,13 +167,13 @@ class GdiplusBackend : public PaintBackend {
 };
 
 // ── 离屏画布 ──
-class GdiplusCanvas : public Canvas {
+// 用 DIB section 而不是 Gdiplus::Bitmap：GDI+ 把位图贴回窗口 DC 时走软件合成，
+// 满窗一次要 120ms 上下；换成 BitBlt 后是硬件 blit，动画期间才不会掉帧。
+class DibCanvas : public Canvas {
  public:
-  GdiplusCanvas(HDC target, const Rect& rc) : target_(target), rc_(rc) {
-    const int w = (std::max)(1, rc.width());
-    const int h = (std::max)(1, rc.height());
-    bitmap_ = new Bitmap(w, h, PixelFormat32bppPARGB);
-    graphics_ = Graphics::FromImage(bitmap_);
+  DibCanvas(HDC target, const Rect& rc, HDC memdc, HBITMAP dib, void* bits)
+      : target_(target), rc_(rc), memdc_(memdc), dib_(dib), bits_(bits) {
+    graphics_ = Graphics::FromHDC(memdc_);
     if (graphics_) {
       graphics_->SetSmoothingMode(SmoothingModeAntiAlias);
       graphics_->SetPixelOffsetMode(PixelOffsetModeHalf);
@@ -184,36 +185,84 @@ class GdiplusCanvas : public Canvas {
     painter_ = std::make_unique<Painter>(*backend_);
   }
 
-  ~GdiplusCanvas() override {
+  ~DibCanvas() override {
     painter_.reset();
     backend_.reset();
     delete graphics_;
-    delete bitmap_;
   }
 
   Painter& painter() override { return *painter_; }
 
   void commit() override {
-    if (!target_ || !bitmap_) return;
-    Graphics target(target_);
-    // SourceCopy：位图内容直接覆盖，透明像素也一并写回
-    target.SetCompositingMode(CompositingModeSourceCopy);
-    target.DrawImage(bitmap_, Gdiplus::Rect(rc_.left, rc_.top, rc_.width(), rc_.height()), 0, 0,
-                     bitmap_->GetWidth(), bitmap_->GetHeight(), UnitPixel);
+    if (!target_ || !memdc_) return;
+    // DIB 内容已经是最终像素，直接盖过去，不需要 alpha 合成
+    ::BitBlt(target_, rc_.left, rc_.top, rc_.width(), rc_.height(), memdc_, 0, 0, SRCCOPY);
   }
 
  private:
   HDC target_ = nullptr;
   Rect rc_{};
-  Bitmap* bitmap_ = nullptr;
+  HDC memdc_ = nullptr;
+  HBITMAP dib_ = nullptr;
+  void* bits_ = nullptr;
   Graphics* graphics_ = nullptr;
   std::unique_ptr<GdiplusBackend> backend_;
   std::unique_ptr<Painter> painter_;
 };
 
-ULONG_PTR g_token = 0;
-
 }  // namespace
+
+CanvasCache::~CanvasCache() {
+  if (memdc_) {
+    ::SelectObject(memdc_, oldBitmap_);
+    ::DeleteDC(memdc_);
+  }
+  if (dib_) ::DeleteObject(dib_);
+}
+
+std::unique_ptr<Canvas> CanvasCache::create(HDC target, const Rect& rc) {
+  if (!target || rc.isEmpty()) return nullptr;
+  const int w = (std::max)(1, rc.width());
+  const int h = (std::max)(1, rc.height());
+
+  if (!dib_ || width_ < w || height_ < h) {
+    // 一次性按较大尺寸分配，避免动画期间反复重建
+    const int nw = (std::max)(w, width_);
+    const int nh = (std::max)(h, height_);
+
+    BITMAPINFO bi{};
+    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth = nw;
+    bi.bmiHeader.biHeight = -nh;  // 负高度表示自上而下，避免 GDI 翻转
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+
+    void* bits = nullptr;
+    HBITMAP dib = ::CreateDIBSection(target, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (!dib) return nullptr;
+
+    if (!memdc_) {
+      memdc_ = ::CreateCompatibleDC(target);
+      if (!memdc_) {
+        ::DeleteObject(dib);
+        return nullptr;
+      }
+    }
+    HGDIOBJ old = ::SelectObject(memdc_, dib);
+    if (oldBitmap_) ::DeleteObject(oldBitmap_);
+    oldBitmap_ = static_cast<HBITMAP>(old);
+
+    if (dib_) ::DeleteObject(dib_);
+    dib_ = dib;
+    bits_ = bits;
+    width_ = nw;
+    height_ = nh;
+  }
+  return std::make_unique<DibCanvas>(target, rc, memdc_, dib_, bits_);
+}
+
+ULONG_PTR g_token = 0;
 
 bool ensureGdiplus() {
   if (g_token) return true;
@@ -233,11 +282,6 @@ std::unique_ptr<PaintBackend> makePaintBackend(Gdiplus::Graphics* g) {
   g->SetPixelOffsetMode(PixelOffsetModeHalf);
   g->SetTextRenderingHint(TextRenderingHintClearTypeGridFit);
   return std::make_unique<GdiplusBackend>(g);
-}
-
-std::unique_ptr<Canvas> makeCanvas(HDC target, const Rect& rc) {
-  if (!target || rc.isEmpty()) return nullptr;
-  return std::make_unique<GdiplusCanvas>(target, rc);
 }
 
 Font makeFont(const wchar_t* family, float pointSize, bool bold, int dpi) {
