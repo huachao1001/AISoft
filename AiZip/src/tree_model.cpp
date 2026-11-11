@@ -1,30 +1,19 @@
-﻿// 左侧文件夹树：数据来自磁盘或压缩包，视图与交互由 AiUI::TreeView 负责
-#include "ui_tree.h"
+// 左侧树模型实现
+#include "tree_model.h"
 
 #include "app.h"
-#include "ui_list.h"
-#include "ui_toolbar.h"
 #include "util.h"
-#include "AiUI/theme.h"
-#include "AiUI/widgets/tree_view.h"
 
 #include <shlobj.h>
+#include <shlwapi.h>
 
 #include <algorithm>
-#include <memory>
-#include <vector>
 
 namespace ui {
 namespace {
 
-AiUI::TreeView* g_view = nullptr;
-// 树根的结构标识：文件系统用 "fs"，压缩包用包路径。只有它变了才重建根节点
-std::wstring g_rootsKey;
-
-std::wstring SyncKey() { return g_app.archiveMode ? g_app.archivePath : std::wstring(L"fs"); }
-
 // 枚举目录下的一级子目录（跳过隐藏与系统目录）
-std::vector<std::wstring> SubDirs(const std::wstring& dir) {
+std::vector<std::wstring> subDirs(const std::wstring& dir) {
   std::vector<std::wstring> out;
   WIN32_FIND_DATAW find{};
   HANDLE handle = ::FindFirstFileW(util::JoinPath(dir, L"*").c_str(), &find);
@@ -43,7 +32,7 @@ std::vector<std::wstring> SubDirs(const std::wstring& dir) {
   return out;
 }
 
-std::unique_ptr<AiUI::TreeNode> MakeNode(const std::wstring& label, const std::wstring& path,
+std::unique_ptr<AiUI::TreeNode> makeNode(const std::wstring& label, const std::wstring& path,
                                          int depth, AiUI::TreeNode* parent, AiUI::IconId icon) {
   auto node = std::make_unique<AiUI::TreeNode>();
   node->label = label;
@@ -54,8 +43,13 @@ std::unique_ptr<AiUI::TreeNode> MakeNode(const std::wstring& label, const std::w
   return node;
 }
 
-// 节点子项：压缩包内从条目取同层目录，文件系统则枚举磁盘
-std::vector<std::unique_ptr<AiUI::TreeNode>> LoadChildren(AiUI::TreeNode* node) {
+}  // namespace
+
+std::wstring TreeModel::syncKey() {
+  return g_app.archiveMode ? g_app.archivePath : std::wstring(L"fs");
+}
+
+std::vector<std::unique_ptr<AiUI::TreeNode>> TreeModel::loadChildren(AiUI::TreeNode* node) {
   std::vector<std::unique_ptr<AiUI::TreeNode>> out;
   if (!node) return out;
 
@@ -83,27 +77,26 @@ std::vector<std::unique_ptr<AiUI::TreeNode>> LoadChildren(AiUI::TreeNode* node) 
     });
     for (const auto& name : names) {
       const std::wstring inner = node->path.empty() ? name : node->path + L"\\" + name;
-      out.push_back(MakeNode(name, inner, node->depth + 1, node, AiUI::IconId::kFolder));
+      out.push_back(makeNode(name, inner, node->depth + 1, node, AiUI::IconId::kFolder));
     }
     return out;
   }
 
-  for (const auto& dir : SubDirs(node->path)) {
-    out.push_back(MakeNode(dir, util::JoinPath(node->path, dir), node->depth + 1, node,
-                           AiUI::IconId::kFolder));
+  for (const auto& dir : subDirs(node->path)) {
+    out.push_back(
+        makeNode(dir, util::JoinPath(node->path, dir), node->depth + 1, node, AiUI::IconId::kFolder));
   }
   return out;
 }
 
-// 根：压缩包模式只有包本身；文件系统放桌面、盘符、用户目录
-std::unique_ptr<AiUI::TreeNode> BuildRoot() {
+std::unique_ptr<AiUI::TreeNode> TreeModel::buildRoot() {
   auto root = std::make_unique<AiUI::TreeNode>();
   root->depth = -1;
   root->loaded = true;
   root->expanded = true;
 
   if (g_app.archiveMode) {
-    auto node = MakeNode(util::BaseName(g_app.archivePath) + L"（根目录）", L"", 0, root.get(),
+    auto node = makeNode(util::BaseName(g_app.archivePath) + L"（根目录）", L"", 0, root.get(),
                          AiUI::IconId::kHome);
     node->isRoot = true;
     root->children.push_back(std::move(node));
@@ -112,7 +105,7 @@ std::unique_ptr<AiUI::TreeNode> BuildRoot() {
 
   wchar_t desktop[MAX_PATH] = {};
   if (::SHGetFolderPathW(nullptr, CSIDL_DESKTOPDIRECTORY, nullptr, 0, desktop) == S_OK) {
-    auto node = MakeNode(L"桌面", desktop, 0, root.get(), AiUI::IconId::kHome);
+    auto node = makeNode(L"桌面", desktop, 0, root.get(), AiUI::IconId::kHome);
     node->isRoot = true;
     root->children.push_back(std::move(node));
   }
@@ -132,84 +125,17 @@ std::unique_ptr<AiUI::TreeNode> BuildRoot() {
         volume[0]) {
       label = std::wstring(volume) + L" (" + path.substr(0, 2) + L")";
     }
-    auto node = MakeNode(label, path, 0, root.get(), AiUI::IconId::kFolder);
+    auto node = makeNode(label, path, 0, root.get(), AiUI::IconId::kFolder);
     node->isRoot = true;
     root->children.push_back(std::move(node));
   }
   wchar_t profile[MAX_PATH] = {};
   if (::SHGetFolderPathW(nullptr, CSIDL_PROFILE, nullptr, 0, profile) == S_OK) {
-    auto node = MakeNode(L"用户目录", profile, 0, root.get(), AiUI::IconId::kFolder);
+    auto node = makeNode(L"用户目录", profile, 0, root.get(), AiUI::IconId::kFolder);
     node->isRoot = true;
     root->children.push_back(std::move(node));
   }
   return root;
 }
-
-// 选中节点后导航：包内切 innerPath，文件系统切 curDir
-void OnNodeSelected(AiUI::TreeNode* node) {
-  if (!node) return;
-  if (g_app.archiveMode) {
-    if (::CompareStringOrdinal(node->path.c_str(), -1, g_app.innerPath.c_str(), -1, TRUE) !=
-        CSTR_EQUAL) {
-      // 包内换目录必须按新前缀重新筛条目，走完整刷新；
-      // 树这边 SyncSideTree 会按根标识判断，只同步选中、不重建
-      g_app.innerPath = node->path;
-      AppRefreshView();
-      return;
-    }
-  } else if (!node->path.empty() &&
-             ::CompareStringOrdinal(node->path.c_str(), -1, g_app.curDir.c_str(), -1, TRUE) !=
-                 CSTR_EQUAL) {
-    AppNavigateTo(node->path);
-    return;
-  }
-  // 已经在这个目录上：只更新工具栏，不触发任何重载
-  RefreshToolbarState();
-}
-
-}  // namespace
-
-void AttachSideTree(AiUI::TreeView* tree) {
-  if (!tree || g_view) return;
-  g_view = tree;
-
-  AiUI::TreeStyle style;
-  style.rowHeight = 30;
-  style.indent = 18;
-  style.padLeft = 14;
-  style.iconSize = 16;
-  tree->setStyle(style);
-  tree->setChildrenLoader(LoadChildren);
-  tree->setSelectHandler(OnNodeSelected);
-  RebuildSideTree();
-}
-
-void RebuildSideTree() {
-  if (!g_view) return;
-  g_rootsKey = SyncKey();
-  g_view->setRoot(BuildRoot());
-  g_view->selectPath(g_app.archiveMode ? g_app.innerPath : g_app.curDir);
-}
-
-void SyncSideTree() {
-  if (!g_view) return;
-  // 根结构只在“文件系统 ↔ 压缩包”或换了包时变，其余情况保留展开状态
-  if (SyncKey() != g_rootsKey) {
-    RebuildSideTree();
-    return;
-  }
-  SyncSideTreeSelection();
-}
-
-void SyncSideTreeSelection() {
-  if (!g_view) return;
-  // 只走 selectPath：已展开的分支保持原样，滚动位置也不重置
-  g_view->selectPath(g_app.archiveMode ? g_app.innerPath : g_app.curDir);
-}
-
-std::wstring TreeActivePath() { return g_view ? g_view->activePath() : std::wstring(); }
-
-// 树只列目录，只有包内模式有“解压这个目录”的语义。根节点路径为空，等价于整包。
-bool TreeActiveCanExtract() { return g_app.archiveMode && g_view && g_view->active() != nullptr; }
 
 }  // namespace ui

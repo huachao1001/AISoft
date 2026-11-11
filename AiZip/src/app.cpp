@@ -6,11 +6,7 @@
 #include "dlg_progress.h"
 #include "ui.h"
 #include "main_activity.h"
-#include "ui_crumb.h"
-#include "ui_list.h"
 #include "ui_main.h"
-#include "ui_status.h"
-#include "ui_toolbar.h"
 #include "util.h"
 
 #include <shellapi.h>
@@ -165,15 +161,14 @@ void AppRefreshView() {
     LoadDirectoryItems(g_app.curDir);
   }
   // 退出压缩包模式时也要还原标题
-  ui::MainActivity* activity = ui::mainActivity();
-  if (activity) {
+  if (ui::MainActivity* activity = ui::mainActivity()) {
     activity->updateTitle();
     // 根结构变化时才重建树，其余情况只同步选中
     activity->refreshAddressBar();
+    activity->refreshFileList();
+    activity->refreshStatusBar();
+    activity->refreshToolBar();
   }
-  ui::RefreshFileList();
-  ui::RefreshStatusBarData();
-  ui::RefreshToolbarState();
 }
 
 void AppNavigateTo(const std::wstring& dirIn) {
