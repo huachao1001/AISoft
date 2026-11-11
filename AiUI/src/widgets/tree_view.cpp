@@ -14,6 +14,7 @@ TreeView::~TreeView() = default;
 
 void TreeView::setStyle(const TreeStyle& style) {
   style_ = style;
+  widthDirty_ = true;
   invalidate();
 }
 
@@ -35,6 +36,25 @@ int TreeView::contentHeight() const {
   return static_cast<int>(rows_.size()) * rowHeight();
 }
 
+// 最长一行的右边缘：缩进 + 图标 + 文字宽度。逐行测量开销大，按需缓存。
+int TreeView::contentWidth() const {
+  if (!widthDirty_) return contentWidthCache_;
+  const int d = dpi();
+  const int iconSize = style_.iconSize * d / 96;
+  const int iconGap = style_.iconGap * d / 96;
+  const int indent = style_.indent * d / 96;
+  const int padRound = 2 * style_.padLeft * d / 96;
+  int widest = 0;
+  for (const TreeNode* node : rows_) {
+    const int textWidth = platform()->measureText(node->label, fonts.ui);
+    const int rowWidth = node->depth * indent + iconSize + iconGap + textWidth;
+    widest = (std::max)(widest, rowWidth + padRound);
+  }
+  contentWidthCache_ = widest;
+  widthDirty_ = false;
+  return contentWidthCache_;
+}
+
 Size TreeView::onMeasure(const Size& available) { return available; }
 
 void TreeView::loadChildren(TreeNode* node) {
@@ -47,6 +67,7 @@ void TreeView::loadChildren(TreeNode* node) {
 
 void TreeView::rebuild() {
   rows_.clear();
+  widthDirty_ = true;
   if (!root_) {
     setScrollOffset(0);
     invalidate();
@@ -183,16 +204,27 @@ void TreeView::onPaint(Painter& painter, const Rect& rect) {
       painter.fillRoundRect(pill, style_.hoverBg, style_.pillRadius * d / 96);
     }
 
-    int x = rect.left + style_.padLeft * d / 96 + node->depth * style_.indent * d / 96;
+    // 只平移图标与文字：药丸始终铺满可视宽度，横向滚动不会把它推走
+    const int shift = scrollOffsetX();
+    int x = rect.left + (style_.padLeft * d / 96) + node->depth * style_.indent * d / 96 - shift;
     const int iconSize = style_.iconSize * d / 96;
     const Rect iconRect{x, rr.center().y - iconSize / 2, x + iconSize,
                         rr.center().y + iconSize / 2};
     painter.drawIcon(node->icon, iconRect, active ? style_.iconActive : style_.iconColor);
     x = iconRect.right + style_.iconGap * d / 96;
 
-    const Rect textRect{x, rr.top, rr.right - 8 * d / 96, rr.bottom};
-    painter.drawTextEllipsis(textRect, node->label, active ? style_.textActive : style_.text,
-                             fonts.ui);
+    // 右边界按内容坐标算：横向滚动时文字不会被压窄
+    const int contentRight =
+        (std::max)(viewportWidth(), contentWidth()) - style_.padLeft * d / 96 - shift;
+    const Rect textRect{x, rr.top, (std::max)(x + 1, contentRight), rr.bottom};
+    // 有横向溢出时不省略：靠滚动看全，省略号会让人误以为内容就这么多
+    if (isScrollableX()) {
+      painter.drawText(textRect, node->label, active ? style_.textActive : style_.text, fonts.ui,
+                       TextAlign::kLeft);
+    } else {
+      painter.drawTextEllipsis(textRect, node->label, active ? style_.textActive : style_.text,
+                               fonts.ui);
+    }
   }
 
   painter.drawVLine(rect.top, rect.bottom, rect.right - 1, style_.divider);

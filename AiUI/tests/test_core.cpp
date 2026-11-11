@@ -615,3 +615,110 @@ AIUI_TEST(input_box_reports_ime_caret) {
   // 光标位置随文本推进，IME 候选框要跟着走
   AIUI_CHECK(window->imeX() >= 0);
 }
+
+AIUI_TEST(input_box_draws_caret_when_empty) {
+  TestEnv env;
+  auto root = std::make_unique<LinearLayout>(Orientation::kVertical);
+  auto* box = new InputBox();
+  root->addView(box, LayoutParams{}.withSize(LayoutParams::kMatchParent, 34));
+  AIUI_CHECK(root->create(nullptr, Rect{0, 0, 400, 300}));
+  root->root()->requestFocus(box);
+
+  // 空输入框也必须画出插入点，否则用户看不出焦点落在哪
+  root->root()->onExpose(Rect{0, 0, 400, 300});
+  FakeWindow* window = env.fake.platform().lastWindow();
+  bool caret = false;
+  for (const FillCall& fill : window->lastFills()) {
+    // 光标是 1px 窄条，高度撑满文本行
+    if (fill.rect.width() <= 2 && fill.rect.height() > 10) caret = true;
+  }
+  AIUI_CHECK(caret);
+}
+
+// ───────────────────────── 横向滚动 ─────────────────────────
+
+AIUI_TEST(scroll_view_vertical_and_horizontal_are_independent) {
+  TestEnv env;
+  auto list = makeList(100);
+  list->layout(Rect{0, 0, 400, 400});
+
+  // 默认两个方向都开启
+  AIUI_CHECK(list->isVerticalScrollEnabled());
+  AIUI_CHECK(list->isHorizontalScrollEnabled());
+  AIUI_CHECK(list->isScrollable());
+  // ListView 只有纵向内容，横向不该溢出
+  AIUI_CHECK(!list->isScrollableX());
+
+  // 关掉纵向：既不滚也不画条
+  list->setScrollOffset(500);
+  AIUI_CHECK_EQ(list->scrollOffset(), 500);
+  list->setVerticalScrollEnabled(false);
+  AIUI_CHECK_EQ(list->scrollOffset(), 0);
+  AIUI_CHECK(!list->isScrollable());
+  AIUI_CHECK_EQ(list->scrollBarReserve(), 0);
+
+  // 重新开启后回到可滚动
+  list->setVerticalScrollEnabled(true);
+  AIUI_CHECK(list->isScrollable());
+  AIUI_CHECK(list->scrollBarReserve() > 0);
+}
+
+AIUI_TEST(tree_view_scrolls_horizontally_for_long_labels) {
+  TestEnv env;
+  auto tree = std::make_unique<TreeView>();
+  auto root = std::make_unique<TreeNode>();
+  root->loaded = true;
+  root->expanded = true;
+  auto node = std::make_unique<TreeNode>();
+  // 足够长的标签，必须横向溢出一段可滚动的距离
+  node->label = std::wstring(120, L'W');
+  node->path = L"a";
+  node->hasChildren = false;
+  root->children.push_back(std::move(node));
+  tree->setRoot(std::move(root));
+  tree->layout(Rect{0, 0, 200, 400});
+
+  AIUI_CHECK(tree->contentWidth() > tree->viewportWidth());
+  AIUI_CHECK(tree->isScrollableX());
+  AIUI_CHECK_EQ(tree->scrollOffsetX(), 0);
+
+  // 横向滚动会夹紧到最大偏移
+  tree->scrollByX(10000);
+  AIUI_CHECK_EQ(tree->scrollOffsetX(), tree->maxScrollX());
+  tree->scrollByX(-10000);
+  AIUI_CHECK_EQ(tree->scrollOffsetX(), 0);
+
+  // Shift + 滚轮滚横向
+  tree->scrollByX(0);
+  MouseEvent wheel;
+  wheel.wheelDelta = -120;
+  wheel.modifiers.shift = true;
+  AIUI_CHECK(tree->dispatchMouseWheel(wheel));
+  AIUI_CHECK(tree->scrollOffsetX() > 0);
+  AIUI_CHECK_EQ(tree->scrollOffset(), 0);
+}
+
+AIUI_TEST(scroll_bar_thickens_only_on_thumb) {
+  TestEnv env;
+  auto list = makeList(100);
+  AIUI_CHECK(list->create(nullptr, Rect{0, 0, 400, 400}));
+  ViewRoot* root = list->root();
+  AIUI_CHECK(root != nullptr);
+
+  // 进入视图后滚动条出现
+  list->dispatchMouseMove(mouseAt(200, 200));
+  AIUI_CHECK(list->scrollBarVisible());
+
+  // 停在内容区：滑块保持细的
+  AIUI_CHECK_EQ(list->vThumbRect().width(), list->px(6));
+
+  // 停在轨道空白（底部远离滑块）：仍然是细的，不该整条变粗
+  const Rect track = list->vTrackRect();
+  list->dispatchMouseMove(mouseAt(track.center().x, track.bottom - 4));
+  AIUI_CHECK_EQ(list->vThumbRect().width(), list->px(6));
+
+  // 只有停在滑块上才加粗，且只粗一点点
+  const Rect thumb = list->vThumbRect();
+  list->dispatchMouseMove(mouseAt(track.center().x, thumb.top + 2));
+  AIUI_CHECK_EQ(list->vThumbRect().width(), list->px(9));
+}

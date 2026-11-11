@@ -72,6 +72,7 @@ class TreeView : public ScrollView {
 
   // ── ScrollView ──
   int contentHeight() const override;
+  int contentWidth() const override;
   int viewportHeight() const override { return clientRect().height(); }
 
  protected:
@@ -103,6 +104,9 @@ class TreeView : public ScrollView {
   TreeSelectHandler onSelect_;
   std::unique_ptr<TreeNode> root_;
   std::vector<TreeNode*> rows_;
+  // 最长行宽度；逐行测量开销大，行数据或样式变化时置脏
+  mutable int contentWidthCache_ = 0;
+  mutable bool widthDirty_ = true;
   int hot_ = -1;
   TreeNode* active_ = nullptr;
 };

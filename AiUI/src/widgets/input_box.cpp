@@ -236,6 +236,7 @@ void InputBox::onPaint(Painter& painter, const Rect& rect) {
                         rect.right - spec_.padX * d / 96, rect.bottom});
 
   if (text_.empty()) {
+    // 占位提示与光标可以并存：空输入框也要能看见插入点
     painter.drawTextEllipsis(textArea, spec_.cue, kColorTextFaint, fonts.ui);
   } else {
     if (hasSelection()) {
@@ -244,12 +245,12 @@ void InputBox::onPaint(Painter& painter, const Rect& rect) {
       painter.fillRect(Rect{x1, textArea.top, x2, textArea.bottom}, kColorSelBg);
     }
     painter.drawText(textArea, displayText(), kColorText, fonts.ui, TextAlign::kLeft);
+  }
 
-    if (focused_ && caretVisible_) {
-      const int x = xForPosition(caret_);
-      painter.fillRect(Rect{x, textArea.top, x + (std::max)(1, d / 96), textArea.bottom},
-                       kColorText);
-    }
+  if (focused_ && caretVisible_) {
+    const int x = xForPosition(caret_);
+    painter.fillRect(Rect{x, textArea.top, x + (std::max)(1, d / 96), textArea.bottom},
+                     kColorText);
   }
 }
 

@@ -9,11 +9,12 @@ namespace AiUI {
 const TitleBarDefaults& titleBarDefaults() {
   static const TitleBarDefaults kDefaults = [] {
     TitleBarDefaults d;
-    d.bandHeight = 30;
+    // 30 太挤，图标与标题几乎贴着上下边；38 给按钮留出悬停底色的呼吸感
+    d.bandHeight = 38;
     d.buttonWidth = 46;
-    d.iconSize = 10;
-    d.appIconSize = 16;
-    d.padLeft = 10;
+    d.iconSize = 11;
+    d.appIconSize = 18;
+    d.padLeft = 12;
     // 右侧不留内边距：关闭按钮的悬停底色要一直贴到窗口右边沿
     d.padRight = 0;
     d.iconGap = 8;
