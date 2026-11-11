@@ -110,6 +110,7 @@ class FakeWindow : public AiUI::PlatformWindow {
   void setCursorShape(AiUI::CursorShape shape) override { cursor_ = shape; }
   void captureMouse(bool capture) override { captured_ = capture; }
   void setBlinkTimer(bool on) override { blink_ = on; }
+  void setDelayTimer(int ms) override { delayMs_ = ms; }
   void setImeCaret(int x, int y) override {
     imeX_ = x;
     imeY_ = y;
@@ -159,6 +160,7 @@ class FakeWindow : public AiUI::PlatformWindow {
   bool visible_ = false;
   bool captured_ = false;
   bool blink_ = false;
+  int delayMs_ = -1;
   int focusCalls_ = 0;
   int fullInvalidations_ = 0;
   int imeX_ = 0;
@@ -225,6 +227,10 @@ class FakePlatform : public AiUI::Platform {
   void shutdownDrawing() override { drawingReady_ = false; }
   bool isDrawingReady() override { return drawingReady_; }
 
+  int64_t monotonicMillis() override { return monotonicMs_; }
+  // 测试直接推进时间，不依赖真实时钟
+  void advanceMillis(int64_t ms) { monotonicMs_ += ms; }
+
   void setDpi(int dpi) { dpi_ = dpi; }
   // 每个字符的宽度，默认 7，避免测试依赖真实字体
   void setCharWidth(int width) { charWidth_ = width; }
@@ -238,6 +244,7 @@ class FakePlatform : public AiUI::Platform {
   int charWidth_ = 7;
   bool drawingReady_ = false;
   int destroyed_ = 0;
+  int64_t monotonicMs_ = 0;
   FakeWindow* lastWindow_ = nullptr;
   std::wstring lastName_;
   std::wstring clipboard_;

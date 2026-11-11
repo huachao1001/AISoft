@@ -77,6 +77,8 @@ int hitCode(HitTarget target) {
 }
 
 constexpr UINT kBlinkTimerId = 1;
+// 一次性延时定时器（滚动条自动隐藏等）
+constexpr UINT kDelayTimerId = 2;
 constexpr UINT kBlinkIntervalMs = 530;
 
 // 画布守卫：提交完必须释放 DC
@@ -239,6 +241,16 @@ class WindowsWindow : public PlatformWindow {
       ::KillTimer(hwnd_, kBlinkTimerId);
       blinkTimer_ = 0;
     }
+  }
+
+  void setDelayTimer(int ms) override {
+    if (!hwnd_) return;
+    // 重新设一个 id 之前先撤掉旧的，否则滚动这类高频触发会攒一堆定时器
+    if (delayTimer_) {
+      ::KillTimer(hwnd_, kDelayTimerId);
+      delayTimer_ = 0;
+    }
+    if (ms > 0) delayTimer_ = ::SetTimer(hwnd_, kDelayTimerId, static_cast<UINT>(ms), nullptr);
   }
 
   void setImeCaret(int x, int y) override {
@@ -554,6 +566,13 @@ class WindowsWindow : public PlatformWindow {
           host_.onTimer();
           return 0;
         }
+        if (wParam == kDelayTimerId) {
+          // 单次：触发后立刻撤掉，避免重复进入
+          ::KillTimer(hwnd_, kDelayTimerId);
+          delayTimer_ = 0;
+          host_.onDelayTimer();
+          return 0;
+        }
         break;
 
       case WM_GETDLGCODE:
@@ -568,6 +587,10 @@ class WindowsWindow : public PlatformWindow {
         if (blinkTimer_) {
           ::KillTimer(hwnd_, kBlinkTimerId);
           blinkTimer_ = 0;
+        }
+        if (delayTimer_) {
+          ::KillTimer(hwnd_, kDelayTimerId);
+          delayTimer_ = 0;
         }
         return 0;
 
@@ -637,6 +660,7 @@ class WindowsWindow : public PlatformWindow {
   bool maxButtonDown_ = false;
   Point hoverPos_{-1, -1};
   UINT_PTR blinkTimer_ = 0;
+  UINT_PTR delayTimer_ = 0;
   CursorShape cursor_ = CursorShape::kArrow;
   WindowStyle style_;
   // 离屏位图跨帧复用，避免每次重绘都重建几十 MB 的图
@@ -773,6 +797,11 @@ class WindowsPlatform : public Platform {
   }
 
   bool isDrawingReady() override { return os::windows::ensureGdiplus(); }
+
+  int64_t monotonicMillis() override {
+    // 与窗口消息队列同源的计时器，不受系统时间调整影响
+    return static_cast<int64_t>(::GetTickCount64());
+  }
 
  private:
   HINSTANCE instance_ = ::GetModuleHandleW(nullptr);

@@ -62,6 +62,8 @@ void View::attachTree() {
 }
 
 void View::detachTree() {
+  // 脱树前撤掉自己的延时任务，否则到期会回调已销毁的视图
+  if (root_) root_->postDelayed(this, 0);
   if (auto* group = dynamic_cast<ViewGroup*>(this)) group->detachChildren();
   if (created_) onDetach();
   created_ = false;
@@ -294,6 +296,8 @@ void View::dispatchFocusChanged(bool focused) { onFocusChanged(focused); }
 
 void View::dispatchTimer() { onTimer(); }
 
+void View::dispatchDelayed() { onDelayed(); }
+
 void View::dispatchClick() {
   if (onClick_) onClick_();
 }
@@ -324,6 +328,10 @@ void View::startBlinkTimer() {
 
 void View::stopBlinkTimer() {
   if (root_) root_->setBlinkTimer(false);
+}
+
+void View::postDelayed(int ms) {
+  if (root_) root_->postDelayed(this, ms);
 }
 
 void View::updateImeCaret(int localX, int localY) {

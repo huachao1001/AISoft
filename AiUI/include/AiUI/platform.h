@@ -60,6 +60,8 @@ class WindowHost {
   virtual bool onChar(wchar_t ch) = 0;
   virtual void onFocusChanged(bool focused) = 0;
   virtual void onTimer() = 0;
+  // 一次性延时回调到期
+  virtual void onDelayTimer() {}
 
   // 非客户区命中：窗口坐标。标题栏返回 kCaption、边框返回缩放方向，
   // 默认 kClient 表示全部按客户区处理。
@@ -128,6 +130,10 @@ class PlatformWindow {
 
   // 光标闪烁定时器：整棵树共用一个
   virtual void setBlinkTimer(bool on) = 0;
+  // 一次性延时定时器：ms 毫秒后触发 onDelayTimer，再次调用会重新计时；
+  // 0 表示取消。光标闪烁是全树共享的周期定时器，滚动条自动隐藏这类
+  // 「稍后做一次」的需求需要独立的单次计时。
+  virtual void setDelayTimer(int ms) { (void)ms; }
   // 让输入法候选框跟随光标（客户区坐标）
   virtual void setImeCaret(int x, int y) = 0;
 
@@ -179,6 +185,10 @@ class Platform {
   virtual void releaseImage(Image image) = 0;
   // 本进程可执行文件的小图标；标题栏左侧显示用，与系统标题栏一致
   virtual Image appIcon() = 0;
+
+  // ── 时间 ──
+  // 单调递增毫秒计时器；只需能相互比较差值，不做日历换算
+  virtual int64_t monotonicMillis() = 0;
 
   // ── 绘制子系统 ──
   virtual void startupDrawing() = 0;

@@ -12,8 +12,10 @@
 #include "AiUI/platform.h"
 #include "AiUI/view.h"
 
+#include <cstdint>
 #include <functional>
 #include <memory>
+#include <vector>
 
 namespace AiUI {
 
@@ -67,6 +69,8 @@ class ViewRoot : public WindowHost {
   void clearFocus();
   // 光标闪烁定时器；整棵树共用一个
   void setBlinkTimer(bool on);
+  // 一次性延时：ms 毫秒后通知 view（0 表示取消该 view 的等待）
+  void postDelayed(View* view, int ms);
   // 输入法候选框跟随光标（窗口坐标）
   void setImeCaret(int x, int y);
 
@@ -92,6 +96,7 @@ class ViewRoot : public WindowHost {
   bool onChar(wchar_t ch) override;
   void onFocusChanged(bool focused) override;
   void onTimer() override;
+  void onDelayTimer() override;
   HitTarget onHitTest(const Point& position) override;
   bool onCloseRequest() override;
 
@@ -108,6 +113,8 @@ class ViewRoot : public WindowHost {
   View* findFocusable(View* view) const;
   // view 是否位于 ancestor 子树内（含自身）
   bool isDescendantOf(const View* view, const View* ancestor) const;
+  // 按最早到期的任务重装唯一的单次定时器
+  void scheduleNextDelayed();
 
   PlatformWindow* window_ = nullptr;
   View* content_ = nullptr;
@@ -116,6 +123,12 @@ class ViewRoot : public WindowHost {
   // 鼠标捕获（拖动滚动条、列宽等）与本次按下的目标，两者都可能跨控件收到 up
   View* capture_ = nullptr;
   View* pressed_ = nullptr;
+  // 延时任务按到期顺序排列；树里可能有多个视图各自等待
+  struct DelayedTask {
+    View* view;
+    int64_t deadline;  // 毫秒计时器，绝对时间
+  };
+  std::vector<DelayedTask> delayed_;
 
   Color background_ = kNoColor;
   bool layoutPending_ = false;

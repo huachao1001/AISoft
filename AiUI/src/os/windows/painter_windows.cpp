@@ -20,11 +20,16 @@ Gdiplus::Rect toGdiplus(const Rect& rc) {
   return Gdiplus::Rect(rc.left, rc.top, rc.width(), rc.height());
 }
 
-// 圆角路径；半径过大时退化成直角
+// 圆角路径；半径按短边夹紧，端点自然成为半圆而不是退化成直角
 void buildRoundPath(GraphicsPath& path, const Rect& rc, int radius) {
   const int w = rc.width();
   const int h = rc.height();
-  if (radius <= 0 || radius * 2 >= w || radius * 2 >= h) {
+  if (radius <= 0 || w <= 0 || h <= 0) {
+    path.AddRectangle(toGdiplus(rc));
+    return;
+  }
+  radius = (std::min)(radius, (std::min)(w, h) / 2);
+  if (radius <= 0) {
     path.AddRectangle(toGdiplus(rc));
     return;
   }

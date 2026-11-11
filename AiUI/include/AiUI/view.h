@@ -205,6 +205,8 @@ class View {
   virtual bool dispatchChar(wchar_t ch);
   virtual void dispatchFocusChanged(bool focused);
   virtual void dispatchTimer();
+  // 一次性延时到期
+  virtual void dispatchDelayed();
   // 触发点击回调；派生类在确认点击后调用
   void dispatchClick();
 
@@ -245,6 +247,8 @@ class View {
   virtual bool onChar(wchar_t) { return false; }
   virtual void onFocusChanged(bool) {}
   virtual void onTimer() {}
+  // 一次性延时到期；postDelayed 时登记的目标收到
+  virtual void onDelayed() {}
 
   // 非客户区命中：windowPoint 是窗口坐标。标题栏这类需要系统拖动/缩放的
   // 区域返回 kCaption 或边框方向，其余返回 kClient。
@@ -267,6 +271,8 @@ class View {
   // 输入光标闪烁：整棵树共用一个定时器
   void startBlinkTimer();
   void stopBlinkTimer();
+  // 一次性延时：ms 毫秒后回调 onDelayed；再次调用会重新计时，0 表示取消
+  void postDelayed(int ms);
   // 让输入法候选框跟随光标（局部坐标）
   void updateImeCaret(int localX, int localY);
 

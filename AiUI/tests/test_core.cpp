@@ -46,6 +46,15 @@ class FixedView : public View {
   Size size_;
 };
 
+// 记录延时回调次数的叶子视图
+class CountdownView : public View {
+ public:
+  int fired = 0;
+
+ protected:
+  void onDelayed() override { ++fired; }
+};
+
 // 造一个 ListView：固定 400x400 视口，N 行数据
 std::unique_ptr<ListView> makeList(int rows) {
   auto list = std::make_unique<ListView>();
@@ -359,6 +368,65 @@ AIUI_TEST(wheel_scrolls_three_rows) {
   wheel.wheelDelta = -120;  // 向后滚一格
   AIUI_CHECK(list->dispatchMouseWheel(wheel));
   AIUI_CHECK_EQ(list->scrollOffset(), 44 * 3);
+}
+
+AIUI_TEST(scroll_bar_shows_on_hover_and_hides_after_delay) {
+  TestEnv env;
+  auto list = makeList(100);
+  // 只有挂到窗口才有延时定时器：用 create 而不是 setContentView
+  AIUI_CHECK(list->create(nullptr, Rect{0, 0, 400, 400}));
+  ViewRoot* root = list->root();
+  AIUI_CHECK(root != nullptr);
+
+  // 初始不显示，滚动条不占位
+  AIUI_CHECK(!list->scrollBarVisible());
+
+  // 鼠标进入：立刻显示
+  list->dispatchMouseMove(mouseAt(200, 200));
+  AIUI_CHECK(list->scrollBarVisible());
+
+  // 离开后立刻还在，等过 3 秒才消失
+  list->dispatchMouseLeave();
+  AIUI_CHECK(list->scrollBarVisible());
+  env.fake.platform().advanceMillis(2900);
+  root->onDelayTimer();
+  AIUI_CHECK(list->scrollBarVisible());
+  env.fake.platform().advanceMillis(200);
+  root->onDelayTimer();
+  AIUI_CHECK(!list->scrollBarVisible());
+}
+
+AIUI_TEST(delayed_timer_keeps_tasks_of_different_views) {
+  TestEnv env;
+  auto container = std::make_unique<FrameLayout>();
+  auto* first = new CountdownView();
+  auto* second = new CountdownView();
+  container->addView(first);
+  container->addView(second);
+  AIUI_CHECK(container->create(nullptr, Rect{0, 0, 400, 400}));
+  ViewRoot* root = container->root();
+  AIUI_CHECK(root != nullptr);
+
+  // 两个视图各自计时：先到期的不能被后到的覆盖
+  root->postDelayed(first, 100);
+  root->postDelayed(second, 500);
+
+  env.fake.platform().advanceMillis(120);
+  root->onDelayTimer();
+  AIUI_CHECK_EQ(first->fired, 1);
+  AIUI_CHECK_EQ(second->fired, 0);
+
+  env.fake.platform().advanceMillis(400);
+  root->onDelayTimer();
+  AIUI_CHECK_EQ(first->fired, 1);
+  AIUI_CHECK_EQ(second->fired, 1);
+
+  // 取消后不再触发
+  root->postDelayed(first, 100);
+  root->postDelayed(first, 0);
+  env.fake.platform().advanceMillis(300);
+  root->onDelayTimer();
+  AIUI_CHECK_EQ(first->fired, 1);
 }
 
 // ───────────────────────── ListView ─────────────────────────

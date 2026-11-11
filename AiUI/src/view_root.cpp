@@ -223,10 +223,68 @@ void ViewRoot::onTimer() {
   if (focused_) focused_->dispatchTimer();
 }
 
+void ViewRoot::onDelayTimer() {
+  if (delayed_.empty()) return;
+
+  // 计时器只有一个：到期时把已到点的任务一次性发完，再按最早的那个重装
+  const int64_t now = platform()->monotonicMillis();
+  std::vector<View*> due;
+  std::vector<DelayedTask> rest;
+  due.reserve(delayed_.size());
+  for (const DelayedTask& task : delayed_) {
+    if (task.deadline <= now) {
+      due.push_back(task.view);
+    } else {
+      rest.push_back(task);
+    }
+  }
+  delayed_.swap(rest);
+  // 先重装定时器再回调：回调里可能又 postDelayed，那时会再次改写
+  scheduleNextDelayed();
+
+  for (View* view : due) {
+    // 目标可能在等待期间被移除，先确认还挂在树上再回调
+    if (view && view->root_ == this) view->dispatchDelayed();
+  }
+}
+
 // ───────────────────────── 定时器与输入法 ─────────────────────────
 
 void ViewRoot::setBlinkTimer(bool on) {
   if (window_) window_->setBlinkTimer(on);
+}
+
+void ViewRoot::postDelayed(View* view, int ms) {
+  if (!view) return;
+  // 同一个视图只保留一个等待，重复调用视为重新计时
+  for (size_t i = 0; i < delayed_.size(); ++i) {
+    if (delayed_[i].view == view) {
+      if (ms > 0) {
+        delayed_[i].deadline = platform()->monotonicMillis() + ms;
+      } else {
+        delayed_.erase(delayed_.begin() + static_cast<std::ptrdiff_t>(i));
+      }
+      scheduleNextDelayed();
+      return;
+    }
+  }
+  if (ms <= 0) return;
+  delayed_.push_back(DelayedTask{view, platform()->monotonicMillis() + ms});
+  scheduleNextDelayed();
+}
+
+void ViewRoot::scheduleNextDelayed() {
+  if (delayed_.empty()) {
+    if (window_) window_->setDelayTimer(0);
+    return;
+  }
+  // 系统只有一只单次定时器，按最近到期的时间重装；到点后再装下一个
+  int64_t earliest = delayed_.front().deadline;
+  for (const DelayedTask& task : delayed_) {
+    if (task.deadline < earliest) earliest = task.deadline;
+  }
+  const int64_t wait = earliest - platform()->monotonicMillis();
+  if (window_) window_->setDelayTimer(static_cast<int>(wait > 0 ? wait : 1));
 }
 
 void ViewRoot::setImeCaret(int x, int y) {

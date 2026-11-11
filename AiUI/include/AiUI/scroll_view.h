@@ -2,7 +2,10 @@
 //
 // 不再使用系统 WS_VSCROLL：整棵树共用一个窗口，滚动条必须自己画。
 // 子类只需实现 contentHeight()，并用 scrollOffset() 决定内容从哪里画。
-// 滚动条只在内容超出视口时出现，出现时右侧留出 scrollBarReserve()。
+//
+// 滚动条是浮层：平时不可见，鼠标进入视图淡出显示，离开后延时隐藏；
+// 鼠标停在滚动条上时加宽。因此它不占内容宽度，只按内容是否溢出来决定
+// resizeRect 之类的避让。
 #pragma once
 
 #include "AiUI/theme.h"
@@ -14,14 +17,20 @@ namespace AiUI {
 
 // 滚动条外观（96 DPI 设计值）
 struct ScrollBarStyle {
-  int width = 10;        // 轨道宽度
-  int thumbWidth = 6;    // 滑块宽度
+  // 悬停时轨道与滑块的宽度；平时用窄的那一档，鼠标靠近才展开
+  int width = 10;
+  int thumbWidth = 6;
+  int hoverWidth = 14;
+  int hoverThumbWidth = 10;
   int minThumbHeight = 28;
-  int radius = 3;
-  int margin = 3;        // 与右边缘的距离
+  int margin = 3;  // 与右边缘的距离
+  // 两端是圆的，半径取宽度的一半；这里只留开关，便于将来改成直角
+  bool rounded = true;
   Color track = kNoColor;  // kNoColor 表示不画轨道
   Color thumb = makeColor(0xc4, 0xc8, 0xd0);
   Color thumbHover = makeColor(0xa8, 0xae, 0xb8);
+  // 鼠标离开多久后隐藏；0 表示不自动隐藏
+  int hideDelayMs = 3000;
 };
 
 class ScrollView : public View {
@@ -41,8 +50,12 @@ class ScrollView : public View {
   virtual int viewportTop() const { return 0; }
   // 可滚动的最大偏移
   int maxScroll() const { return (std::max)(0, contentHeight() - viewportHeight()); }
-  // 有滚动条时内容要避让的右边距；没有滚动条返回 0
+  // 内容是否溢出：不溢出就完全不用滚动条
+  bool isScrollable() const { return maxScroll() > 0; }
+  // 内容要避让的右边距；滚动条是浮层，只在可见时才让位
   int scrollBarReserve() const;
+  // 滚动条此刻是否真的画出来（鼠标在视图内或还没到隐藏时间）
+  bool scrollBarVisible() const;
 
   void setScrollOffset(int offset);
   void scrollBy(int delta);
@@ -50,8 +63,6 @@ class ScrollView : public View {
   void scrollToBottom() { setScrollOffset(maxScroll()); }
 
  protected:
-  // 供子类在测量/绘制时使用
-  bool scrollBarVisible() const;
   // 滚动条可用区域：视口范围，不含固定表头
   Rect viewportRect() const;
   Rect thumbRect() const;
@@ -64,6 +75,7 @@ class ScrollView : public View {
   void onMouseMove(const MouseEvent& e) override;
   void onMouseLeave() override;
   void onLayout(const Rect& frame) override;
+  void onDelayed() override;
 
   // 滚轮一格对应的像素数（96 DPI 设计值）
   virtual int wheelStep() const { return 60; }
@@ -80,9 +92,20 @@ class ScrollView : public View {
   int scrollForThumbTop(int thumbTop) const;
   // 子类改动滚动位置后统一走这里，保证夹紧与重绘
   int clampScroll(int offset) const;
+  // 鼠标进入视图：显示滚动条并重新计时
+  void revealScrollBar();
+  // 是否处于"显示"状态；由进入/离开与延时共同决定
+  void setScrollBarShown(bool shown);
+  // 鼠标是否落在滚动条的交互范围内
+  bool hitScrollBar(Point local) const;
+  // 只重画滚动条那条竖带；宽度切换时新旧两档都要覆盖
+  void invalidateBarArea();
 
   bool draggingThumb_ = false;
-  bool thumbHot_ = false;
+  bool thumbHot_ = false;   // 鼠标停在滑块上
+  bool trackHot_ = false;   // 鼠标停在轨道上（含滑块）
+  bool mouseInside_ = false;  // 鼠标是否还在视图内
+  bool barShown_ = false;   // 当前是否绘制滚动条
   // 按下点到滑块顶端的距离，拖动时保持不变
   int dragGrab_ = 0;
 };
