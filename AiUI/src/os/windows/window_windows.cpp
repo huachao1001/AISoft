@@ -777,9 +777,15 @@ class WindowsPlatform : public Platform {
   void destroyFont(void* handle) override { os::windows::releaseFont(handle); }
 
   int measureText(const std::wstring& text, const Font& font) override {
-    // 与 painter 后端保持一致：测量值偏紧，留 4px 余量防末字被裁
-    const int advance = advanceText(text, font);
-    return advance == 0 ? 0 : advance + 4;
+    if (text.empty() || !font.isValid()) return 0;
+    auto* g = measureGraphics();
+    auto* f = static_cast<Gdiplus::Font*>(font.handle());
+    if (!g || !f) return 0;
+    Gdiplus::RectF bounds;
+    g->MeasureString(text.c_str(), static_cast<INT>(text.size()), f, Gdiplus::PointF(0, 0),
+                     &bounds);
+    // 与 painter 后端保持一致：MeasureString 偏小，留 4px 余量防末字被裁
+    return static_cast<int>(bounds.Width + 0.5f) + 4;
   }
 
   int advanceText(const std::wstring& text, const Font& font) override {
