@@ -29,6 +29,7 @@ enum class IconId {
   kFolder,
   kFile,
   kSearch,
+  kCheck,  // 复选项打勾
   // 标题栏系统按钮
   kMinimize,
   kMaximize,

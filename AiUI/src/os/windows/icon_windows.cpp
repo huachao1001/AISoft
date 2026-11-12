@@ -85,6 +85,7 @@ constexpr wchar_t glyphFor(IconId id) {
     case IconId::kFolder: return 0xE8B7;
     case IconId::kFile: return 0xE8A5;
     case IconId::kSearch: return 0xE721;
+    case IconId::kCheck: return 0xE73E;
     case IconId::kMinimize: return 0xE921;
     case IconId::kMaximize: return 0xE922;
     case IconId::kRestore: return 0xE923;

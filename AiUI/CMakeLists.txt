@@ -34,9 +34,11 @@ set(AIUI_SOURCES
   src/widgets/button.cpp
   src/widgets/button_bar.cpp
   src/widgets/breadcrumb_bar.cpp
+  src/widgets/form_controls.cpp
   src/widgets/image_view.cpp
   src/widgets/input_box.cpp
   src/widgets/list_view.cpp
+  src/widgets/option_view.cpp
   src/widgets/status_bar.cpp
   src/widgets/text_view.cpp
   src/widgets/title_bar.cpp

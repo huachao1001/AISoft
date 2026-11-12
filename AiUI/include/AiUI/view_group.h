@@ -60,6 +60,8 @@ class ViewGroup : public View {
  protected:
   // 摆放子视图；content 是去掉内边距后的区域（局部坐标）
   virtual void arrangeChildren(const Rect& content);
+  // 子视图已加入树；RadioGroup 这类需要接手管理的容器覆盖它
+  virtual void onChildAdded(View* child) { (void)child; }
   void onLayout(const Rect& frame) override;
   void onDrawChildren(Painter& painter, const Rect& dirty) override;
   // 把非客户区命中分发给覆盖该点的子视图

@@ -36,6 +36,7 @@ View* ViewGroup::addView(View* child, const LayoutParams& params) {
     root_->requestLayout();
   }
   invalidate();
+  onChildAdded(child);
   return child;
 }
 

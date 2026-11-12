@@ -246,8 +246,12 @@ bool getBool(const XmlNode& node, const char* key, bool fallback) {
 std::string sizeExpr(const XmlNode& node, const char* key) {
   const std::string value = get(node, key);
   if (value == "wrap" || value == "content") return "LayoutParams::kWrapContent";
-  if (value == "match" || value == "parent" || value.empty()) return "LayoutParams::kMatchParent";
-  return value;
+  if (value == "match" || value == "parent") return "LayoutParams::kMatchParent";
+  if (!value.empty()) return value;
+  // 未写尺寸时宽度撑满、高度按内容。反过来的话纵向容器里每个子视图
+  // 都会独占整高，后面的视图被挤出可见区域。
+  return std::string(key) == "height" ? "LayoutParams::kWrapContent"
+                                     : "LayoutParams::kMatchParent";
 }
 
 // 宽字符字面量：源文件统一 UTF-8，编译时由 /utf-8 转成 UTF-16
@@ -358,6 +362,7 @@ std::string headerFor(const std::string& tag) {
   static const std::map<std::string, std::string> kHeaders = {
       {"LinearLayout", "AiUI/layouts/linear_layout.h"},
       {"FrameLayout", "AiUI/layouts/frame_layout.h"},
+      {"View", "AiUI/view.h"},
       {"Button", "AiUI/widgets/button.h"},
       {"TextView", "AiUI/widgets/text_view.h"},
       {"ImageView", "AiUI/widgets/image_view.h"},
@@ -367,6 +372,12 @@ std::string headerFor(const std::string& tag) {
       {"BreadcrumbBar", "AiUI/widgets/breadcrumb_bar.h"},
       {"StatusBar", "AiUI/widgets/status_bar.h"},
       {"ButtonBar", "AiUI/widgets/button_bar.h"},
+      {"CheckBox", "AiUI/widgets/option_view.h"},
+      {"RadioButton", "AiUI/widgets/option_view.h"},
+      {"RadioGroup", "AiUI/widgets/form_controls.h"},
+      {"ProgressBar", "AiUI/widgets/form_controls.h"},
+      {"GroupBox", "AiUI/widgets/form_controls.h"},
+      {"ComboBox", "AiUI/widgets/form_controls.h"},
   };
   auto it = kHeaders.find(tag);
   return it == kHeaders.end() ? std::string() : it->second;
@@ -386,7 +397,8 @@ bool isKnown(const XmlNode& node) {
 }
 
 bool isContainer(const std::string& tag) {
-  return tag == "LinearLayout" || tag == "FrameLayout";
+  return tag == "LinearLayout" || tag == "FrameLayout" || tag == "RadioGroup" ||
+         tag == "GroupBox";
 }
 
 // ── 代码生成 ──
@@ -523,6 +535,20 @@ class Generator {
         line(1, target + "->setGravity(" + gravityExpr(get(node, "gravity")) + ");");
       }
     }
+    if (tag == "GroupBox") {
+      const std::string title = get(node, "title");
+      if (!title.empty()) line(1, target + "->setTitle(" + wideLiteral(title) + ");");
+      if (has(node, "titleHeight")) {
+        line(1, target + "->setTitleHeight(" + get(node, "titleHeight", "26") + ");");
+      }
+    }
+    if (tag == "RadioGroup" && has(node, "rowGap")) {
+      line(1, target + "->setRowGap(" + get(node, "rowGap", "8") + ");");
+    }
+    if (tag == "RadioGroup" && has(node, "orientation")) {
+      line(1, target + "->setOrientation(" + orientationExpr(get(node, "orientation", "vertical")) +
+                     ");");
+    }
     if (has(node, "padding")) {
       line(1, target + "->setPadding(" + get(node, "padding", "0") + ");");
     }
@@ -549,6 +575,12 @@ class Generator {
     if (named) line(1, variable + "->setId(AiUI::makeId(\"" + id + "\"));");
     // 布局容器与普通容器都走 ViewGroup::addView，布局参数由它转交
     line(1, parentVar + "->addView(" + variable + ", " + layoutParams(node) + ");");
+
+    // 任意节点都可以直接铺底色：对话框的底色就是这么给的
+    if (has(node, "background")) {
+      line(1, variable + "->setBackgroundColor(" + colorExpr(node, "background", "kNoColor") +
+                     ");");
+    }
 
     if (isContainer(node.tag)) emitContainerProperties(node, variable);
     else emitWidgetProperties(node, variable);
@@ -665,6 +697,78 @@ class Generator {
       }
       line(2, variable + "->setSpec(spec);");
       line(1, "}");
+      return;
+    }
+
+    // 选项行：CheckBox / RadioButton 共用一份配置
+    if (tag == "CheckBox" || tag == "RadioButton") {
+      line(1, "{");
+      line(2, "OptionSpec spec;");
+      // 文字可以直接写在标签内，也可以放 text 属性
+      std::string text = get(node, "text");
+      if (text.empty()) text = trimmed(node.text);
+      if (!text.empty()) line(2, "spec.label = " + wideLiteral(text) + ";");
+      if (getBool(node, "checked", false)) line(2, "spec.checked = true;");
+      if (has(node, "boxSize")) line(2, "spec.boxSize = " + get(node, "boxSize", "16") + ";");
+      if (has(node, "gap")) line(2, "spec.gap = " + get(node, "gap", "8") + ";");
+      if (has(node, "textColor")) {
+        line(2, "spec.ink = " + colorExpr(node, "textColor", "kColorText") + ";");
+      }
+      line(2, variable + "->setSpec(spec);");
+      line(1, "}");
+      return;
+    }
+
+    if (tag == "ProgressBar") {
+      line(1, "{");
+      line(2, "ProgressSpec spec;");
+      if (has(node, "barHeight")) line(2, "spec.height = " + get(node, "barHeight", "10") + ";");
+      if (has(node, "radius")) line(2, "spec.radius = " + get(node, "radius", "5") + ";");
+      if (has(node, "fillColor")) {
+        line(2, "spec.fill = " + colorExpr(node, "fillColor", "kColorLink") + ";");
+      }
+      if (has(node, "trackColor")) {
+        line(2, "spec.track = " + colorExpr(node, "trackColor", "kColorLineSoft") + ";");
+      }
+      line(2, variable + "->setSpec(spec);");
+      line(1, "}");
+      if (has(node, "progress")) {
+        line(1, variable + "->setProgress(" + get(node, "progress", "0") + "f);");
+      }
+      return;
+    }
+
+    if (tag == "ComboBox") {
+      line(1, "{");
+      line(2, "ComboSpec spec;");
+      if (has(node, "height")) line(2, "spec.height = " + get(node, "height", "30") + ";");
+      if (has(node, "radius")) line(2, "spec.radius = " + get(node, "radius", "6") + ";");
+      if (has(node, "padding")) line(2, "spec.padX = " + get(node, "padding", "10") + ";");
+      line(2, variable + "->setSpec(spec);");
+      line(1, "}");
+      // 候选项用分号分隔：items="仅压缩;快速;极限"
+      const std::string items = get(node, "items");
+      if (!items.empty()) {
+        std::vector<std::string> parts;
+        std::string current;
+        for (char c : items) {
+          if (c == ';') {
+            parts.push_back(current);
+            current.clear();
+          } else {
+            current.push_back(c);
+          }
+        }
+        parts.push_back(current);
+        line(1, "{");
+        line(2, "std::vector<std::wstring> items;");
+        for (const auto& part : parts) line(2, "items.push_back(" + wideLiteral(part) + ");");
+        line(2, variable + "->setItems(items);");
+        line(1, "}");
+      }
+      if (has(node, "selected")) {
+        line(1, variable + "->setSelectedIndex(" + get(node, "selected", "0") + ", false);");
+      }
       return;
     }
   }
