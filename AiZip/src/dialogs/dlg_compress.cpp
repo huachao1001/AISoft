@@ -28,6 +28,9 @@ const wchar_t* kLevelNames[] = {L"存储", L"最快", L"快速", L"标准", L"�
 const int kLevelValues[] = {0, 1, 3, 5, 7, 9};
 constexpr int kLevelCount = 6;
 
+// 分卷下限：更小的卷没有实用价值，卷数还会爆炸
+constexpr uint64_t kMinVolumeBytes = 100ull * 1024ull * 1024ull;
+
 // 压缩任务：对话框关闭后再跑，避免把进度框的模态循环嵌进 onAccept
 struct CompressTask {
   std::wstring outPath;
@@ -87,8 +90,10 @@ class DlgCompress : public DialogActivity {
   // 界面 → 状态
   int selectedFormat() const;
   int selectedLevel() const;
-  // 分卷大小（字节）；输入框为空或无法解析时返回 0（不分卷）
+  // 分卷大小（字节）；输入框为空或低于下限时返回 0（不分卷）
   uint64_t selectedVolumeSize() const;
+  // 换算后的原始字节数，不套下限；用于在拒绝时给出提示
+  uint64_t rawVolumeBytes() const;
   // 状态 → 界面：单选项、下拉可用性、扩展名联动
   void applyFormat(int formatIndex);
   void syncExtension(int formatIndex);
@@ -211,6 +216,12 @@ int DlgCompress::selectedLevel() const {
 }
 
 uint64_t DlgCompress::selectedVolumeSize() const {
+  const uint64_t bytes = rawVolumeBytes();
+  return bytes >= kMinVolumeBytes ? bytes : 0;
+}
+
+// 输入框里的数值换算成字节；空、非法或非正数都返回 0
+uint64_t DlgCompress::rawVolumeBytes() const {
   if (!volume_) return 0;
   const std::wstring text = volume_->text();
   if (text.empty()) return 0;
@@ -228,10 +239,7 @@ uint64_t DlgCompress::selectedVolumeSize() const {
   if (unit == 1) scale = 1024ull * 1024ull * 1024ull;  // GB
   else if (unit == 2) scale = 1024ull;                 // KB
 
-  const double bytes = value * static_cast<double>(scale);
-  // 小于 64 KB 的分卷没有实用价值，且会让卷数爆炸，直接拒绝
-  if (bytes < 64.0 * 1024.0) return 0;
-  return static_cast<uint64_t>(bytes);
+  return static_cast<uint64_t>(value * static_cast<double>(scale));
 }
 
 void DlgCompress::applyFormat(int formatIndex) {
@@ -327,6 +335,18 @@ bool DlgCompress::onAccept() {
   // 分卷时输出是 xxx.001、xxx.002……，主名文件不会被创建，
   // 覆盖判断要落到首卷上，否则用户看不到「已存在」的提示
   const uint64_t volumeSize = selectedVolumeSize();
+  // 填了数字却低于下限：不能静默当成不分卷，否则用户以为分卷了
+  if (volumeSize == 0) {
+    const uint64_t raw = rawVolumeBytes();
+    if (raw > 0 && raw < kMinVolumeBytes) {
+      AiUI::MessageBoxParams params;
+      params.title = L"AIZip";
+      params.message = L"分卷大小不能小于 100 MB。\n\n留空表示不分卷。";
+      params.icon = AiUI::MessageBoxIcon::kInfo;
+      AiUI::platform()->showMessageBox(window()->handle(), params);
+      return false;
+    }
+  }
   const std::wstring firstVolume = volumeSize > 0 ? arc::VolumePath(outPath, 1) : outPath;
   if (util::PathExists(firstVolume)) {
     AiUI::MessageBoxParams params;
