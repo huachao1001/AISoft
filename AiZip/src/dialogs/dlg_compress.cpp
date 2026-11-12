@@ -172,7 +172,7 @@ void DlgCompress::onCreate() {
   }
 
   if (volumeUnit_) {
-    volumeUnit_->setItems({L"MB", L"GB", L"KB"});
+    volumeUnit_->setItems({L"MB", L"GB"});
     volumeUnit_->setSelectedIndex(0);
   }
 
@@ -232,12 +232,10 @@ uint64_t DlgCompress::rawVolumeBytes() const {
   const double value = std::wcstod(text.c_str(), &end);
   if (end == text.c_str() || (end && *end != L'\0') || !(value > 0)) return 0;
 
-  // 下拉框的顺序是 MB / GB / KB，按索引换算
-  int unit = volumeUnit_ ? volumeUnit_->selectedIndex() : 0;
-  if (unit < 0) unit = 0;
-  uint64_t scale = 1024ull * 1024ull;  // MB
-  if (unit == 1) scale = 1024ull * 1024ull * 1024ull;  // GB
-  else if (unit == 2) scale = 1024ull;                 // KB
+  // 下拉框的顺序是 MB / GB，按索引换算
+  const int unit = volumeUnit_ ? volumeUnit_->selectedIndex() : 0;
+  const uint64_t scale = unit == 1 ? 1024ull * 1024ull * 1024ull   // GB
+                                   : 1024ull * 1024ull;            // MB
 
   return static_cast<uint64_t>(value * static_cast<double>(scale));
 }
