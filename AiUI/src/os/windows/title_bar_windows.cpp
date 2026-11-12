@@ -9,8 +9,8 @@ namespace AiUI {
 const TitleBarDefaults& titleBarDefaults() {
   static const TitleBarDefaults kDefaults = [] {
     TitleBarDefaults d;
-    // 30 太挤，图标与标题几乎贴着上下边；38 给按钮留出悬停底色的呼吸感
-    d.bandHeight = 38;
+    // 30 与系统标题栏一致，高了会显得空
+    d.bandHeight = 30;
     d.buttonWidth = 46;
     d.iconSize = 11;
     d.appIconSize = 18;

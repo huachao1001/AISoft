@@ -26,10 +26,10 @@ class Window::Root : public LinearLayout {
 
  protected:
   void arrangeChildren(const Rect& content) override {
-    // 标题栏高度是动态的（可自定义），每轮布局都同步一次
+    // 标题栏高度是动态的（可自定义），每轮布局都同步一次。
+    // 布局参数按 96 DPI 设计值传，缩放由 View::measure 统一做，这里不能再乘。
     if (titleBar_ && titleBar_->isVisible()) {
-      const int d = dpi();
-      const int height = titleBar_->height() * d / 96;
+      const int height = titleBar_->height();
       LayoutParams lp = titleBar_->layoutParams();
       if (lp.height != height) {
         lp.height = height;

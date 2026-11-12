@@ -53,7 +53,7 @@ constexpr int kTitleBarIdClose = 0x7A07;
 // 实现放在 src/os/<platform>/，通用层只读数据。
 struct TitleBarDefaults {
   // 逻辑高度：按钮悬停底色高度、图标与标题垂直居中的基准、可拖动区域
-  int bandHeight = 38;
+  int bandHeight = 30;
   // 系统按钮尺寸；宽度是每个按钮的格宽
   int buttonWidth = 46;
   int iconSize = 11;
