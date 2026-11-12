@@ -124,12 +124,14 @@ void LinearLayout::arrangeChildren(const Rect& content) {
       crossSize = crossAvailable;
     }
 
-    // 交叉轴对齐
+    // 交叉轴对齐：子视图自己的 align / alignY 优先，没写才用容器 gravity
+    const Gravity crossGravity = horizontal ? lp.vertical : lp.horizontal;
+    const Gravity effective = crossGravity != Gravity::kStart ? crossGravity : gravity_;
     int crossPos = horizontal ? (content.top + slot.mt) : (content.left + slot.ml);
-    if (gravity_ == Gravity::kCenter) {
+    if (effective == Gravity::kCenter) {
       crossPos = horizontal ? (content.top + (content.height() - crossSize) / 2)
                             : (content.left + (content.width() - crossSize) / 2);
-    } else if (gravity_ == Gravity::kEnd) {
+    } else if (effective == Gravity::kEnd) {
       crossPos = horizontal ? (content.bottom - slot.mb - crossSize)
                             : (content.right - slot.mr - crossSize);
     }

@@ -7,7 +7,7 @@
 #include "app.h"
 #include "archive.h"
 #include "sevenzip_loader.h"
-#include "dlg_input.h"
+#include "volumes.h"
 #include "dlg_progress.h"
 #include "util.h"
 #include "AiUI/widgets/button.h"
@@ -17,6 +17,7 @@
 #include "AiUI/widgets/text_view.h"
 #include "dialog_activity.h"
 
+#include <cmath>
 #include <utility>
 #include <vector>
 
@@ -86,17 +87,17 @@ class DlgCompress : public DialogActivity {
   // 界面 → 状态
   int selectedFormat() const;
   int selectedLevel() const;
+  // 分卷大小（字节）；输入框为空或无法解析时返回 0（不分卷）
+  uint64_t selectedVolumeSize() const;
   // 状态 → 界面：单选项、下拉可用性、扩展名联动
   void applyFormat(int formatIndex);
   void syncExtension(int formatIndex);
   void refreshFormatUi();
 
   void browse();
-  void editPassword();
   void saveAsDefault();
 
   std::vector<std::wstring> sources_;
-  std::wstring password_;
 
   CompressTask task_;
   bool hasTask_ = false;
@@ -110,13 +111,14 @@ class DlgCompress : public DialogActivity {
   AiUI::ComboBox* level_ = nullptr;
   AiUI::InputBox* volume_ = nullptr;
   AiUI::ComboBox* volumeUnit_ = nullptr;
+  AiUI::InputBox* passwordBox_ = nullptr;
 };
 
 void DlgCompress::onCreate() {
   setEscapeCloses(true);
   setTitle(L"压缩文件");
-  // 左栏固定宽度，右侧分组框要放得下勾选项文字；高度容纳三行 + 底部按钮
-  setMinSize(620, 480);
+  // 五行表单 + 底部按钮，留一点弹性空间即可；再高会显得中间空
+  setMinSize(520, 300);
 
   // ── 初始状态：从设置恢复格式、档位、固实 ──
   int format = z7::FormatIndexByName(g_app.settings.compressFormat.c_str());
@@ -137,27 +139,23 @@ void DlgCompress::onCreate() {
   level_ = findView<AiUI::ComboBox>("level");
   volume_ = findView<AiUI::InputBox>("volume");
   volumeUnit_ = findView<AiUI::ComboBox>("volumeUnit");
+  passwordBox_ = findView<AiUI::InputBox>("password");
 
   if (path_) path_->setText(defaultArchivePath(sources_, formatIndex_));
 
-  // 下拉框的第 3 项起是「其他格式」
+  // 下拉框承载「其他格式」，即格式表第 3 项及以后
   if (otherFormat_) {
     std::vector<std::wstring> items;
     for (int i = 2; i < z7::FormatCount(); ++i) items.emplace_back(z7::Formats()[i].name);
     otherFormat_->setItems(items);
-    otherFormat_->setOnChange([this](int index) {
-      if (!formatGroup_) return;
-      formatGroup_->setCheckedIndex(2);
-      applyFormat(2 + index);
-    });
+    otherFormat_->setOnChange([this](int index) { applyFormat(2 + index); });
   }
 
   if (formatGroup_) {
     formatGroup_->setOnChange([this](int index) {
-      // 第三项的真实格式由下拉框决定
-      const int target = index < 2 ? index : 2 + otherFormat_->selectedIndex();
-      applyFormat(target);
-      refreshFormatUi();
+      // 选 ZIP / 7Z 时清空「其他格式」，两处不能同时显示不同格式
+      if (index < 2 && otherFormat_) otherFormat_->setSelectedIndex(-1, false);
+      applyFormat(index < 2 ? index : 2 + (otherFormat_ ? otherFormat_->selectedIndex() : 0));
     });
   }
 
@@ -179,9 +177,6 @@ void DlgCompress::onCreate() {
   if (auto* browseButton = findView<AiUI::Button>("btnBrowse")) {
     browseButton->setOnClick([this] { browse(); });
   }
-  if (auto* pwd = findView<AiUI::Button>("btnPassword")) {
-    pwd->setOnClick([this] { editPassword(); });
-  }
   if (auto* def = findView<AiUI::Button>("btnDefault")) {
     def->setOnClick([this] { saveAsDefault(); });
   }
@@ -200,9 +195,14 @@ void DlgCompress::onCreate() {
 }
 
 int DlgCompress::selectedFormat() const {
-  if (formatGroup_ && formatGroup_->checkedIndex() < 2) return formatGroup_->checkedIndex();
-  const int index = otherFormat_ ? otherFormat_->selectedIndex() : 0;
-  return 2 + (index < 0 ? 0 : index);
+  // 单选有选中项就用它；都没选说明当前用的是下拉框里的其他格式
+  const int radio = formatGroup_ ? formatGroup_->checkedIndex() : -1;
+  if (radio >= 0 && radio < 2) return radio;
+  const int index = otherFormat_ ? otherFormat_->selectedIndex() : -1;
+  // 下拉框也没选（两个单选都未选中、下拉为空）时退回 ZIP
+  if (index < 0) return 0;
+  const int target = 2 + index;
+  return target < z7::FormatCount() ? target : 0;
 }
 
 int DlgCompress::selectedLevel() const {
@@ -210,17 +210,46 @@ int DlgCompress::selectedLevel() const {
   return (index >= 0 && index < kLevelCount) ? index : 3;
 }
 
+uint64_t DlgCompress::selectedVolumeSize() const {
+  if (!volume_) return 0;
+  const std::wstring text = volume_->text();
+  if (text.empty()) return 0;
+
+  // 只接受十进制正数；带单位的写法（"100 MB"）在这里被拒绝，
+  // 单位由右侧下拉框决定，混在一起容易算错
+  wchar_t* end = nullptr;
+  const double value = std::wcstod(text.c_str(), &end);
+  if (end == text.c_str() || (end && *end != L'\0') || !(value > 0)) return 0;
+
+  // 下拉框的顺序是 MB / GB / KB，按索引换算
+  int unit = volumeUnit_ ? volumeUnit_->selectedIndex() : 0;
+  if (unit < 0) unit = 0;
+  uint64_t scale = 1024ull * 1024ull;  // MB
+  if (unit == 1) scale = 1024ull * 1024ull * 1024ull;  // GB
+  else if (unit == 2) scale = 1024ull;                 // KB
+
+  const double bytes = value * static_cast<double>(scale);
+  // 小于 64 KB 的分卷没有实用价值，且会让卷数爆炸，直接拒绝
+  if (bytes < 64.0 * 1024.0) return 0;
+  return static_cast<uint64_t>(bytes);
+}
+
 void DlgCompress::applyFormat(int formatIndex) {
   if (formatIndex < 0 || formatIndex >= z7::FormatCount()) formatIndex = 0;
   const bool changed = formatIndex != formatIndex_;
   formatIndex_ = formatIndex;
 
-  // 单选项与下拉框互相对齐
+  // ZIP / 7Z 用单选表示；其余格式在下拉框里，此时两个单选都不选中
   if (formatGroup_) {
-    formatGroup_->setCheckedIndex(formatIndex < 2 ? formatIndex : 2);
+    if (formatIndex < 2) {
+      formatGroup_->setCheckedIndex(formatIndex);
+    } else {
+      formatGroup_->clearChecked();
+    }
   }
   if (otherFormat_) {
-    otherFormat_->setSelectedIndex(formatIndex >= 2 ? formatIndex - 2 : 0, false);
+    // 选 ZIP / 7Z 时下拉框保持空提示，避免同时显示两个格式
+    otherFormat_->setSelectedIndex(formatIndex >= 2 ? formatIndex - 2 : -1, false);
   }
 
   if (changed) syncExtension(formatIndex);
@@ -261,13 +290,6 @@ void DlgCompress::browse() {
   if (!picked.empty() && path_) path_->setText(picked);
 }
 
-void DlgCompress::editPassword() {
-  std::wstring pwd = password_;
-  if (PromptText(window()->handle(), L"设置密码", L"密码（留空表示不加密）：", pwd, true)) {
-    password_ = pwd;
-  }
-}
-
 void DlgCompress::saveAsDefault() {
   g_app.settings.compressFormat = nameFor(selectedFormat());
   g_app.settings.compressLevel = kLevelValues[selectedLevel()];
@@ -302,10 +324,14 @@ bool DlgCompress::onAccept() {
     return false;
   }
 
-  if (util::PathExists(outPath)) {
+  // 分卷时输出是 xxx.001、xxx.002……，主名文件不会被创建，
+  // 覆盖判断要落到首卷上，否则用户看不到「已存在」的提示
+  const uint64_t volumeSize = selectedVolumeSize();
+  const std::wstring firstVolume = volumeSize > 0 ? arc::VolumePath(outPath, 1) : outPath;
+  if (util::PathExists(firstVolume)) {
     AiUI::MessageBoxParams params;
     params.title = L"AIZip";
-    params.message = L"文件已存在，是否覆盖？";
+    params.message = volumeSize > 0 ? L"分卷文件已存在，是否覆盖？" : L"文件已存在，是否覆盖？";
     params.icon = AiUI::MessageBoxIcon::kWarning;
     params.buttons = AiUI::MessageBoxButtons::kYesNo;
     if (AiUI::platform()->showMessageBox(window()->handle(), params) !=
@@ -343,8 +369,9 @@ bool DlgCompress::onAccept() {
   arc::CompressOptions options;
   options.level = kLevelValues[levelIndex];
   options.solid = solid;
-  options.password = password_;
+  options.password = passwordBox_ ? passwordBox_->text() : std::wstring();
   options.formatName = nameFor(formatIndex);
+  options.volumeSize = volumeSize;
   // TAR/WIM 只有存储档，内核不认 x 参数
   if (info.maxLevel == 0) options.level = 0;
 
@@ -387,7 +414,7 @@ void ShowCompressDialog(AiUI::NativeHandle owner, const std::vector<std::wstring
   }
 
   DlgCompress dialog(sources);
-  const bool accepted = dialog.runModal(owner, 620, 480);
+  const bool accepted = dialog.runModal(owner, 520, 300);
   if (accepted && dialog.hasTask()) runCompressTask(owner, dialog.task());
 }
 

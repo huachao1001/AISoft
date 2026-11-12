@@ -801,6 +801,7 @@ class Generator {
       if (has(node, "caretColor")) {
         line(2, "spec.caret = " + colorExpr(node, "caretColor", "kNoColor") + ";");
       }
+      if (getBool(node, "password", false)) line(2, "spec.password = true;");
       line(2, variable + "->setSpec(spec);");
       line(1, "}");
       return;
@@ -864,6 +865,8 @@ class Generator {
       if (has(node, "height")) line(2, "spec.height = " + get(node, "height", "30") + ";");
       if (has(node, "radius")) line(2, "spec.radius = " + get(node, "radius", "6") + ";");
       if (has(node, "padding")) line(2, "spec.padX = " + get(node, "padding", "10") + ";");
+      const std::string cue = get(node, "cue");
+      if (!cue.empty()) line(2, "spec.cue = " + wideLiteral(cue) + ";");
       // 颜色：不写就跟随主题
       if (has(node, "backgroundColor")) {
         line(2, "spec.background = " + colorExpr(node, "backgroundColor", "kNoColor") + ";");

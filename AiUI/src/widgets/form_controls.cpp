@@ -79,6 +79,12 @@ void RadioGroup::setCheckedIndex(int index) {
   syncFrom(index);
 }
 
+void RadioGroup::clearChecked() {
+  // 与 syncFrom 同源：只改外观，不触发 onChange，
+  // 否则调用方在回调里又会把选中打回去
+  for (auto* item : items_) item->setChecked(false, false);
+}
+
 void RadioGroup::syncFrom(int index) {
   // 回调里可能再次调用 setCheckedIndex：嵌套时只同步外观，通知留给最外层，
   // 否则回调 → 同步 → 回调 会一直递归下去
@@ -300,6 +306,8 @@ void ComboBox::onPaint(Painter& painter, const Rect& rect) {
   const Color ink = spec_.ink != kNoColor ? spec_.ink : t.text;
   const Color arrowColor = spec_.arrow != kNoColor ? spec_.arrow : t.textMuted;
   const Color disabledInk = spec_.disabledInk != kNoColor ? spec_.disabledInk : t.textFaint;
+  // 提示文字用弱化色：它是占位，不是已选中的值
+  const Color cueColor = spec_.cueColor != kNoColor ? spec_.cueColor : t.textFaint;
 
   painter.fillRoundRect(rect, background, radius);
   // 展开时高亮边框，给用户"正开着"的反馈
@@ -312,6 +320,11 @@ void ComboBox::onPaint(Painter& painter, const Rect& rect) {
   painter.drawIcon(IconId::kChevronDown, arrowRect, arrowColor);
 
   const Rect textRect{rect.left + padX, rect.top, arrowRect.left - padX / 2, rect.bottom};
+  // 没选中项时显示提示文字：此时下拉是「其他格式」的入口，不是当前值
+  if (selected_ < 0 && !spec_.cue.empty()) {
+    painter.drawTextEllipsis(textRect, spec_.cue, cueColor, fonts.ui);
+    return;
+  }
   painter.drawTextEllipsis(textRect, selectedText(), isEnabled() ? ink : disabledInk, fonts.ui);
 }
 

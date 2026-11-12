@@ -35,6 +35,8 @@ class RadioGroup : public ViewGroup {
 
   int checkedIndex() const;
   void setCheckedIndex(int index);
+  // 全部取消选中。用于「下拉框选了其他项、单选组不该有选中」这类组合场景
+  void clearChecked();
 
   void setOnChange(ChangeHandler fn) { onChange_ = std::move(fn); }
 
@@ -126,6 +128,8 @@ struct ComboSpec {
   int height = 30;
   int radius = 6;
   int padX = 10;
+  // 未选中任何项时显示的提示（select下的 selectedIndex 为 -1）
+  std::wstring cue;
   // 颜色：kNoColor 表示跟随主题
   Color background = kNoColor;
   Color border = kNoColor;
@@ -133,7 +137,7 @@ struct ComboSpec {
   Color ink = kNoColor;
   Color arrow = kNoColor;
   Color disabledInk = kNoColor;
-};
+  Color cueColor = kNoColor;};
 
 class ComboBox : public View, public ViewRoot::Overlay {
  public:

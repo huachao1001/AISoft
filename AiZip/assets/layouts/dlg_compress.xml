@@ -1,57 +1,62 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  压缩对话框：文件路径、格式与压缩级别、压缩选项。
-  行为（默认文件名、格式联动、分离打包）在 DlgCompress 里。
+  压缩对话框：表单式排布，左侧固定宽度标签右对齐，右侧控件拉伸。
+
+  行为（默认文件名、格式联动、分卷换算）在 DlgCompress 里。
 -->
-<LinearLayout orientation="vertical" padding="16" background="dialogBg">
+<LinearLayout orientation="vertical" padding="18" spacing="10" background="dialogBg">
 
-  <TextView text="压缩文件名(F)" height="18" textColor="textHead"/>
-
-  <LinearLayout orientation="horizontal" height="30" marginY="4">
-    <InputBox id="path" weight="1" height="30" padding="8"/>
-    <Button id="btnBrowse" text="浏览(B)..." style="outline" width="92" height="30" marginX="8"/>
+  <!-- 压缩文件名 -->
+  <LinearLayout orientation="horizontal" height="30">
+    <TextView text="压缩文件名" width="84" height="30" align="right" textColor="textMuted"/>
+    <InputBox id="path" weight="1" height="30" padding="8" marginX="10"/>
+    <Button id="btnBrowse" text="浏览..." style="outline" width="76" height="30"/>
   </LinearLayout>
 
-  <TextView text="压缩文件格式" height="18" marginY="4" textColor="textHead"/>
-
-  <!-- 格式一行：ZIP / 7Z / 其他（第三个单选无文字，由右侧下拉框承载） -->
-  <LinearLayout orientation="horizontal" height="30" alignY="center">
-    <RadioGroup id="formatGroup" width="wrap" height="24" orientation="horizontal" rowGap="14">
-      <RadioButton id="fmtZip">ZIP</RadioButton>
-      <RadioButton id="fmt7z">7Z</RadioButton>
-      <RadioButton id="fmtOther"></RadioButton>
-    </RadioGroup>
-    <ComboBox id="otherFormat" width="180" height="30" marginX="4"/>
-  </LinearLayout>
-
-  <!-- 左栏：压缩级别 / 分卷；右栏：压缩选项 -->
-  <LinearLayout orientation="horizontal" marginY="8">
-
-    <LinearLayout orientation="vertical" width="240">
-      <TextView text="压缩级别(C)" height="18" textColor="textHead"/>
-      <ComboBox id="level" height="30" marginY="4"/>
-
-      <TextView text="压缩分卷大小设置(V)" height="18" marginY="4" textColor="textHead"/>
-      <LinearLayout orientation="horizontal" height="30">
-        <InputBox id="volume" weight="1" height="30" padding="8"/>
-        <ComboBox id="volumeUnit" width="72" height="30" marginX="6"/>
-      </LinearLayout>
+  <!-- 压缩格式：ZIP / 7Z 直接选，其余格式收进下拉 -->
+  <LinearLayout orientation="horizontal" height="30">
+    <TextView text="压缩格式" width="84" height="30" align="right" textColor="textMuted"/>
+    <LinearLayout orientation="horizontal" weight="1" height="30" marginX="10">
+      <RadioGroup id="formatGroup" width="wrap" height="30" orientation="horizontal"
+                  rowGap="16">
+        <RadioButton id="fmtZip">ZIP</RadioButton>
+        <RadioButton id="fmt7z">7Z</RadioButton>
+      </RadioGroup>
+      <ComboBox id="otherFormat" weight="1" height="30" marginX="16"
+                cue="其他格式"/>
     </LinearLayout>
-
-    <GroupBox title="压缩选项" weight="1" marginX="12">
-      <LinearLayout orientation="vertical">
-        <Button id="btnPassword" text="设置密码(P)..." style="outline" width="120" height="28"/>
-      </LinearLayout>
-    </GroupBox>
-
   </LinearLayout>
+
+  <!-- 压缩级别 -->
+  <LinearLayout orientation="horizontal" height="30">
+    <TextView text="压缩级别" width="84" height="30" align="right" textColor="textMuted"/>
+    <ComboBox id="level" height="30" weight="1" marginX="10"/>
+  </LinearLayout>
+
+  <!-- 压缩分卷：留空表示不分卷 -->
+  <LinearLayout orientation="horizontal" height="30">
+    <TextView text="分卷大小" width="84" height="30" align="right" textColor="textMuted"/>
+    <InputBox id="volume" height="30" weight="1" marginX="10"
+              cue="留空表示不分卷"/>
+    <ComboBox id="volumeUnit" width="80" height="30" marginX="8"/>
+  </LinearLayout>
+
+  <!-- 密码 -->
+  <LinearLayout orientation="horizontal" height="30">
+    <TextView text="压缩密码" width="84" height="30" align="right" textColor="textMuted"/>
+    <InputBox id="password" height="30" weight="1" marginX="10" password="true"
+              cue="留空表示不加密"/>
+  </LinearLayout>
+
+  <!-- 弹簧：把按钮行顶到底部，窗口拉高时不至于浮在半空 -->
+  <View weight="1" height="1"/>
 
   <!-- 底部：左「恢复默认」，右「确定 / 取消」 -->
-  <LinearLayout orientation="horizontal" height="32" marginY="6">
-    <Button id="btnDefault" text="恢复默认(D)" style="outline" width="116" height="30"/>
+  <LinearLayout orientation="horizontal" height="32">
+    <Button id="btnDefault" text="恢复默认" style="outline" width="96" height="32"/>
     <View weight="1"/>
-    <Button id="btnOk" text="确定" width="80" height="30"/>
-    <Button id="btnCancel" text="取消" style="outline" width="80" height="30" marginX="8"/>
+    <Button id="btnOk" text="确定" width="84" height="32"/>
+    <Button id="btnCancel" text="取消" style="outline" width="84" height="32" marginX="10"/>
   </LinearLayout>
 
 </LinearLayout>
