@@ -9,8 +9,8 @@ namespace AiUI {
 const TitleBarDefaults& titleBarDefaults() {
   static const TitleBarDefaults kDefaults = [] {
     TitleBarDefaults d;
-    // 30 与系统标题栏一致，高了会显得空
-    d.bandHeight = 30;
+    // 比系统标题栏高一点，图标与标题不至于贴着上下边
+    d.bandHeight = 38;
     d.buttonWidth = 46;
     d.iconSize = 11;
     d.appIconSize = 18;
