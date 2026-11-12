@@ -204,6 +204,9 @@ class FileInStream final : public z7::IInStream {
     if (n == 0) delete this;
     return n;
   }
+  // 底层文件句柄的显式收口：7-Zip 用完输入流不一定 Release 到 0，
+  // 析构可能迟迟不发生，而 Windows 上只要句柄还在就删不掉文件。
+  void CloseHandleNow() { stream_.reset(); }
   HRESULT STDMETHODCALLTYPE Read(void* data, uint32_t size, uint32_t* processed) override {
     if (!stream_) {
       if (processed) *processed = 0;
@@ -677,6 +680,13 @@ class UpdateCallback final : public z7::IArchiveUpdateCallback {
   int ErrorCount() const { return errorCount_; }
   bool Canceled() const { return canceled_; }
 
+  // 7-Zip 用完 GetStream 给出的输入流未必 Release 到 0，句柄可能一直留着，
+  // 导致源文件（尤其是两阶段压缩里的临时 tar）删不掉。压缩结束后显式关句柄。
+  // inStream_ 只会由本类在 GetStream 里创建，静态转换安全。
+  void CloseInputHandles() {
+    if (inStream_) static_cast<FileInStream*>(inStream_)->CloseHandleNow();
+  }
+
  private:
   const std::vector<util::SourceItem>& items_;
   ProgressFn progress_;
@@ -970,6 +980,9 @@ static bool CompressOnce(const std::vector<util::SourceItem>& items, const GUID&
 
   const int errors = cb->ErrorCount();
   const bool canceled = cb->Canceled();
+  // 关掉源文件句柄再 Release：7-Zip 可能没把输入流引用还回来，
+  // 句柄留着会让后续 deleteFile（临时 tar）报 ERROR_SHARING_VIOLATION
+  cb->CloseInputHandles();
   cb->Release();
   delete pwd;
   outStream->Release();
@@ -1025,13 +1038,16 @@ bool Compress(const std::vector<std::wstring>& sources, const CompressOptions& o
   }
   const GUID cls = fi ? fi->clsId : z7::FormatFromExtension(util::FileExtension(opts.archivePath));
 
-  // TAR.GZ / TAR.BZ2 / TAR.XZ：先打 tar，再整体压一层
+  // TAR.GZ / TAR.BZ2：先打 tar，再整体压一层
   if (fi && fi->tarWrapped) {
-    // 名字带进程号与单调时钟，避免并发或残留的临时文件互相覆盖
+    // 进程号 + 单调时钟 + 自增序号：时钟是 GetTickCount64（约 15ms 粒度），
+    // 同一进程连着压两个 tar 组合格式会撞在同一毫秒上，只靠时钟不够。
+    static std::atomic<uint32_t> stagingSeq{0};
     const std::wstring tarPath =
         util::JoinPath(AiUI::platform()->tempDir(),
                        L"aizip-" + std::to_wstring(AiUI::platform()->processId()) + L"-" +
-                           std::to_wstring(AiUI::platform()->monotonicMillis()) + L".tar");
+                           std::to_wstring(AiUI::platform()->monotonicMillis()) + L"-" +
+                           std::to_wstring(stagingSeq.fetch_add(1)) + L".tar");
     bool ok = MakeTarStaging(items, tarPath, error);
     if (ok) {
       std::vector<util::SourceItem> one;
@@ -1048,7 +1064,11 @@ bool Compress(const std::vector<std::wstring>& sources, const CompressOptions& o
       ok = CompressOnce(one, cls, opts.archivePath, opts.level, false, opts.password,
                         opts.volumeSize, progress, error);
     }
-    AiUI::platform()->deleteFile(tarPath);
+    // 删除可能失败（句柄还没关，或杀软短暂占用）：重试几次，别把 GB 级临时文件留在 temp
+    for (int attempt = 0; attempt < 5; ++attempt) {
+      if (AiUI::platform()->deleteFile(tarPath)) break;
+      AiUI::platform()->sleepMillis(20);
+    }
     return ok;
   }
 

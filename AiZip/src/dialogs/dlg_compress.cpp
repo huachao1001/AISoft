@@ -33,6 +33,9 @@ constexpr int kLevelDefault = 0;  // 索引，对应「标准」
 // 分卷下限：更小的卷没有实用价值，卷数还会爆炸
 constexpr uint64_t kMinVolumeBytes = 100ull * 1024ull * 1024ull;
 
+// 格式表前两项是 ZIP / 7Z，各自占一个单选；第 3 项起都归「其他格式」下拉
+constexpr int kOtherFormatBase = 2;
+
 // 压缩任务：对话框关闭后再跑，避免把进度框的模态循环嵌进 onAccept
 struct CompressTask {
   std::wstring outPath;
@@ -158,12 +161,14 @@ void DlgCompress::onCreate() {
   // 下拉框承载「其他格式」，即格式表第 3 项及以后
   if (otherFormat_) {
     std::vector<std::wstring> items;
-    for (int i = 2; i < z7::FormatCount(); ++i) items.emplace_back(z7::Formats()[i].name);
+    for (int i = kOtherFormatBase; i < z7::FormatCount(); ++i) {
+      items.emplace_back(z7::Formats()[i].name);
+    }
     otherFormat_->setItems(items);
     otherFormat_->setOnChange([this](int index) {
       if (index < 0 || syncingFormat_) return;
       // 选了下拉项就等于选了「其他」那一项
-      applyFormat(2 + index);
+      applyFormat(kOtherFormatBase + index);
       refreshFormatUi();
     });
   }
@@ -171,14 +176,14 @@ void DlgCompress::onCreate() {
   if (formatGroup_) {
     formatGroup_->setOnChange([this](int index) {
       if (syncingFormat_) return;
-      if (index < 2) {
+      if (index < kOtherFormatBase) {
         // 选 ZIP / 7Z 时清空「其他格式」，两处不能同时显示不同格式
         applyFormat(index);
       } else {
         // 选「其他」时下拉框必须有个具体值，否则没有实际格式可选
         const int current = otherFormat_ ? otherFormat_->selectedIndex() : -1;
         if (current < 0 && otherFormat_ && otherFormat_->itemCount() > 0) {
-          applyFormat(2);
+          applyFormat(kOtherFormatBase);
         } else {
           refreshFormatUi();
         }
@@ -219,13 +224,13 @@ void DlgCompress::onCreate() {
 }
 
 int DlgCompress::selectedFormat() const {
-  // 单选有选中项就用它；「其他」（索引 2）的实际格式由下拉框决定
+  // 单选有选中项就用它；「其他」的实际格式由下拉框决定
   const int radio = formatGroup_ ? formatGroup_->checkedIndex() : -1;
-  if (radio >= 0 && radio < 2) return radio;
+  if (radio >= 0 && radio < kOtherFormatBase) return radio;
   const int index = otherFormat_ ? otherFormat_->selectedIndex() : -1;
   // 下拉框也没选（两个单选都未选中、下拉为空）时退回 ZIP
   if (index < 0) return 0;
-  const int target = 2 + index;
+  const int target = kOtherFormatBase + index;
   return target < z7::FormatCount() ? target : 0;
 }
 
@@ -268,11 +273,12 @@ void DlgCompress::applyFormat(int formatIndex) {
   syncingFormat_ = true;
   // ZIP / 7Z 对应前两个单选；其余格式归到「其他」那一项
   if (formatGroup_) {
-    formatGroup_->setCheckedIndex(formatIndex < 2 ? formatIndex : 2);
+    formatGroup_->setCheckedIndex(formatIndex < kOtherFormatBase ? formatIndex : kOtherFormatBase);
   }
   if (otherFormat_) {
     // 选 ZIP / 7Z 时下拉框保持空提示，避免同时显示两个格式
-    otherFormat_->setSelectedIndex(formatIndex >= 2 ? formatIndex - 2 : -1, false);
+    otherFormat_->setSelectedIndex(
+        formatIndex >= kOtherFormatBase ? formatIndex - kOtherFormatBase : -1, false);
   }
   syncingFormat_ = false;
 
@@ -296,7 +302,7 @@ void DlgCompress::refreshFormatUi() {
   const bool valid = formatIndex_ >= 0 && formatIndex_ < n;
   const z7::FormatInfo* info = valid ? &z7::Formats()[formatIndex_] : nullptr;
 
-  // TAR/WIM 只有存储档，档位下拉置灰
+  // TAR 只有存储档，档位下拉置灰
   if (level_) {
     level_->setEnabled(!info || info->maxLevel > 0);
   }
@@ -308,8 +314,7 @@ void DlgCompress::browse() {
       window()->handle(), L"选择压缩文件名", util::DirName(initial), util::BaseName(initial),
       extFor(formatIndex_),
       {L"ZIP 压缩文件", L"*.zip", L"7Z 压缩文件", L"*.7z", L"TAR.GZ 压缩文件", L"*.tar.gz",
-       L"TAR.BZ2 压缩文件", L"*.tar.bz2", L"TAR.XZ 压缩文件", L"*.tar.xz", L"GZIP 文件", L"*.gz",
-       L"BZIP2 文件", L"*.bz2", L"XZ 文件", L"*.xz", L"TAR 归档", L"*.tar", L"WIM 映像", L"*.wim",
+       L"TAR.BZ2 压缩文件", L"*.tar.bz2", L"GZIP 文件", L"*.gz", L"TAR 归档", L"*.tar",
        L"所有文件", L"*.*"});
   if (!picked.empty() && path_) path_->setText(picked);
 }
@@ -368,7 +373,7 @@ bool DlgCompress::onAccept() {
   const int levelIndex = selectedLevel();
   const z7::FormatInfo& info = z7::Formats()[formatIndex];
 
-  // GZIP/BZIP2/XZ 只收单文件：多文件/目录提前拦下，提示改用 TAR 组合格式
+  // GZIP 只收单文件：多文件/目录提前拦下，提示改用 TAR 组合格式
   if (info.singleFile) {
     std::vector<util::SourceItem> probe;
     util::CollectSources(sources_, probe);
@@ -398,7 +403,7 @@ bool DlgCompress::onAccept() {
   options.password = passwordBox_ ? passwordBox_->text() : std::wstring();
   options.formatName = nameFor(formatIndex);
   options.volumeSize = volumeSize;
-  // TAR/WIM 只有存储档，内核不认 x 参数
+  // TAR 只有存储档，内核不认 x 参数
   if (info.maxLevel == 0) options.level = 0;
 
   task_.options = options;

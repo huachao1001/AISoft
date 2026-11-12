@@ -58,6 +58,56 @@ static int TestVolumes(const std::wstring& dir) {
   return failures;
 }
 
+// 格式表自检：确认可创建格式只剩约定的 6 项，且表中每一项都真的能压出来。
+// 这条守的是「别把做不到的格式放回界面」——7-Zip 只有 RAR 解码器没有编码器，
+// 一旦有人把 RAR 加进表里，用户点确定只会收到「压缩失败」。
+static int TestFormats(const std::wstring& dir) {
+  int failures = 0;
+  auto expect = [&](bool cond, const char* what) {
+    printf("%s %s\n", cond ? "ok  " : "FAIL", what);
+    if (!cond) failures++;
+  };
+
+  const wchar_t* kExpected[] = {L"ZIP", L"7Z", L"TAR.GZ", L"TAR.BZ2", L"TAR", L"GZIP"};
+  const int expectedCount = static_cast<int>(sizeof(kExpected) / sizeof(kExpected[0]));
+  expect(z7::FormatCount() == expectedCount, "format table has exactly the agreed entries");
+  for (int i = 0; i < expectedCount && i < z7::FormatCount(); ++i) {
+    expect(z7::Formats()[i].name == std::wstring(kExpected[i]), "format order matches");
+  }
+  // RAR 必须在表外
+  expect(z7::FormatIndexByName(L"RAR") < 0, "RAR is not offered");
+
+  // 每种格式各压一次：单文件格式用一个文件，其余用同一个文件即可
+  const std::wstring src = util::JoinPath(dir, L"fmt-src.txt");
+  FILE* f = nullptr;
+  if (_wfopen_s(&f, src.c_str(), L"wb") == 0) {
+    fputs("aizip format smoke test payload\n", f);
+    fclose(f);
+  }
+
+  for (int i = 0; i < z7::FormatCount(); ++i) {
+    const z7::FormatInfo& info = z7::Formats()[i];
+    const std::wstring out = util::JoinPath(dir, std::wstring(L"out-") + info.name + info.ext);
+    AiUI::platform()->deleteFile(out);
+
+    arc::CompressOptions o;
+    o.archivePath = out;
+    o.formatName = info.name;
+    o.level = info.maxLevel == 0 ? 0 : 5;
+    std::wstring err;
+    const bool ok = arc::Compress({src}, o, nullptr, err);
+    const bool created =
+        util::PathExists(out) && AiUI::platform()->fileSize(out) > 0;
+    printf("  %-8ls -> %ls (%ls)\n", info.name, created ? L"created" : L"missing",
+           err.empty() ? L"no error" : err.c_str());
+    if (!ok || !created) {
+      printf("FAIL %ls compresses for real\n", info.name);
+      failures++;
+    }
+  }
+  return failures;
+}
+
 int wmain(int argc, wchar_t** argv) {
   // err 里是中文，printf %ls 在 C locale 下遇到非 ASCII 会静默丢失
   setlocale(LC_ALL, ".UTF-8");
@@ -69,6 +119,10 @@ int wmain(int argc, wchar_t** argv) {
 
   if (mode == L"volumes") {
     return TestVolumes(argv[2]) == 0 ? 0 : 1;
+  }
+
+  if (mode == L"formats") {
+    return TestFormats(argv[2]) == 0 ? 0 : 1;
   }
 
   // open / extract 支持可选密码：test_arc open <file> [password]
