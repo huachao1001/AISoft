@@ -70,6 +70,9 @@ void releaseLoadedImage(Image image);
 Gdiplus::Bitmap* asBitmap(const Image& image);
 // HICON → ARGB 位图；句柄由调用方释放，返回值由 releaseLoadedImage 释放
 Image imageFromIcon(HICON icon);
+// 从可执行文件里取指定边长的原生图标；失败返回空句柄，调用方负责 DestroyIcon。
+// 任务栏与 Alt+Tab 预览按尺寸向系统要图标，所以要按需取对应档位。
+HICON loadAppIcon(int pixelSize);
 
 // ── 平台能力（实现在 platform_windows.cpp）──
 // 这些与窗口绘制无关，WindowsPlatform 只做转发

@@ -302,6 +302,22 @@ Image imageFromIcon(HICON icon) {
   return Image(bmp);
 }
 
+HICON loadAppIcon(int pixelSize) {
+  wchar_t path[MAX_PATH] = {};
+  if (::GetModuleFileNameW(nullptr, path, MAX_PATH) == 0) return nullptr;
+
+  // PrivateExtractIconsW 能按指定边长取图：任务栏预览、Alt+Tab 与系统标题栏
+  // 各自要不同档位，ExtractIconEx 只按索引给，尺寸对不上就会被系统拉伸。
+  const int size = pixelSize > 0 ? pixelSize : ::GetSystemMetrics(SM_CXICON);
+  HICON icon = nullptr;
+  UINT id = 0;
+  if (::PrivateExtractIconsW(path, 0, size, size, &icon, &id, 1, 0) == 0 || !icon) {
+    // 取不到时退回第一张；系统会自己缩放到需要的尺寸
+    if (::ExtractIconExW(path, 0, &icon, nullptr, 1) == 0 || !icon) return nullptr;
+  }
+  return icon;
+}
+
 }  // namespace windows
 }  // namespace os
 

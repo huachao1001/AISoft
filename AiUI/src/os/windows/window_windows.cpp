@@ -114,6 +114,9 @@ class WindowsWindow : public PlatformWindow {
       ::SetWindowLongPtrW(hwnd_, GWLP_USERDATA, 0);
       ::DestroyWindow(hwnd_);
     }
+    // 图标已随窗口销毁而解除引用，这时才能释放
+    if (bigIcon_) ::DestroyIcon(bigIcon_);
+    if (smallIcon_) ::DestroyIcon(smallIcon_);
   }
 
   bool create(HWND parent, const WindowParams& params, HINSTANCE instance) {
@@ -149,6 +152,7 @@ class WindowsWindow : public PlatformWindow {
     minHeight_ = params.minHeight;
     // 首帧之前窗口就是这块中性底色，宿主随后会用 setBackgroundColor 覆盖
     setBackgroundColor(makeColor(0xf3, 0xf4, 0xf6));
+    if (params.style.topLevel) applyWindowIcons();
     return true;
   }
 
@@ -690,6 +694,32 @@ class WindowsWindow : public PlatformWindow {
     host_.onMouseLeave();
   }
 
+  // 顶层窗口的原生图标：任务栏、Alt+Tab 与悬停预览都向系统要它，
+  // 不设的话这些地方是空白方块。大图标给预览，小图标给标题栏与任务栏。
+  void applyWindowIcons() {
+    if (!hwnd_) return;
+    const int smallSize = ::GetSystemMetrics(SM_CXSMICON);
+    const int bigSize = ::GetSystemMetrics(SM_CXICON);
+    const int captureSize = ::GetSystemMetrics(SM_CXSMICON) * 4;
+
+    // SM_CXICON 只是 32；高分屏下预览要更大的图，取一档更大的再让系统缩。
+    bigIcon_ = os::windows::loadAppIcon(bigSize > captureSize ? bigSize : captureSize);
+    smallIcon_ = os::windows::loadAppIcon(smallSize);
+
+    // 先小后大：ICON_SMALL2 的设置会连带覆盖 ICON_BIG，大图标必须最后写
+    if (smallIcon_) {
+      ::SendMessageW(hwnd_, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(smallIcon_));
+      // Alt+Tab 与任务栏悬停预览优先读 SMALL2；没单设时系统回落到 SMALL
+      ::SendMessageW(hwnd_, WM_SETICON, ICON_SMALL2, reinterpret_cast<LPARAM>(smallIcon_));
+    }
+    if (bigIcon_) {
+      ::SendMessageW(hwnd_, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(bigIcon_));
+    }
+    // 类图标兜底：某些旧式读取路径只看窗口类
+    if (bigIcon_) ::SetClassLongPtrW(hwnd_, GCLP_HICON, reinterpret_cast<LONG_PTR>(bigIcon_));
+    if (smallIcon_) ::SetClassLongPtrW(hwnd_, GCLP_HICONSM, reinterpret_cast<LONG_PTR>(smallIcon_));
+  }
+
   static void registerClass(const std::wstring& name, HINSTANCE instance) {
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);
@@ -718,6 +748,9 @@ class WindowsWindow : public PlatformWindow {
   bool owned_ = false;
   // 离屏位图跨帧复用，避免每次重绘都重建几十 MB 的图
   CanvasCache canvasCache_;
+  // 原生窗口图标由系统持有引用，销毁窗口前不能释放
+  HICON bigIcon_ = nullptr;
+  HICON smallIcon_ = nullptr;
   // 擦背景用的刷子；窗口变大时先铺底色，避免露出黑底一帧
   HBRUSH eraseBrush_ = nullptr;
   // 拖入文件的回调；非空时才向系统注册接受拖放
