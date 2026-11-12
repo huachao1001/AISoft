@@ -1,7 +1,7 @@
 // 对话框常用控件：单选组、进度条、分组框、下拉框
 //
-// 都是纯自绘，行为与平台无关。下拉列表借用平台的弹出菜单：
-// 那样在不同系统上都能得到用户熟悉的交互，也不必在通用层维护浮层。
+// 都是纯自绘，行为与平台无关。下拉列表用挂在 ViewRoot 上的自绘浮层：
+// 宽度与字号要跟显示框严格一致，系统弹出菜单做不到这一点。
 #pragma once
 
 #include "AiUI/layouts/linear_layout.h"
@@ -9,6 +9,7 @@
 #include "AiUI/theme.h"
 #include "AiUI/view.h"
 #include "AiUI/view_group.h"
+#include "AiUI/view_root.h"
 
 #include <functional>
 #include <string>
@@ -117,7 +118,10 @@ class GroupBox : public ViewGroup {
   int titleHeight_ = 26;
 };
 
-// 下拉框：折叠态显示当前项，点开用平台弹出菜单选出
+// 下拉框：折叠态显示当前项，点开用自绘浮层列表
+//
+// 不用系统弹出菜单：原生菜单的宽度与字号由系统决定，既对不齐显示框、
+// 也没法跟随主题。自绘浮层落在 ViewRoot 上，宽高按控件本身算。
 struct ComboSpec {
   int height = 30;
   int radius = 6;
@@ -131,9 +135,10 @@ struct ComboSpec {
   Color disabledInk = kNoColor;
 };
 
-class ComboBox : public View {
+class ComboBox : public View, public ViewRoot::Overlay {
  public:
-  ComboBox() = default;
+  ComboBox();
+  ~ComboBox() override;
 
   using ChangeHandler = std::function<void(int index)>;
 
@@ -151,6 +156,16 @@ class ComboBox : public View {
 
   void setOnChange(ChangeHandler fn) { onChange_ = std::move(fn); }
 
+  // 展开状态；宿主要主动收起时调 closePopup()
+  bool isPopupOpen() const { return popupOpen_; }
+  void closePopup();
+
+  // ── ViewRoot::Overlay ──
+  void paintOverlay(Painter& painter) override;
+  bool onOverlayMouseDown(const Point& windowPoint) override;
+  bool onOverlayMouseMove(const Point& windowPoint) override;
+  Rect overlayBounds() const override;
+
  protected:
   void onPaint(Painter& painter, const Rect& rect) override;
   Size onMeasure(const Size& available) override;
@@ -159,16 +174,24 @@ class ComboBox : public View {
   void onMouseLeave() override;
   bool onKeyDown(const Key& key, const Modifiers& mods) override;
   void onFocusChanged(bool focused) override;
+  // 脱树时把浮层摘掉：ViewRoot 只存裸指针，控件销毁后不能还挂着
+  void onDetach() override;
 
  private:
   void openPopup();
   void moveSelection(int delta);
+  // 下拉列表的窗口坐标矩形；向下展开放不下时翻到控件上方
+  Rect popupWindowRect() const;
+  int popupRowHeight() const;
+  int popupRowAt(const Point& windowPoint) const;
 
   ComboSpec spec_{};
   std::vector<std::wstring> items_;
   int selected_ = -1;
+  int hotRow_ = -1;
   bool hot_ = false;
   bool focused_ = false;
+  bool popupOpen_ = false;
   ChangeHandler onChange_;
 };
 

@@ -43,14 +43,25 @@ void OptionView::onPaint(Painter& painter, const Rect& rect) {
   const int radius = spec_.radius * d / 96;
 
   if (isRadio()) {
-    // 圆形：外圈描边，选中时实心点
-    painter.fillRoundRect(box, accent, box.height() / 2);
-    const Rect inner = box.inset(1 * d / 96, 1 * d / 96, 1 * d / 96, 1 * d / 96);
+    // 外圈只描边，不铺满：选中态是"实心点 + 空心环"，
+    // 填满整个圆会糊成一坨，分不清选中边界
+    const int ring = (std::max)(1, (1 * d + 48) / 96);
+    const int outerRadius = box.height() / 2;
     if (spec_.checked) {
-      painter.fillRoundRect(inner, accent, inner.height() / 2);
-    } else {
-      // 未选中时挖白心，避免外圈看起来像实的
-      painter.fillRoundRect(inner, hot_ ? hoverBg : boxBg, inner.height() / 2);
+      // 先铺底色再描边，避免半透明描边叠在别的颜色上
+      painter.fillRoundRect(box, boxBg, outerRadius);
+    } else if (hot_) {
+      painter.fillRoundRect(box, hoverBg, outerRadius);
+    }
+    painter.strokeRoundRect(box, accent, outerRadius, ring);
+
+    if (spec_.checked) {
+      // 内缩到约半径的一半再填实心，与外圈之间留出一圈空隙
+      const int dotInset = (std::max)(ring + 1, box.height() * 29 / 100);
+      const Rect dot = box.inset(dotInset, dotInset, dotInset, dotInset);
+      if (dot.width() > 0 && dot.height() > 0) {
+        painter.fillRoundRect(dot, accent, dot.height() / 2);
+      }
     }
   } else {
     painter.fillRoundRect(box, spec_.checked ? accent : (hot_ ? hoverBg : boxBg), radius);

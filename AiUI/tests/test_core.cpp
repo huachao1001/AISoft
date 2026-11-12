@@ -12,6 +12,7 @@
 #include "AiUI/view_group.h"
 #include "AiUI/view_root.h"
 #include "AiUI/widgets/button.h"
+#include "AiUI/widgets/form_controls.h"
 #include "AiUI/widgets/input_box.h"
 #include "AiUI/widgets/list_view.h"
 #include "AiUI/widgets/tree_view.h"
@@ -949,4 +950,74 @@ AIUI_TEST(find_view_skips_views_without_id) {
   AIUI_CHECK(anonymous->id() == 0);
   AIUI_CHECK(root->findViewById(0) == nullptr);
   AIUI_CHECK(root->findView("tree") == nullptr);
+}
+
+// ───────────────────────── ComboBox ─────────────────────────
+
+AIUI_TEST(combo_popup_matches_control_width_and_height) {
+  TestEnv env;
+  auto root = std::make_unique<LinearLayout>(Orientation::kVertical);
+  auto* combo = new ComboBox();
+  combo->setItems({L"存储", L"最快", L"标准"});
+  root->addView(combo, LayoutParams{}.withSize(180, 30));
+  AIUI_CHECK(root->create(nullptr, Rect{0, 0, 400, 300}));
+
+  ComboSpec spec;
+  spec.height = 30;
+  combo->setSpec(spec);
+  root->root()->layout(Rect{0, 0, 400, 300});
+
+  ViewRoot* viewRoot = root->root();
+  viewRoot->onMouseDown(mouseAt(20, 15, MouseButton::kLeft));
+  viewRoot->onMouseUp(mouseAt(20, 15, MouseButton::kLeft));
+  AIUI_CHECK(combo->isPopupOpen());
+
+  // 弹出层与显示框同宽，且从控件下沿开始
+  const Rect popup = combo->overlayBounds();
+  AIUI_CHECK_EQ(popup.left, combo->absoluteBounds().left);
+  AIUI_CHECK_EQ(popup.right, combo->absoluteBounds().right);
+  AIUI_CHECK_EQ(popup.top, combo->absoluteBounds().bottom + 2);
+  // 行高与显示框一致，字号才不会跳变
+  AIUI_CHECK_EQ(popup.height(), 30 * 3);
+}
+
+AIUI_TEST(combo_popup_click_selects_and_closes) {
+  TestEnv env;
+  auto root = std::make_unique<LinearLayout>(Orientation::kVertical);
+  auto* combo = new ComboBox();
+  combo->setItems({L"存储", L"最快", L"标准"});
+  root->addView(combo, LayoutParams{}.withSize(180, 30));
+  AIUI_CHECK(root->create(nullptr, Rect{0, 0, 400, 300}));
+
+  int changed = -1;
+  combo->setOnChange([&changed](int index) { changed = index; });
+
+  ViewRoot* viewRoot = root->root();
+  viewRoot->onMouseDown(mouseAt(20, 15, MouseButton::kLeft));
+  viewRoot->onMouseUp(mouseAt(20, 15, MouseButton::kLeft));
+  AIUI_CHECK(combo->isPopupOpen());
+
+  // 第三行：控件下沿 30 + 间距 2，再往下两行
+  viewRoot->onMouseDown(mouseAt(20, 30 + 2 + 30 * 2 + 15));
+  AIUI_CHECK_EQ(combo->selectedIndex(), 2);
+  AIUI_CHECK_EQ(changed, 2);
+  AIUI_CHECK(!combo->isPopupOpen());
+}
+
+AIUI_TEST(combo_popup_closes_when_clicking_outside) {
+  TestEnv env;
+  auto root = std::make_unique<LinearLayout>(Orientation::kVertical);
+  auto* combo = new ComboBox();
+  combo->setItems({L"存储", L"最快"});
+  combo->setSelectedIndex(1);
+  root->addView(combo, LayoutParams{}.withSize(180, 30));
+  AIUI_CHECK(root->create(nullptr, Rect{0, 0, 400, 300}));
+
+  ViewRoot* viewRoot = root->root();
+  viewRoot->onMouseDown(mouseAt(20, 15, MouseButton::kLeft));
+  AIUI_CHECK(combo->isPopupOpen());
+  // 点列表外：收起，且不该顺带清掉已选项
+  viewRoot->onMouseDown(mouseAt(350, 280));
+  AIUI_CHECK(!combo->isPopupOpen());
+  AIUI_CHECK_EQ(combo->selectedIndex(), 1);
 }

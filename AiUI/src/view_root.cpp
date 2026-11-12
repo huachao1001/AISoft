@@ -137,8 +137,36 @@ void ViewRoot::onExpose(const Rect& update) {
   // draw 的 dirty 用窗口坐标，各层自己换算到局部
   content_->draw(painter, target);
 
+  // 浮层画在整棵树之上，不受内容区裁剪
+  if (overlay_) {
+    const Rect overlayArea = overlay_->overlayBounds().intersect(target);
+    if (!overlayArea.isEmpty()) {
+      painter.save();
+      painter.clipRect(overlayArea);
+      overlay_->paintOverlay(painter);
+      painter.restore();
+    }
+  }
+
   painter.restore();
   canvas->commit();
+}
+
+// ───────────────────────── 浮层 ─────────────────────────
+
+void ViewRoot::setOverlay(Overlay* overlay) {
+  if (overlay_ == overlay) return;
+  // 先刷掉旧浮层区域，否则撤下后那块还留着旧像素
+  if (overlay_) {
+    const Rect area = overlay_->overlayBounds();
+    overlay_ = overlay;
+    if (!area.isEmpty()) invalidateRect(area);
+  }
+  overlay_ = overlay;
+  if (overlay_) {
+    const Rect area = overlay_->overlayBounds();
+    if (!area.isEmpty()) invalidateRect(area);
+  }
 }
 
 // ───────────────────────── 尺寸 ─────────────────────────
@@ -357,6 +385,9 @@ void ViewRoot::setHovered(View* target, const MouseEvent* e) {
 // ───────────────────────── 事件 ─────────────────────────
 
 void ViewRoot::onMouseDown(const MouseEvent& e) {
+  // 浮层在最上层，先给它机会：点浮层外通常意味着收起
+  if (overlay_ && overlay_->onOverlayMouseDown(e.position)) return;
+
   View* target = hitTest(e.position);
   // 点空白处收起键盘焦点
   if (!target) {
@@ -405,6 +436,12 @@ void ViewRoot::onMouseMove(const MouseEvent& e) {
   if (capture_) {
     // 拖动期间不再切换悬停，事件全部给捕获者
     capture_->dispatchMouseMove(localEvent(capture_, e));
+    return;
+  }
+
+  // 浮层可见时由它接管悬停，底下的内容不该再响应
+  if (overlay_ && overlay_->onOverlayMouseMove(e.position)) {
+    if (window_) window_->setCursorShape(CursorShape::kHand);
     return;
   }
 

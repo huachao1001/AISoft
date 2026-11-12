@@ -232,6 +232,13 @@ void GroupBox::onLayout(const Rect& frame) {
 
 // ───────────────────────── ComboBox ─────────────────────────
 
+ComboBox::ComboBox() = default;
+
+ComboBox::~ComboBox() {
+  // 浮层在 ViewRoot 上只是裸指针：控件先销毁时必须摘掉，否则根上留悬空引用
+  if (popupOpen_ && root()) root()->setOverlay(nullptr);
+}
+
 void ComboBox::setSpec(const ComboSpec& spec) {
   spec_ = spec;
   requestLayout();
@@ -315,32 +322,120 @@ void ComboBox::moveSelection(int delta) {
   int next = selected_ + delta;
   next = std::max(0, std::min(static_cast<int>(items_.size()) - 1, next));
   setSelectedIndex(next);
+  // 展开时高亮跟着键盘走，否则列表里看不出当前会选中哪一项
+  if (popupOpen_ && next != hotRow_) {
+    hotRow_ = next;
+    if (root()) root()->invalidateRect(overlayBounds());
+  }
 }
 
 void ComboBox::openPopup() {
-  if (items_.empty() || !root() || !root()->platformWindow()) return;
+  if (items_.empty()) return;
+  if (!root() || !root()->platformWindow()) return;
+  if (popupOpen_) return;
+  popupOpen_ = true;
+  hotRow_ = selected_;
+  // 交给 ViewRoot 置顶绘制：画在整棵树之上，且优先收鼠标事件
+  root()->setOverlay(this);
+}
 
-  std::vector<MenuItem> menu;
-  menu.reserve(items_.size());
-  for (size_t i = 0; i < items_.size(); ++i) {
-    MenuItem entry;
-    entry.label = items_[i];
-    // 当前项打勾，与系统下拉观感一致
-    entry.checked = static_cast<int>(i) == selected_;
-    menu.push_back(entry);
+void ComboBox::closePopup() {
+  if (!popupOpen_) return;
+  popupOpen_ = false;
+  hotRow_ = -1;
+  if (ViewRoot* r = root()) r->setOverlay(nullptr);
+  invalidate();
+}
+
+int ComboBox::popupRowHeight() const {
+  const int d = dpi();
+  // 行高与显示框一致，字号也一致，观感才是同一套控件
+  return spec_.height * d / 96;
+}
+
+Rect ComboBox::popupWindowRect() const {
+  const int d = dpi();
+  const Rect self = absoluteBounds();
+  const Rect client = root() ? root()->platformWindow()->clientRect() : Rect{};
+  const int rows = static_cast<int>(items_.size());
+  const int height = popupRowHeight() * rows;
+  const int gap = 2 * d / 96;
+
+  int top = self.bottom + gap;
+  // 下面放不下就翻到控件上方，避免列表被窗口底边截断
+  if (client.bottom > 0 && top + height > client.bottom - gap) {
+    const int above = self.top - gap - height;
+    if (above >= client.top) top = above;
   }
+  // 与显示框严格等宽：弹出层看起来就是控件本身展开
+  return Rect{self.left, top, self.right, top + height};
+}
 
-  PlatformWindow* window = root()->platformWindow();
-  const Point origin = window->clientOrigin();
-  const Point topLeft = localToWindow(Point{0, 0});
-  // 菜单从控件下沿展开；空间不够时平台层自己会往上翻
-  const Point position{origin.x + topLeft.x,
-                       origin.y + topLeft.y + clientRect().height()};
+int ComboBox::popupRowAt(const Point& windowPoint) const {
+  const Rect popup = popupWindowRect();
+  if (!popup.contains(windowPoint)) return -1;
+  const int rowHeight = popupRowHeight();
+  if (rowHeight <= 0) return -1;
+  const int row = (windowPoint.y - popup.top) / rowHeight;
+  if (row < 0 || row >= static_cast<int>(items_.size())) return -1;
+  return row;
+}
 
-  auto* platform = AiUI::platform();
-  platform->bringToFront(window->handle());
-  const int chosen = platform->showPopupMenu(window->handle(), position, menu);
-  if (chosen >= 0) setSelectedIndex(chosen);
+bool ComboBox::onOverlayMouseDown(const Point& windowPoint) {
+  const int row = popupRowAt(windowPoint);
+  // 收起放在选中之前：setSelectedIndex 会重绘，此时浮层必须已经撤下
+  if (row >= 0) {
+    closePopup();
+    setSelectedIndex(row);
+    return true;
+  }
+  // 点在列表外就算放弃选择：点控件自身也走这里（收起，不重新展开）
+  closePopup();
+  return true;
+}
+
+bool ComboBox::onOverlayMouseMove(const Point& windowPoint) {
+  const int row = popupRowAt(windowPoint);
+  if (row != hotRow_) {
+    hotRow_ = row;
+    if (root()) root()->invalidateRect(overlayBounds());
+  }
+  return true;
+}
+
+Rect ComboBox::overlayBounds() const { return popupWindowRect(); }
+
+void ComboBox::paintOverlay(Painter& painter) {
+  const Theme& t = theme();
+  const Rect popup = popupWindowRect();
+  if (popup.isEmpty()) return;
+
+  const int d = dpi();
+  const int radius = (std::max)(4, spec_.radius * d / 96);
+  const int rowHeight = popupRowHeight();
+
+  // 阴影留白由外框自己撑：先铺一层描边色的圆角当边界
+  painter.fillRoundRect(popup, t.pane, radius);
+  painter.strokeRoundRect(popup, edgeOn(t.pane, 17), radius);
+  painter.clipRect(popup.inset(1, 1, 1, 1));
+
+  for (size_t i = 0; i < items_.size(); ++i) {
+    const int top = popup.top + static_cast<int>(i) * rowHeight;
+    const Rect row{popup.left, top, popup.right, top + rowHeight};
+    const bool isSelected = static_cast<int>(i) == selected_;
+    const bool isHot = static_cast<int>(i) == hotRow_;
+
+    if (isSelected) {
+      painter.fillRect(row, t.selBg);
+    } else if (isHot) {
+      painter.fillRect(row, t.rowHover);
+    }
+
+    // 文字用与显示框相同的字体与内边距，字号不会跳变
+    const int padX = spec_.padX * d / 96;
+    const Rect textRect{row.left + padX, row.top, row.right - padX, row.bottom};
+    painter.drawTextEllipsis(textRect, items_[i], t.text, fonts.ui);
+  }
 }
 
 void ComboBox::onMouseMove(const MouseEvent& e) {
@@ -364,6 +459,12 @@ void ComboBox::onMouseLeave() {
 bool ComboBox::onKeyDown(const Key& key, const Modifiers& mods) {
   if (!isEnabled()) return false;
   (void)mods;
+  // 列表展开时 Esc 只负责收起，不冒泡给窗口（否则会顺带关掉对话框）
+  if (key == Key::kEscape) {
+    if (!popupOpen_) return false;
+    closePopup();
+    return true;
+  }
   switch (key) {
     case Key::kUp:
       moveSelection(-1);
@@ -389,6 +490,11 @@ bool ComboBox::onKeyDown(const Key& key, const Modifiers& mods) {
 void ComboBox::onFocusChanged(bool focused) {
   focused_ = focused;
   invalidate();
+}
+
+void ComboBox::onDetach() {
+  // 浮层挂在 ViewRoot 上只是裸指针；脱树时先撤下，避免留着已销毁的控件
+  if (popupOpen_) closePopup();
 }
 
 }  // namespace AiUI

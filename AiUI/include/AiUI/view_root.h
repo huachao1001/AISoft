@@ -55,6 +55,23 @@ class ViewRoot : public WindowHost {
   void setContentView(View* view);
   View* contentView() const { return content_; }
 
+  // ── 置顶浮层 ──
+  // 浮层画在整棵树之上（下拉列表这类弹出层），并优先接收鼠标事件。
+  // 不接管所有权：调用方通常就是拥有浮层的控件，关闭时传 nullptr 撤下。
+  class Overlay {
+   public:
+    virtual ~Overlay() = default;
+    // 在窗口坐标系里绘制；已平移到窗口原点
+    virtual void paintOverlay(Painter& painter) = 0;
+    // 窗口坐标下的命中测试；返回 true 表示事件已消费
+    virtual bool onOverlayMouseDown(const Point& windowPoint) = 0;
+    virtual bool onOverlayMouseMove(const Point& windowPoint) = 0;
+    // 浮层区域（窗口坐标）：脏区刷新与命中判断都用它
+    virtual Rect overlayBounds() const = 0;
+  };
+  void setOverlay(Overlay* overlay);
+  Overlay* overlay() const { return overlay_; }
+
   // 窗口尺寸变化后重新测量与摆放
   void layout(const Rect& bounds);
   void requestLayout();
@@ -121,6 +138,8 @@ class ViewRoot : public WindowHost {
 
   PlatformWindow* window_ = nullptr;
   View* content_ = nullptr;
+  // 置顶浮层（下拉列表等）；nullptr 表示没有
+  Overlay* overlay_ = nullptr;
   View* focused_ = nullptr;
   View* hovered_ = nullptr;
   // 鼠标捕获（拖动滚动条、列宽等）与本次按下的目标，两者都可能跨控件收到 up
