@@ -370,6 +370,14 @@ class Platform {
   virtual int advanceText(const std::wstring& text, const Font& font) {
     return measureText(text, font);
   }
+  // 整串一次排版，返回每个字符的左右边界：长度 = size*2，[2i] 左缘、[2i+1] 右缘。
+  // 光标必须按整串定位：逐前缀调用 advanceText 会把每段各自的排版留白累加
+  // 进来，文本越长插入点离末字越远。返回空表示不支持，调用方自行退回。
+  virtual std::vector<int> glyphBounds(const std::wstring& text, const Font& font) {
+    (void)text;
+    (void)font;
+    return {};
+  }
 
   // ── 图片 ──
   // 从文件解码位图；失败返回无效 Image

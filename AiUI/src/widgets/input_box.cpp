@@ -61,25 +61,61 @@ Rect InputBox::textRect() const {
               top + lineHeight};
 }
 
+// 每个插入点的横向偏移（相对文本起点，物理像素）。长度 = 字符数 + 1。
+// 由「每字符精确宽度」累加得出：整串一次排版拿到字符边界，把字间距的
+// 累积误差一次算清，之后每次重绘与点击命中都直接查表。
+const std::vector<int>& InputBox::caretOffsets() const {
+  const std::wstring display = displayText();
+  const Font& font = fonts.ui;
+  const int n = static_cast<int>(display.size());
+
+  // 文本、字体或 DPI 变了才重排；光标移动、重绘都复用这份结果
+  const bool stale = offsets_.size() != static_cast<size_t>(n) + 1 ||
+                     offsetsText_ != display || offsetsDpi_ != dpi() ||
+                     offsetsFont_ != font.handle();
+  if (!stale) return offsets_;
+
+  offsets_.assign(static_cast<size_t>(n) + 1, 0);
+  offsetsText_ = display;
+  offsetsDpi_ = dpi();
+  offsetsFont_ = font.handle();
+
+  const std::vector<int> bounds = platform()->glyphBounds(display, font);
+  if (bounds.size() == static_cast<size_t>(n) * 2) {
+    // 字符之间的空隙取「本字右缘到下一字左缘」，光标落在空隙里就压不到字
+    for (int i = 0; i < n; ++i) {
+      offsets_[static_cast<size_t>(i) + 1] = bounds[static_cast<size_t>(i) * 2 + 1];
+    }
+    // 末字之后没有后续字符，用整串推进补上最后一段
+    offsets_[static_cast<size_t>(n)] =
+        (std::max)(offsets_[static_cast<size_t>(n)], platform()->advanceText(display, font));
+  } else {
+    // 平台不支持字符边界时退回逐前缀推进
+    for (int i = 1; i <= n; ++i) {
+      offsets_[static_cast<size_t>(i)] =
+          platform()->advanceText(display.substr(0, static_cast<size_t>(i)), font);
+    }
+  }
+  return offsets_;
+}
+
 int InputBox::xForPosition(int pos) const {
+  const std::vector<int>& offsets = caretOffsets();
   const int clamped = std::clamp(pos, 0, static_cast<int>(text_.size()));
-  // 用字形推进而非排版宽度：插入点要贴住末字，不能被安全余量推开
-  const int width =
-      clamped > 0 ? platform()->advanceText(displayPrefix(clamped), fonts.ui) : 0;
-  return textLeft() + width - scrollX_;
+  return textLeft() + offsets[static_cast<size_t>(clamped)] - scrollX_;
 }
 
 int InputBox::hitTest(int x) const {
+  const std::vector<int>& offsets = caretOffsets();
   const int target = x - textLeft() + scrollX_;
+  // 表里是单调递增的位置，直接找最近的插入点
   int best = 0;
   int bestDiff = INT_MAX;
-  const int n = static_cast<int>(text_.size());
-  for (int i = 0; i <= n; ++i) {
-    const int width = i > 0 ? platform()->advanceText(displayPrefix(i), fonts.ui) : 0;
-    const int diff = std::abs(width - target);
+  for (size_t i = 0; i < offsets.size(); ++i) {
+    const int diff = std::abs(offsets[i] - target);
     if (diff < bestDiff) {
       bestDiff = diff;
-      best = i;
+      best = static_cast<int>(i);
     }
   }
   return best;
@@ -107,8 +143,7 @@ void InputBox::ensureCaretVisible() {
   const int available = rc.right - spec_.padX * d / 96 - 2 * d / 96 - textLeft();
   if (available <= 0) return;
 
-  const int caretWidth =
-      caret_ > 0 ? platform()->advanceText(displayPrefix(caret_), fonts.ui) : 0;
+  const int caretWidth = caretOffsets()[static_cast<size_t>(std::clamp(caret_, 0, static_cast<int>(text_.size())))];
 
   if (caretWidth - scrollX_ < 0) {
     scrollX_ = caretWidth;

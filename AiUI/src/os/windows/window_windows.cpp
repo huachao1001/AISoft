@@ -10,6 +10,7 @@
 
 #include <map>
 #include <memory>
+#include <vector>
 
 namespace AiUI {
 namespace os {
@@ -913,6 +914,47 @@ class WindowsPlatform : public Platform {
     // 两种格式只差两侧留白，取差值一半就是左侧那一份
     const float inset = (loose.Width > narrow.Width) ? (loose.Width - narrow.Width) * 0.5f : 0.0f;
     return static_cast<int>(inset + narrow.Width + 0.5f);
+  }
+
+  // 整串一次排版，向 GDI+ 要每字符的布局范围。光标与绘制必须共用这一套
+  // 坐标：逐个前缀去量（advanceText）会把每段各自的排版留白累加进来，
+  // 十几个字符就能偏出几像素，文本越长插入点离末字越远。
+  std::vector<int> glyphBounds(const std::wstring& text, const Font& font) override {
+    const int n = static_cast<int>(text.size());
+    if (n <= 0) return {};
+    auto* g = measureGraphics();
+    auto* f = static_cast<Gdiplus::Font*>(font.handle());
+    if (!g || !f) return {};
+
+    std::vector<Gdiplus::CharacterRange> ranges(static_cast<size_t>(n));
+    for (int i = 0; i < n; ++i) {
+      ranges[static_cast<size_t>(i)] = Gdiplus::CharacterRange(i, 1);
+    }
+
+    Gdiplus::StringFormat fmt;
+    fmt.SetAlignment(Gdiplus::StringAlignmentNear);
+    fmt.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+    fmt.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap | Gdiplus::StringFormatFlagsNoClip |
+                       Gdiplus::StringFormatFlagsMeasureTrailingSpaces);
+    fmt.SetMeasurableCharacterRanges(n, ranges.data());
+
+    // 矩形给足宽高，免得排版折行或裁掉后面的字符
+    const Gdiplus::RectF box(0, 0, static_cast<Gdiplus::REAL>(n + 1) * 4096.0f, 4096.0f);
+    std::vector<Gdiplus::Region> regions(static_cast<size_t>(n));
+    if (g->MeasureCharacterRanges(text.c_str(), n, f, box, &fmt, n, regions.data()) !=
+        Gdiplus::Ok) {
+      return {};
+    }
+
+    std::vector<int> out(static_cast<size_t>(n) * 2, 0);
+    for (int i = 0; i < n; ++i) {
+      Gdiplus::RectF bounds;
+      // GetBounds 要显式传目标矩形，单参数版本不存在
+      if (regions[static_cast<size_t>(i)].GetBounds(&bounds, g) != Gdiplus::Ok) return {};
+      out[static_cast<size_t>(i) * 2] = static_cast<int>(std::lround(bounds.GetLeft()));
+      out[static_cast<size_t>(i) * 2 + 1] = static_cast<int>(std::lround(bounds.GetRight()));
+    }
+    return out;
   }
 
   Image loadImage(const std::wstring& path) override { return loadImageFile(path); }

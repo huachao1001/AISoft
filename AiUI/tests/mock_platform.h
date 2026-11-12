@@ -237,6 +237,7 @@ class FakePlatform : public AiUI::Platform {
   void setDpi(int dpi) { dpi_ = dpi; }
   // 每个字符的宽度，默认 7，避免测试依赖真实字体
   void setCharWidth(int width) { charWidth_ = width; }
+  int charWidth() const { return charWidth_; }
   FakeWindow* lastWindow() const { return lastWindow_; }
   int destroyedWindows() const { return destroyed_; }
   // 上次 createWindow 收到的类名

@@ -616,6 +616,37 @@ AIUI_TEST(input_box_reports_ime_caret) {
   AIUI_CHECK(window->imeX() >= 0);
 }
 
+// 光标要落在末字之后固定距离，不能随文本变长而漂移。
+// 逐前缀测量会把每段各自的排版留白累加进来，正是本用例要防的回归。
+AIUI_TEST(input_box_caret_gap_stays_constant) {
+  TestEnv env;
+  auto root = std::make_unique<LinearLayout>(Orientation::kVertical);
+  auto* box = new InputBox();
+  root->addView(box, LayoutParams{}.withSize(LayoutParams::kMatchParent, 34));
+  AIUI_CHECK(root->create(nullptr, Rect{0, 0, 400, 300}));
+  root->root()->requestFocus(box);
+
+  const int charWidth = env.fake.platform().charWidth();
+
+  auto caretRightOfShort = [&](const std::wstring& text) {
+    box->setText(text);
+    root->root()->onExpose(Rect{0, 0, 400, 300});
+    int right = -1;
+    for (const FillCall& fill : env.fake.platform().lastWindow()->lastFills()) {
+      // 光标是 1px 左右窄条，高度撑满文本行
+      if (fill.rect.width() <= 2 && fill.rect.height() > 10) right = fill.rect.right;
+    }
+    return right;
+  };
+
+  const int shortText = caretRightOfShort(L"ab");
+  const int longText = caretRightOfShort(L"abcdefghij");
+  AIUI_CHECK(shortText > 0);
+  AIUI_CHECK(longText > shortText);
+  // 文本多了 8 个字，光标应恰好多推进 8 个字宽
+  AIUI_CHECK(longText - shortText == charWidth * 8);
+}
+
 AIUI_TEST(input_box_draws_caret_when_empty) {
   TestEnv env;
   auto root = std::make_unique<LinearLayout>(Orientation::kVertical);

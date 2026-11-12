@@ -8,6 +8,7 @@
 
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace AiUI {
 
@@ -66,6 +67,8 @@ class InputBox : public View {
  private:
   Rect textRect() const;
   int textLeft() const;
+  // 每个插入点的横向偏移，按「每字符精确宽度」累加并缓存
+  const std::vector<int>& caretOffsets() const;
   // 前 pos 个字符的显示形式：密码模式下统一替换为掩码字符
   std::wstring displayPrefix(int pos) const;
   std::wstring displayText() const { return displayPrefix(static_cast<int>(text_.size())); }
@@ -98,6 +101,12 @@ class InputBox : public View {
   bool focused_ = false;
   bool dragging_ = false;
   bool caretVisible_ = true;
+
+  // 多组控件共用同一份字体对象，用句柄判断字体是否换过
+  mutable std::vector<int> offsets_;
+  mutable std::wstring offsetsText_;
+  mutable void* offsetsFont_ = nullptr;
+  mutable int offsetsDpi_ = 0;
 
   InputSpec spec_{};
   ChangeHandler onChange_;
