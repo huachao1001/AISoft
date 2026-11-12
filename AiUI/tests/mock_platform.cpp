@@ -148,6 +148,15 @@ int FakePlatform::measureText(const std::wstring& text, const AiUI::Font& font) 
 std::vector<int> FakePlatform::glyphBounds(const std::wstring& text, const AiUI::Font& font) {
   (void)font;
   std::vector<int> out(text.size() * 2, 0);
+  if (brokenGlyphBounds_) {
+    // 复刻 GDI+ 的退化行为：整串返回一个巨大的矩形，
+    // 左缘为 0、右缘大到触发输入框的防御分支
+    for (size_t i = 0; i < text.size(); ++i) {
+      out[i * 2] = 0;
+      out[i * 2 + 1] = 4000000;
+    }
+    return out;
+  }
   for (size_t i = 0; i < text.size(); ++i) {
     out[i * 2] = static_cast<int>(i) * charWidth_;
     // 留出 1px 字形侧边距，光标落在侧边距里才不会压到墨迹

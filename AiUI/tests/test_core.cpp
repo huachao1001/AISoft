@@ -652,6 +652,49 @@ AIUI_TEST(input_box_caret_gap_stays_constant) {
   AIUI_CHECK(longText - shortText == charWidth * 8);
 }
 
+AIUI_TEST(input_box_caret_stays_inside_long_text) {
+  TestEnv env;
+  auto root = std::make_unique<LinearLayout>(Orientation::kVertical);
+  auto* box = new InputBox();
+  root->addView(box, LayoutParams{}.withSize(LayoutParams::kMatchParent, 34));
+  AIUI_CHECK(root->create(nullptr, Rect{0, 0, 400, 300}));
+  root->root()->requestFocus(box);
+
+  // 长路径是常态（"F:\...\sample.tar.gz" 早已超过 32 字符）。
+  // 只要字符边界有一处算错，光标就会把文本整体推出可视区，看起来像输入框空了。
+  box->setText(L"F:\\AISoft\\build_tmp\\a-rather-long-file-name-sample.tar.gz");
+  root->root()->onExpose(Rect{0, 0, 400, 300});
+
+  int caretRight = -1;
+  for (const FillCall& fill : env.fake.platform().lastWindow()->lastFills()) {
+    if (fill.rect.width() <= 2 && fill.rect.height() > 10) caretRight = fill.rect.right;
+  }
+  AIUI_CHECK(caretRight > 0);
+  // 光标必须仍在输入框内；滚出边界说明偏移表被算坏了
+  AIUI_CHECK(caretRight <= box->bounds().right);
+}
+
+AIUI_TEST(input_box_falls_back_when_glyph_bounds_are_broken) {
+  TestEnv env;
+  env.fake.platform().setBrokenGlyphBounds(true);
+  auto root = std::make_unique<LinearLayout>(Orientation::kVertical);
+  auto* box = new InputBox();
+  root->addView(box, LayoutParams{}.withSize(LayoutParams::kMatchParent, 34));
+  AIUI_CHECK(root->create(nullptr, Rect{0, 0, 400, 300}));
+  root->root()->requestFocus(box);
+
+  // 后端边界不可用时必须退回逐前缀测量，而不是把文本推出可视区
+  box->setText(L"F:\\AISoft\\build_tmp\\a-rather-long-file-name-sample.tar.gz");
+  root->root()->onExpose(Rect{0, 0, 400, 300});
+
+  int caretRight = -1;
+  for (const FillCall& fill : env.fake.platform().lastWindow()->lastFills()) {
+    if (fill.rect.width() <= 2 && fill.rect.height() > 10) caretRight = fill.rect.right;
+  }
+  AIUI_CHECK(caretRight > 0);
+  AIUI_CHECK(caretRight <= box->bounds().right);
+}
+
 AIUI_TEST(input_box_draws_caret_when_empty) {
   TestEnv env;
   auto root = std::make_unique<LinearLayout>(Orientation::kVertical);

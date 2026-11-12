@@ -244,6 +244,8 @@ class FakePlatform : public AiUI::Platform {
   void setDpi(int dpi) { dpi_ = dpi; }
   // 每个字符的宽度，默认 7，避免测试依赖真实字体
   void setCharWidth(int width) { charWidth_ = width; }
+  // 模拟后端给出离谱的字符边界（GDI+ 超过 32 个范围时会整串退化）
+  void setBrokenGlyphBounds(bool broken) { brokenGlyphBounds_ = broken; }
   int charWidth() const { return charWidth_; }
   FakeWindow* lastWindow() const { return lastWindow_; }
   int destroyedWindows() const { return destroyed_; }
@@ -254,6 +256,7 @@ class FakePlatform : public AiUI::Platform {
   int dpi_ = 96;
   int charWidth_ = 7;
   bool drawingReady_ = false;
+  bool brokenGlyphBounds_ = false;
   int destroyed_ = 0;
   int64_t monotonicMs_ = 0;
   FakeWindow* lastWindow_ = nullptr;

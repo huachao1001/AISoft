@@ -926,33 +926,47 @@ class WindowsPlatform : public Platform {
     auto* f = static_cast<Gdiplus::Font*>(font.handle());
     if (!g || !f) return {};
 
-    std::vector<Gdiplus::CharacterRange> ranges(static_cast<size_t>(n));
-    for (int i = 0; i < n; ++i) {
-      ranges[static_cast<size_t>(i)] = Gdiplus::CharacterRange(i, 1);
-    }
-
     Gdiplus::StringFormat fmt;
     fmt.SetAlignment(Gdiplus::StringAlignmentNear);
     fmt.SetLineAlignment(Gdiplus::StringAlignmentCenter);
     fmt.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap | Gdiplus::StringFormatFlagsNoClip |
                        Gdiplus::StringFormatFlagsMeasureTrailingSpaces);
-    fmt.SetMeasurableCharacterRanges(n, ranges.data());
 
-    // 矩形给足宽高，免得排版折行或裁掉后面的字符
-    const Gdiplus::RectF box(0, 0, static_cast<Gdiplus::REAL>(n + 1) * 4096.0f, 4096.0f);
-    std::vector<Gdiplus::Region> regions(static_cast<size_t>(n));
-    if (g->MeasureCharacterRanges(text.c_str(), n, f, box, &fmt, n, regions.data()) !=
-        Gdiplus::Ok) {
-      return {};
-    }
-
+    // GDI+ 一次最多接受 32 个可测范围，超出的整串会退化成一个大矩形。
+    // 分段测，段起点用前一段的排布宽度推进，误差只落在段边界上。
+    constexpr int kMaxRanges = 32;
     std::vector<int> out(static_cast<size_t>(n) * 2, 0);
-    for (int i = 0; i < n; ++i) {
-      Gdiplus::RectF bounds;
-      // GetBounds 要显式传目标矩形，单参数版本不存在
-      if (regions[static_cast<size_t>(i)].GetBounds(&bounds, g) != Gdiplus::Ok) return {};
-      out[static_cast<size_t>(i) * 2] = static_cast<int>(std::lround(bounds.GetLeft()));
-      out[static_cast<size_t>(i) * 2 + 1] = static_cast<int>(std::lround(bounds.GetRight()));
+    Gdiplus::REAL originX = 0.0f;
+    std::vector<Gdiplus::CharacterRange> ranges(kMaxRanges);
+    std::vector<Gdiplus::Region> regions(kMaxRanges);
+
+    for (int start = 0; start < n; start += kMaxRanges) {
+      const int count = (std::min)(kMaxRanges, n - start);
+      for (int i = 0; i < count; ++i) ranges[static_cast<size_t>(i)] = Gdiplus::CharacterRange(i, 1);
+      fmt.SetMeasurableCharacterRanges(count, ranges.data());
+
+      // 矩形给足宽高，免得排版折行或裁掉后面的字符
+      const Gdiplus::RectF box(0, 0, static_cast<Gdiplus::REAL>(count + 1) * 4096.0f, 4096.0f);
+      if (g->MeasureCharacterRanges(text.c_str() + start, count, f, box, &fmt, count,
+                                    regions.data()) != Gdiplus::Ok) {
+        return {};
+      }
+
+      for (int i = 0; i < count; ++i) {
+        Gdiplus::RectF bounds;
+        // GetBounds 要显式传目标矩形，单参数版本不存在
+        if (regions[static_cast<size_t>(i)].GetBounds(&bounds, g) != Gdiplus::Ok) return {};
+        const size_t at = static_cast<size_t>(start + i) * 2;
+        out[at] = static_cast<int>(std::lround(originX + bounds.GetLeft()));
+        out[at + 1] = static_cast<int>(std::lround(originX + bounds.GetRight()));
+      }
+
+      // 段的推进量就是本段末字符的布局右缘；最后一段之后不再需要
+      if (start + count < n) {
+        Gdiplus::RectF tail;
+        if (regions[static_cast<size_t>(count) - 1].GetBounds(&tail, g) != Gdiplus::Ok) return {};
+        originX += tail.GetRight();
+      }
     }
     return out;
   }

@@ -81,7 +81,25 @@ const std::vector<int>& InputBox::caretOffsets() const {
   offsetsFont_ = font.handle();
 
   const std::vector<int> bounds = platform()->glyphBounds(display, font);
-  if (bounds.size() == static_cast<size_t>(n) * 2) {
+  // 后端返回的边界要单调递增且总长合理：落后端的实现（如 GDI+ 超过
+  // 32 个范围就整串退化）会给出离谱的坐标，此时不能直接采用，
+  // 否则末位会被当成几百万像素，光标把文本整段推出可视区。
+  bool usable = bounds.size() == static_cast<size_t>(n) * 2;
+  if (usable) {
+    const int total = platform()->advanceText(display, font);
+    int prev = 0;
+    for (size_t i = 0; i < bounds.size(); i += 2) {
+      const int left = bounds[i];
+      const int right = bounds[i + 1];
+      if (right < left || left < prev - 1 || right > total * 2 + 64) {
+        usable = false;
+        break;
+      }
+      prev = right;
+    }
+  }
+
+  if (usable) {
     // 每个插入点都取所在字符的布局右缘，中间与末尾同一套坐标。
     // 末尾不能再退回 advanceText：那是逐前缀反推留白的旧算法，误差随
     // 文本变长累积，会让末字之后的空隙越拉越大。
@@ -89,7 +107,7 @@ const std::vector<int>& InputBox::caretOffsets() const {
       offsets_[static_cast<size_t>(i) + 1] = bounds[static_cast<size_t>(i) * 2 + 1];
     }
   } else {
-    // 平台不支持字符边界时退回逐前缀推进
+    // 后端没给出可用边界时退回逐前缀推进
     for (int i = 1; i <= n; ++i) {
       offsets_[static_cast<size_t>(i)] =
           platform()->advanceText(display.substr(0, static_cast<size_t>(i)), font);
