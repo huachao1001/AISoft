@@ -294,6 +294,8 @@ bool View::dispatchChar(wchar_t ch) {
 
 void View::dispatchFocusChanged(bool focused) { onFocusChanged(focused); }
 
+void View::dispatchWindowActivated(bool active) { onWindowActivated(active); }
+
 void View::dispatchTimer() { onTimer(); }
 
 void View::dispatchDelayed() { onDelayed(); }

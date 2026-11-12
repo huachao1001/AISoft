@@ -23,8 +23,6 @@ struct InputSpec {
   // 插入点竖线宽度（96 DPI 设计值），按 DPI 四舍五入到物理像素：
   // 写死物理像素在 200% 屏上会变成发丝线
   int caretWidth = 1;
-  // 圆角外的四角填充色，需与宿主底色一致
-  Color outerBackground = kColorPane;
   // 密码模式：显示为圆点，但仍可选中与复制
   bool password = false;
 };
@@ -61,8 +59,9 @@ class InputBox : public View {
   bool onKeyDown(const Key& key, const Modifiers& mods) override;
   bool onChar(wchar_t ch) override;
   void onFocusChanged(bool focused) override;
+  // 窗口整体失活时收起插入点，逻辑焦点保留
+  void onWindowActivated(bool active) override;
   void onTimer() override;
-  Color backgroundColor() const override { return spec_.outerBackground; }
 
  private:
   Rect textRect() const;

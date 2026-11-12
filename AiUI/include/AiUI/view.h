@@ -213,6 +213,9 @@ class View {
   virtual bool dispatchKeyDown(const Key& key, const Modifiers& mods);
   virtual bool dispatchChar(wchar_t ch);
   virtual void dispatchFocusChanged(bool focused);
+  // 窗口整体失活/恢复。与焦点转移不同：逻辑焦点不变、不触发失焦回调，
+  // 只用来收起光标这类「没有前台就不该出现」的装饰。
+  virtual void dispatchWindowActivated(bool active);
   virtual void dispatchTimer();
   // 一次性延时到期
   virtual void dispatchDelayed();
@@ -255,6 +258,8 @@ class View {
   virtual bool onKeyDown(const Key&, const Modifiers&) { return false; }
   virtual bool onChar(wchar_t) { return false; }
   virtual void onFocusChanged(bool) {}
+  // 窗口整体失活/恢复，逻辑焦点保持不变
+  virtual void onWindowActivated(bool) {}
   virtual void onTimer() {}
   // 一次性延时到期；postDelayed 时登记的目标收到
   virtual void onDelayed() {}

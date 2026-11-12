@@ -20,6 +20,8 @@ using AiUI::Size;
 struct FillCall {
   Rect rect;
   Color color;
+  // 圆角填充带上半径，用来区分「铺满矩形」与「带圆角的底」
+  int radius = 0;
 };
 
 // 最小绘制后端：只记录填充与裁剪，其余图元忽略

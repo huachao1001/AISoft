@@ -423,6 +423,20 @@ void InputBox::onFocusChanged(bool focused) {
   if (!focused && onBlur_) onBlur_();
 }
 
+void InputBox::onWindowActivated(bool active) {
+  // 窗口不在前台时插入点不该出现：它看起来会像「卡住的光标」。
+  // 逻辑焦点保留，窗口回到前台后重新开始闪烁。
+  if (active) {
+    if (!focused_) return;
+    caretVisible_ = true;
+    startBlinkTimer();
+  } else {
+    stopBlinkTimer();
+    caretVisible_ = false;
+  }
+  invalidate();
+}
+
 void InputBox::onTimer() {
   if (!focused_) return;
   caretVisible_ = !caretVisible_;

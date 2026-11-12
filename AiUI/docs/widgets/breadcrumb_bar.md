@@ -109,5 +109,5 @@ bar->setCallbacks(std::move(callbacks));
 
 - `setSegments` 会立即重算命中区，否则新节点没有可点击区域。
 - 编辑框和搜索框是组件的子控件，随组件一起释放。
-- 编辑框的圆角由 `InputBox` 自己画，`outerBackground` 取面包屑的底色，
-  换底色时记得同步 `BreadcrumbStyle::background`。
+- 编辑框的圆角由 `InputBox` 自己画；控件不上报背景色，圆角外自然透出
+  面包屑底色，换底色不需要额外同步。

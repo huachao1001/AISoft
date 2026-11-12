@@ -666,6 +666,60 @@ AIUI_TEST(input_box_draws_caret_when_empty) {
   AIUI_CHECK(caret);
 }
 
+// ───────────────────────── 失焦与背景 ─────────────────────────
+
+// 切到别的软件时窗口失活，插入点必须收起来：
+// 只停定时器会让光标停在最后一次可见状态，看起来像卡住了。
+AIUI_TEST(input_box_hides_caret_when_window_deactivates) {
+  TestEnv env;
+  auto root = std::make_unique<LinearLayout>(Orientation::kVertical);
+  auto* box = new InputBox();
+  root->addView(box, LayoutParams{}.withSize(LayoutParams::kMatchParent, 34));
+  AIUI_CHECK(root->create(nullptr, Rect{0, 0, 400, 300}));
+  root->root()->requestFocus(box);
+  box->setText(L"hello");
+
+  auto caretDrawn = [&] {
+    root->root()->onExpose(Rect{0, 0, 400, 300});
+    for (const FillCall& fill : env.fake.platform().lastWindow()->lastFills()) {
+      if (fill.rect.width() <= 2 && fill.rect.height() > 10) return true;
+    }
+    return false;
+  };
+
+  AIUI_CHECK(caretDrawn());
+
+  // 窗口失去前台焦点：光标收起，但逻辑焦点保留
+  root->root()->onFocusChanged(false);
+  AIUI_CHECK(!caretDrawn());
+  AIUI_CHECK(box->isFocused());
+
+  // 回到前台：光标恢复
+  root->root()->onFocusChanged(true);
+  AIUI_CHECK(caretDrawn());
+}
+
+// 输入框圆角外不能有实色底：一旦上报背景色，View 会先铺满矩形，
+// 四个角就变成白方块，放在非白底色上会露出明显的白角。
+AIUI_TEST(input_box_leaves_rounded_corners_transparent) {
+  TestEnv env;
+  auto root = std::make_unique<LinearLayout>(Orientation::kVertical);
+  auto* box = new InputBox();
+  root->addView(box, LayoutParams{}.withSize(LayoutParams::kMatchParent, 34));
+  AIUI_CHECK(root->create(nullptr, Rect{0, 0, 400, 300}));
+  root->root()->onExpose(Rect{0, 0, 400, 300});
+
+  // 圆角范围只该出现圆角填充，不该先有一块铺满整个控件的直角矩形
+  for (const FillCall& fill : env.fake.platform().lastWindow()->lastFills()) {
+    if (fill.radius == 0 && fill.rect.left == box->bounds().left &&
+        fill.rect.top == box->bounds().top &&
+        fill.rect.width() == box->bounds().width() &&
+        fill.rect.height() == box->bounds().height()) {
+      AIUI_CHECK(false);
+    }
+  }
+}
+
 // ───────────────────────── 横向滚动 ─────────────────────────
 
 AIUI_TEST(scroll_view_vertical_and_horizontal_are_independent) {

@@ -692,9 +692,6 @@ class Generator {
       }
       if (has(node, "radius")) line(2, "spec.radius = " + get(node, "radius", "7") + ";");
       if (has(node, "padding")) line(2, "spec.padX = " + get(node, "padding", "11") + ";");
-      if (has(node, "outerColor")) {
-        line(2, "spec.outerBackground = " + colorExpr(node, "outerColor", "kColorPane") + ";");
-      }
       line(2, variable + "->setSpec(spec);");
       line(1, "}");
       return;

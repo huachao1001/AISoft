@@ -10,8 +10,7 @@ void RecordingBackend::fillRect(const Rect& rc, Color color) {
 }
 
 void RecordingBackend::fillRoundRect(const Rect& rc, Color color, int radius) {
-  (void)radius;
-  fills_.push_back(FillCall{map(rc), color});
+  fills_.push_back(FillCall{map(rc), color, radius});
 }
 
 void RecordingBackend::strokeRoundRect(const Rect& rc, Color color, int radius, int lineWidth) {

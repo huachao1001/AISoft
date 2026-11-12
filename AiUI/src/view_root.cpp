@@ -208,14 +208,24 @@ void ViewRoot::clearFocus() {
 void ViewRoot::onFocusChanged(bool focused) {
   // 窗口失焦只收起光标，逻辑焦点保留，切回来还能继续输入
   if (!focused) {
-    if (focused_) focused_->stopBlinkTimer();
+    if (focused_) {
+      focused_->stopBlinkTimer();
+      // 不通知 onFocusChanged：那会触发失焦回调，面包屑会直接退出编辑态。
+      // 这里只是窗口不在前台，插入点不该继续显示。
+      focused_->dispatchWindowActivated(false);
+      focused_->invalidate();
+    }
     if (hovered_) {
       hovered_->dispatchMouseLeave();
       hovered_ = nullptr;
     }
     return;
   }
-  if (focused_) focused_->dispatchFocusChanged(true);
+  if (focused_) {
+    focused_->dispatchWindowActivated(true);
+    focused_->dispatchFocusChanged(true);
+    focused_->invalidate();
+  }
 }
 
 void ViewRoot::onTimer() {

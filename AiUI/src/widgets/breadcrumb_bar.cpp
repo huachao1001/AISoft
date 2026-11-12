@@ -74,7 +74,6 @@ void BreadcrumbBar::onCreated() {
   spec.leadIconGap = 5;
   spec.padX = 11;
   spec.radius = 7;
-  spec.outerBackground = style_.background;
   search_->setSpec(spec);
   search_->setOnChange([this] {
     if (callbacks_.onSearch) callbacks_.onSearch(search_->text());
@@ -283,7 +282,6 @@ void BreadcrumbBar::showEdit() {
     spec.padX = 10;
     spec.radius = 7;  // 圆角由输入框自绘
     spec.hasLeadIcon = false;
-    spec.outerBackground = style_.background;
     edit_->setSpec(spec);
     edit_->setOnSubmit([this](bool committed) {
       const std::wstring text = committed ? edit_->text() : std::wstring();

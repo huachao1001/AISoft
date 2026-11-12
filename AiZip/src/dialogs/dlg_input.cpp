@@ -43,7 +43,6 @@ void DlgInput::onCreate() {
   if (edit_) {
     AiUI::InputSpec spec = edit_->spec();
     spec.password = password_;
-    spec.outerBackground = AiUI::kColorDialogBg;
     edit_->setSpec(spec);
 
     edit_->setText(initial_);

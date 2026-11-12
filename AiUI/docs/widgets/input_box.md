@@ -29,10 +29,9 @@ box->setOnSubmit([](bool committed) {
 | `leadIconSize` / `leadIconGap` | 14 / 5 | 图标尺寸与右间距 |
 | `padX` | 11 | 左右内边距 |
 | `radius` | 7 | 圆角半径 |
-| `outerBackground` | `kColorPane` | 圆角外的四角填充色 |
 
-`outerBackground` 必须和宿主底色一致，否则圆角外侧的四个小三角会露出
-不协调的白色。放在面包屑里就取面包屑底色，放在对话框里就取对话框底色。
+圆角外的区域不填色：控件不上报背景色，四角自然透出所在容器的底色。所以
+放到任意底色上都成立，不需要再手工传宿主底色。
 
 ## 内容
 
@@ -91,7 +90,7 @@ IME 组合串通过 `onCompositionStart/Update/End` 处理，中文输入法下�
 ## XML
 
 ```xml
-<InputBox id="search" cue="搜索" icon="search" radius="7" padding="11" outerColor="#ffffff"/>
+<InputBox id="search" cue="搜索" icon="search" radius="7" padding="11"/>
 ```
 
 | 属性 | 说明 |
@@ -100,7 +99,6 @@ IME 组合串通过 `onCompositionStart/Update/End` 处理，中文输入法下�
 | `icon` | 前置图标名，写了就自动开 `hasLeadIcon` |
 | `radius` | 圆角半径 |
 | `padding` | 左右内边距，对应 `spec.padX` |
-| `outerColor` | 圆角外填充色，对应 `spec.outerBackground` |
 
 ## 注意
 
