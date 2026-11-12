@@ -92,6 +92,16 @@ target_link_libraries(AiZip PRIVATE
   comctl32
 )
 
+# 链接完就把 exe 同步到仓库根的 dist\，省得每次手动复制。
+# 脚本自己判断时间戳，没变化时不改动文件。
+add_custom_command(TARGET AiZip POST_BUILD
+  COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+          -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/sync_dist.ps1"
+          -Config "${CMAKE_BINARY_DIR}"
+  COMMENT "同步 dist"
+  VERBATIM
+)
+
 # 内核功能回归工具（非发布产物）：命令行驱动压缩/解压，便于端到端校验
 add_executable(test_arc
   tools/test_arc.cpp
