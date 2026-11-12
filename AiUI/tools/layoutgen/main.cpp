@@ -1,4 +1,4 @@
-﻿// layoutgen：把 XML 布局编译成 C++ 代码
+// layoutgen：把 XML 布局编译成 C++ 代码
 //
 // 用法：layoutgen <输入.xml> <输出.h> <输出.cpp>
 //
@@ -298,6 +298,26 @@ std::string iconExpr(const std::string& name) {
   return it == kIcons.end() ? "IconId::kNone" : it->second;
 }
 
+// Theme 的字段名，用于 XML 里直接引用主题色（background="dialogBg"）。
+// 写在这里而不是从 theme.h 反射：字段增减时编译期就能发现漏改。
+const std::set<std::string>& themeRoles() {
+  static const std::set<std::string> kRoles = {
+      "body",        "tool",         "pane",          "line",
+      "lineSoft",    "lineHead",     "headerBg",      "text",
+      "textHead",    "textMuted",    "textFaint",     "ink",
+      "link",        "linkHover",    "currentBg",     "selBg",
+      "rowHover",    "hover",        "activeInk",     "btnHoverBg",
+      "btnDownBg",   "btnDisBg",     "tagBg",         "tagInk",
+      "dialogBg",    "inputBg",      "inputFocus",    "titleBg",
+      "titleBgInactive", "titleText", "titleTextInactive", "titleButtonHover",
+      "titleButtonDown", "closeHover", "closeDown",   "closeInk",
+      "titleLine",   "separator",    "currentInk",    "iconMuted",
+  };
+  return kRoles;
+}
+
+bool isThemeRole(const std::string& value) { return themeRoles().count(value) > 0; }
+
 // "#rrggbb" / "#aarrggbb" 转 makeColor 表达式
 std::string colorExpr(const XmlNode& node, const char* key, const std::string& fallback) {
   const std::string value = get(node, key);
@@ -424,6 +444,8 @@ class Generator {
 
     // 根节点属性作用在 this 上
     emitContainerProperties(root, "this");
+    // 根节点的底色也要生效，否则 XML 里写的背景只能在子节点上用
+    emitBackground(root, "this");
     // 根节点自身的 id 也要能查到；不需要额外成员，this 就是它
     const std::string rootId = get(root, "id");
     if (isValidIdentifier(rootId)) line(1, "this->setId(AiUI::makeId(\"" + rootId + "\"));");
@@ -522,6 +544,18 @@ class Generator {
     return out.str();
   }
 
+  // 底色：固定色走 setBackgroundColor，主题字段名走 setBackgroundRole，
+  // 后者换主题时自动重取，宿主不用重新下发
+  void emitBackground(const XmlNode& node, const std::string& variable) {
+    if (!has(node, "background")) return;
+    const std::string value = get(node, "background");
+    if (isThemeRole(value)) {
+      line(1, variable + "->setBackgroundRole(&Theme::" + value + ");");
+      return;
+    }
+    line(1, variable + "->setBackgroundColor(" + colorExpr(node, "background", "kNoColor") + ");");
+  }
+
   // 容器自身的属性
   void emitContainerProperties(const XmlNode& node, const std::string& target) {
     const std::string tag = node.tag;
@@ -576,11 +610,9 @@ class Generator {
     // 布局容器与普通容器都走 ViewGroup::addView，布局参数由它转交
     line(1, parentVar + "->addView(" + variable + ", " + layoutParams(node) + ");");
 
-    // 任意节点都可以直接铺底色：对话框的底色就是这么给的
-    if (has(node, "background")) {
-      line(1, variable + "->setBackgroundColor(" + colorExpr(node, "background", "kNoColor") +
-                     ");");
-    }
+    // 任意节点都可以直接铺底色：对话框的底色就是这么给的。
+    // 写 #rrggbb 是固定色；写主题字段名（如 dialogBg）则随主题切换。
+    emitBackground(node, variable);
 
     if (isContainer(node.tag)) emitContainerProperties(node, variable);
     else emitWidgetProperties(node, variable);
@@ -633,6 +665,17 @@ class Generator {
       if (has(node, "borderColor")) {
         line(2, "spec.border = " + colorExpr(node, "borderColor", "kNoColor") + ";");
       }
+      if (has(node, "hoverBackgroundColor")) {
+        line(2, "spec.hoverBackground = " + colorExpr(node, "hoverBackgroundColor", "kNoColor") +
+                      ";");
+      }
+      if (has(node, "downBackgroundColor")) {
+        line(2, "spec.downBackground = " + colorExpr(node, "downBackgroundColor", "kNoColor") +
+                      ";");
+      }
+      if (has(node, "hoverTextColor")) {
+        line(2, "spec.hoverInk = " + colorExpr(node, "hoverTextColor", "kNoColor") + ";");
+      }
       line(2, variable + "->setSpec(spec);");
       line(1, "}");
       return;
@@ -646,7 +689,13 @@ class Generator {
       line(1, "{");
       line(2, "TextStyle style;");
       if (has(node, "textColor")) {
-        line(2, "style.color = " + colorExpr(node, "textColor", "kColorText") + ";");
+        // 写 #rrggbb 是固定色；写主题字段名则随主题切换
+        const std::string value = get(node, "textColor");
+        if (isThemeRole(value)) {
+          line(2, "style.colorRole = &Theme::" + value + ";");
+        } else {
+          line(2, "style.color = " + colorExpr(node, "textColor", "kNoColor") + ";");
+        }
       }
       if (has(node, "align")) line(2, "style.align = " + alignExpr(get(node, "align")) + ";");
       if (getBool(node, "bold", false)) line(2, "style.bold = true;");
@@ -667,6 +716,43 @@ class Generator {
       return;
     }
 
+    // 列表 / 树 / 状态栏 / 面包屑：颜色属性映射到各自的样式结构。
+    // 不写或写主题角色名都等于"跟随主题"；只有固定色才需要生成赋值。
+    if (tag == "ListView" || tag == "TreeView" || tag == "StatusBar" ||
+        tag == "BreadcrumbBar") {
+      const std::map<std::string, const char*> kTypes = {
+          {"ListView", "ListStyle"},
+          {"TreeView", "TreeStyle"},
+          {"StatusBar", "StatusStyle"},
+          {"BreadcrumbBar", "BreadcrumbStyle"},
+      };
+      static const char* kFields[] = {"background", "text",   "hoverBg",     "selBg",
+                                      "line",       "divider", "headBg",     "headLine",
+                                      "rowLine",    "headText", "sortArrow", "textCurrent",
+                                      "backInk",    "backInkDisabled", "currentBg",
+                                      "separator",  "textActive", "iconColor", "iconActive",
+                                      "tagBg",      "tagInk"};
+      std::vector<std::string> assignments;
+      for (const char* key : kFields) {
+        if (!has(node, key)) continue;
+        // 样式字段是 Color，装不下"跟随主题"的动态引用：
+        // 写主题角色名就保持默认 kNoColor（等同跟随主题），
+        // 写 #rrggbb 才是节点级固定色。
+        const std::string value = get(node, key);
+        if (isThemeRole(value)) continue;
+        const std::string expr = colorExpr(node, key, "");
+        if (expr.empty()) continue;
+        assignments.push_back("style." + std::string(key) + " = " + expr + ";");
+      }
+      if (assignments.empty()) return;
+      line(1, "{");
+      line(2, std::string(kTypes.at(tag)) + " style;");
+      for (const std::string& assignment : assignments) line(2, assignment);
+      line(2, variable + "->setStyle(style);");
+      line(1, "}");
+      return;
+    }
+
     if (tag == "ImageView") {
       const std::string source = get(node, "src");
       if (!source.empty()) line(1, variable + "->loadFile(" + wideLiteral(source) + ");");
@@ -674,7 +760,7 @@ class Generator {
       if (!icon.empty()) line(1, variable + "->setIcon(" + iconExpr(icon) + ");");
       if (has(node, "scale")) line(1, variable + "->setScale(" + scaleExpr(get(node, "scale")) + ");");
       if (has(node, "tint")) {
-        line(1, variable + "->setPlaceholderColor(" + colorExpr(node, "tint", "kColorTextFaint") +
+        line(1, variable + "->setPlaceholderColor(" + colorExpr(node, "tint", "kNoColor") +
                        ");");
       }
       return;
@@ -692,6 +778,28 @@ class Generator {
       }
       if (has(node, "radius")) line(2, "spec.radius = " + get(node, "radius", "7") + ";");
       if (has(node, "padding")) line(2, "spec.padX = " + get(node, "padding", "11") + ";");
+      // 颜色：不写就跟随主题
+      if (has(node, "backgroundColor")) {
+        line(2, "spec.background = " + colorExpr(node, "backgroundColor", "kNoColor") + ";");
+      }
+      if (has(node, "borderColor")) {
+        line(2, "spec.border = " + colorExpr(node, "borderColor", "kNoColor") + ";");
+      }
+      if (has(node, "focusBorderColor")) {
+        line(2, "spec.focusBorder = " + colorExpr(node, "focusBorderColor", "kNoColor") + ";");
+      }
+      if (has(node, "textColor")) {
+        line(2, "spec.text = " + colorExpr(node, "textColor", "kNoColor") + ";");
+      }
+      if (has(node, "cueColor")) {
+        line(2, "spec.cueColor = " + colorExpr(node, "cueColor", "kNoColor") + ";");
+      }
+      if (has(node, "iconColor")) {
+        line(2, "spec.leadIconColor = " + colorExpr(node, "iconColor", "kNoColor") + ";");
+      }
+      if (has(node, "caretColor")) {
+        line(2, "spec.caret = " + colorExpr(node, "caretColor", "kNoColor") + ";");
+      }
       line(2, variable + "->setSpec(spec);");
       line(1, "}");
       return;
@@ -708,8 +816,22 @@ class Generator {
       if (getBool(node, "checked", false)) line(2, "spec.checked = true;");
       if (has(node, "boxSize")) line(2, "spec.boxSize = " + get(node, "boxSize", "16") + ";");
       if (has(node, "gap")) line(2, "spec.gap = " + get(node, "gap", "8") + ";");
+      if (has(node, "radius")) line(2, "spec.radius = " + get(node, "radius", "4") + ";");
+      // 颜色：不写就跟随主题
       if (has(node, "textColor")) {
-        line(2, "spec.ink = " + colorExpr(node, "textColor", "kColorText") + ";");
+        line(2, "spec.ink = " + colorExpr(node, "textColor", "kNoColor") + ";");
+      }
+      if (has(node, "boxColor")) {
+        line(2, "spec.boxBackground = " + colorExpr(node, "boxColor", "kNoColor") + ";");
+      }
+      if (has(node, "boxBorderColor")) {
+        line(2, "spec.boxBorder = " + colorExpr(node, "boxBorderColor", "kNoColor") + ";");
+      }
+      if (has(node, "accentColor")) {
+        line(2, "spec.accent = " + colorExpr(node, "accentColor", "kNoColor") + ";");
+      }
+      if (has(node, "hoverColor")) {
+        line(2, "spec.hoverBackground = " + colorExpr(node, "hoverColor", "kNoColor") + ";");
       }
       line(2, variable + "->setSpec(spec);");
       line(1, "}");
@@ -722,10 +844,10 @@ class Generator {
       if (has(node, "barHeight")) line(2, "spec.height = " + get(node, "barHeight", "10") + ";");
       if (has(node, "radius")) line(2, "spec.radius = " + get(node, "radius", "5") + ";");
       if (has(node, "fillColor")) {
-        line(2, "spec.fill = " + colorExpr(node, "fillColor", "kColorLink") + ";");
+        line(2, "spec.fill = " + colorExpr(node, "fillColor", "kNoColor") + ";");
       }
       if (has(node, "trackColor")) {
-        line(2, "spec.track = " + colorExpr(node, "trackColor", "kColorLineSoft") + ";");
+        line(2, "spec.track = " + colorExpr(node, "trackColor", "kNoColor") + ";");
       }
       line(2, variable + "->setSpec(spec);");
       line(1, "}");
@@ -741,6 +863,22 @@ class Generator {
       if (has(node, "height")) line(2, "spec.height = " + get(node, "height", "30") + ";");
       if (has(node, "radius")) line(2, "spec.radius = " + get(node, "radius", "6") + ";");
       if (has(node, "padding")) line(2, "spec.padX = " + get(node, "padding", "10") + ";");
+      // 颜色：不写就跟随主题
+      if (has(node, "backgroundColor")) {
+        line(2, "spec.background = " + colorExpr(node, "backgroundColor", "kNoColor") + ";");
+      }
+      if (has(node, "borderColor")) {
+        line(2, "spec.border = " + colorExpr(node, "borderColor", "kNoColor") + ";");
+      }
+      if (has(node, "focusBorderColor")) {
+        line(2, "spec.focusBorder = " + colorExpr(node, "focusBorderColor", "kNoColor") + ";");
+      }
+      if (has(node, "textColor")) {
+        line(2, "spec.ink = " + colorExpr(node, "textColor", "kNoColor") + ";");
+      }
+      if (has(node, "arrowColor")) {
+        line(2, "spec.arrow = " + colorExpr(node, "arrowColor", "kNoColor") + ";");
+      }
       line(2, variable + "->setSpec(spec);");
       line(1, "}");
       // 候选项用分号分隔：items="仅压缩;快速;极限"
@@ -832,6 +970,68 @@ std::string registrySource(const std::vector<std::string>& xmlPaths) {
   return out.str();
 }
 
+// 主题文件：把 <Theme name="dark" body="#1e1e1e" text="#d4d4d4" .../> 编译成
+// 静态 Theme 对象与注册项。属性名与 Theme 字段一一对应，用 snake-ish 的
+// 驼峰命名；未写的字段沿用浅色主题默认值。
+//
+// 根节点是 <themes>，可包含多个 <Theme name="..."/>；也可以只写一个。
+std::string themeSource(const XmlNode& root) {
+  std::ostringstream out;
+  out << "// 由 layoutgen 从主题 XML 生成，请勿手工修改\n";
+  out << "#include \"AiUI/theme_registry.h\"\n\n";
+  out << "namespace AiUI {\nnamespace generated_themes {\n\n";
+
+  // 字段名 → XML 属性名。保持与 C++ 字段同名，方便对照。
+  static const char* kFields[] = {
+      "body",           "tool",           "pane",           "line",
+      "lineSoft",       "lineHead",       "headerBg",       "text",
+      "textHead",       "textMuted",      "textFaint",      "ink",
+      "link",           "linkHover",      "currentBg",      "selBg",
+      "rowHover",       "hover",          "activeInk",      "btnHoverBg",
+      "btnDownBg",      "btnDisBg",       "tagBg",          "tagInk",
+      "dialogBg",       "inputBg",        "inputFocus",     "titleBg",
+      "titleBgInactive","titleText",      "titleTextInactive", "titleButtonHover",
+      "titleButtonDown","closeHover",     "closeDown",      "closeInk",
+      "titleLine",      "separator",      "currentInk",     "iconMuted",
+  };
+
+  std::vector<const XmlNode*> themes;
+  if (root.tag == "Theme") {
+    themes.push_back(&root);
+  } else {
+    for (const XmlNode& child : root.children) {
+      if (child.tag == "Theme") themes.push_back(&child);
+    }
+  }
+
+  if (themes.empty()) {
+    out << "// 主题文件中没有任何 <Theme> 节点\n";
+  }
+
+  for (size_t i = 0; i < themes.size(); ++i) {
+    const XmlNode& node = *themes[i];
+    std::string name = get(node, "name");
+    if (name.empty()) name = "theme" + std::to_string(i);
+    const std::string var = "kTheme_" + name;
+
+    out << "const AiUI::Theme " << var << " = [] {\n";
+    out << "  AiUI::Theme t = AiUI::kLightTheme;\n";
+    for (const char* field : kFields) {
+      if (!has(node, field)) continue;
+      const std::string value = colorExpr(node, field, "");
+      if (value.empty()) continue;
+      out << "  t." << field << " = " << value << ";\n";
+    }
+    out << "  return t;\n";
+    out << "}();\n";
+    out << "const AiUI::ThemeRegistration kReg_" << name << "(L\"" << name << "\", &" << var
+        << ");\n\n";
+  }
+
+  out << "}  // namespace generated_themes\n}  // namespace AiUI\n";
+  return out.str();
+}
+
 bool readFile(const char* path, std::string& out) {
   std::ifstream in(path, std::ios::binary);
   if (!in) return false;
@@ -867,10 +1067,32 @@ int main(int argc, char** argv) {
     return 0;
   }
 
+  // 主题模式：layoutgen --themes <输入.xml> <输出.cpp>
+  if (argc == 4 && std::string(argv[1]) == "--themes") {
+    std::string xml;
+    if (!readFile(argv[2], xml)) {
+      std::fprintf(stderr, "layoutgen: 无法读取 %s\n", argv[2]);
+      return 1;
+    }
+    XmlParser parser(xml);
+    XmlNode root;
+    std::string error;
+    if (!parser.parse(root, error)) {
+      std::fprintf(stderr, "layoutgen: %s: %s\n", argv[2], error.c_str());
+      return 1;
+    }
+    if (!writeFile(argv[3], themeSource(root))) {
+      std::fprintf(stderr, "layoutgen: 无法写入 %s\n", argv[3]);
+      return 1;
+    }
+    return 0;
+  }
+
   if (argc != 4) {
     std::fprintf(stderr,
                  "用法：layoutgen <输入.xml> <输出.h> <输出.cpp>\n"
-                 "      layoutgen --registry <输出.cpp> <file.xml> [<file.xml> ...]\n");
+                 "      layoutgen --registry <输出.cpp> <file.xml> [<file.xml> ...]\n"
+                 "      layoutgen --themes <主题.xml> <输出.cpp>\n");
     return 2;
   }
 

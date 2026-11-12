@@ -79,3 +79,35 @@ function(aiui_add_layouts target)
   # 生成的头文件在构建目录里，更新后让 IDE 能看到
   set_source_files_properties(${generated_sources} PROPERTIES GENERATED TRUE)
 endfunction()
+
+# AIUI_ADD_THEMES：把主题 XML 在构建期编译成命名调色板并加入目标
+#
+# 用法：
+#   aiui_add_themes(<target> <themes.xml>)
+#
+# themes.xml 里写若干个 <Theme name="light" body="#f3f4f6" .../>，
+# 生成代码在静态初始化阶段把它们登记进 ThemeRegistry，运行时即可用
+# Window::setAppTheme(&ThemeRegistry::getOr(L"dark", kLightTheme)) 切换。
+# 未在 XML 里写出的颜色沿用浅色主题，只覆盖需要改的字段即可。
+function(aiui_add_themes target)
+  if(NOT ARGN)
+    message(FATAL_ERROR "aiui_add_themes(${target} ...) 至少需要一个 XML 文件")
+  endif()
+
+  get_filename_component(xml_abs "${ARGN}" ABSOLUTE)
+  if(NOT EXISTS "${xml_abs}")
+    message(FATAL_ERROR "主题文件不存在：${ARGN}")
+  endif()
+
+  set(out "${CMAKE_CURRENT_BINARY_DIR}/aiui_generated/aiui_themes.cpp")
+  add_custom_command(
+    OUTPUT "${out}"
+    COMMAND $<TARGET_FILE:AiUI::layoutgen> --themes "${xml_abs}" "${out}"
+    DEPENDS "${xml_abs}" AiUI::layoutgen
+    COMMENT "生成主题配色 ${ARGN}"
+    VERBATIM
+  )
+  target_sources(${target} PRIVATE "${out}")
+  target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/aiui_generated")
+  set_source_files_properties("${out}" PROPERTIES GENERATED TRUE)
+endfunction()
