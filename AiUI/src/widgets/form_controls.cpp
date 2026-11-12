@@ -385,14 +385,30 @@ Rect ComboBox::popupWindowRect() const {
   const Rect self = absoluteBounds();
   const Rect client = root() ? root()->platformWindow()->clientRect() : Rect{};
   const int rows = static_cast<int>(items_.size());
-  const int height = popupRowHeight() * rows;
+  const int rowHeight = popupRowHeight();
   const int gap = 2 * d / 96;
+  int height = rowHeight * rows;
+
+  // 高度超出客户区就压缩到放得下的行数：宁可少显示几行，
+  // 也不能画到窗口外面去（那部分会被窗口裁掉，看着像列表漏出来了）
+  if (client.height() > 0) {
+    const int available = client.height() - gap * 2;
+    if (height > available) {
+      const int fitRows = (std::max)(1, available / (rowHeight > 0 ? rowHeight : 1));
+      height = rowHeight * fitRows;
+    }
+  }
 
   int top = self.bottom + gap;
   // 下面放不下就翻到控件上方，避免列表被窗口底边截断
   if (client.bottom > 0 && top + height > client.bottom - gap) {
     const int above = self.top - gap - height;
     if (above >= client.top) top = above;
+  }
+  // 两边都放不下时贴住客户区内侧，保证浮层整体落在窗口里
+  if (client.bottom > 0) {
+    if (top + height > client.bottom - gap) top = client.bottom - gap - height;
+    if (top < client.top + gap) top = client.top + gap;
   }
   // 与显示框严格等宽：弹出层看起来就是控件本身展开
   return Rect{self.left, top, self.right, top + height};
@@ -443,10 +459,12 @@ void ComboBox::paintOverlay(Painter& painter) {
   const int radius = (std::max)(4, spec_.radius * d / 96);
   const int rowHeight = popupRowHeight();
 
-  // 阴影留白由外框自己撑：先铺一层描边色的圆角当边界
+  // 先铺底，再画行，最后描边：行的悬停/选中底色是矩形填充，
+  // 放在描边之后画会把面板边界压掉，看起来边框就断了。
   painter.fillRoundRect(popup, t.pane, radius);
-  painter.strokeRoundRect(popup, edgeOn(t.pane, 17), radius);
-  // 圆角裁剪：首末行的悬停底色是矩形，直接铺会盖住列表容器的圆角
+
+  // 圆角裁剪：首末行的矩形底色不裁剪会溢出到容器圆角外
+  painter.save();
   painter.clipRoundRect(popup, radius);
 
   for (size_t i = 0; i < items_.size(); ++i) {
@@ -466,6 +484,10 @@ void ComboBox::paintOverlay(Painter& painter) {
     const Rect textRect{row.left + padX, row.top, row.right - padX, row.bottom};
     painter.drawTextEllipsis(textRect, items_[i], t.text, fonts.ui);
   }
+  painter.restore();
+
+  // 描边压在行底色之上，边界始终完整
+  painter.strokeRoundRect(popup, edgeOn(t.pane, 17), radius);
 }
 
 void ComboBox::onMouseMove(const MouseEvent& e) {

@@ -14,10 +14,11 @@ void RecordingBackend::fillRoundRect(const Rect& rc, Color color, int radius) {
 }
 
 void RecordingBackend::strokeRoundRect(const Rect& rc, Color color, int radius, int lineWidth) {
-  (void)rc;
-  (void)color;
-  (void)radius;
   (void)lineWidth;
+  // 与填充记在同一序列：调用顺序才是「谁盖住谁」的判据
+  FillCall call{map(rc), color, radius};
+  call.stroke = true;
+  fills_.push_back(call);
 }
 
 void RecordingBackend::drawGradientRect(const Rect& rc, Color top, Color bottom) {

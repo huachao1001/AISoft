@@ -1141,6 +1141,63 @@ AIUI_TEST(combo_popup_focus_moves_in_one_click) {
   AIUI_CHECK(viewRoot->focused() == other);
 }
 
+AIUI_TEST(combo_popup_border_is_painted_after_rows) {
+  TestEnv env;
+  auto root = std::make_unique<LinearLayout>(Orientation::kVertical);
+  auto* combo = new ComboBox();
+  combo->setItems({L"存储", L"最快", L"标准"});
+  root->addView(combo, LayoutParams{}.withSize(180, 30));
+  AIUI_CHECK(root->create(nullptr, Rect{0, 0, 400, 300}));
+
+  ViewRoot* viewRoot = root->root();
+  viewRoot->onMouseDown(mouseAt(20, 15, MouseButton::kLeft));
+  viewRoot->onMouseUp(mouseAt(20, 15, MouseButton::kLeft));
+  AIUI_CHECK(combo->isPopupOpen());
+
+  // 先移到末行再回首行：hotRow 有变化才会标脏，随后补一次绘制
+  viewRoot->onMouseMove(mouseAt(20, 30 + 2 + 30 * 2 + 15));
+  viewRoot->onMouseMove(mouseAt(20, 30 + 2 + 15));
+  viewRoot->onExpose(Rect{0, 0, 400, 300});
+  const auto& fills = env.fake.platform().lastWindow()->lastFills();
+
+  // 浮层描边必须排在所有行底色之后：行底色是矩形填充，
+  // 先画描边再铺行会把面板边界整条盖掉
+  int lastRowFill = -1;
+  int borderStroke = -1;
+  const Rect popup = combo->overlayBounds();
+  for (size_t i = 0; i < fills.size(); ++i) {
+    const FillCall& call = fills[i];
+    // 行底色：直角矩形（radius == 0）、与浮层等宽、落在浮层内
+    if (!call.stroke && call.radius == 0 && call.rect.left == popup.left &&
+        call.rect.right == popup.right && call.rect.top >= popup.top &&
+        call.rect.bottom <= popup.bottom) {
+      lastRowFill = static_cast<int>(i);
+    }
+    if (call.stroke) borderStroke = static_cast<int>(i);
+  }
+  AIUI_CHECK(lastRowFill >= 0);
+  AIUI_CHECK(borderStroke > lastRowFill);
+}
+
+AIUI_TEST(combo_popup_stays_inside_client_area) {
+  TestEnv env;
+  auto root = std::make_unique<LinearLayout>(Orientation::kVertical);
+  auto* combo = new ComboBox();
+  // 列表比窗口剩下的空间高：此时浮层仍要整体落在客户区内
+  combo->setItems({L"一", L"二", L"三", L"四", L"五", L"六", L"七", L"八"});
+  root->addView(combo, LayoutParams{}.withSize(180, 30));
+  const Rect client{0, 0, 400, 120};
+  AIUI_CHECK(root->create(nullptr, client));
+
+  ViewRoot* viewRoot = root->root();
+  viewRoot->onMouseDown(mouseAt(20, 15, MouseButton::kLeft));
+  AIUI_CHECK(combo->isPopupOpen());
+
+  const Rect popup = combo->overlayBounds();
+  AIUI_CHECK(popup.top >= client.top);
+  AIUI_CHECK(popup.bottom <= client.bottom);
+}
+
 // ───────────────────────── 事件冒泡 ─────────────────────────
 
 namespace {
