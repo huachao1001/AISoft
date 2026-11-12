@@ -167,6 +167,26 @@ AIUI_TEST(linear_layout_splits_weight_by_ratio) {
   AIUI_CHECK_EQ(second->bounds().width(), 300);
 }
 
+AIUI_TEST(linear_layout_weighted_child_margin_stays_inside) {
+  // 表单行：标签 + 带 marginX 的权重输入框 + 按钮，右侧不能溢出
+  TestEnv env;
+  LinearLayout row(Orientation::kHorizontal);
+  auto* label = new FixedView(0, 0);
+  auto* input = new FixedView(0, 0);
+  auto* button = new FixedView(0, 0);
+  row.addView(label, LayoutParams{}.withSize(84, 30));
+  row.addView(input, LayoutParams{}.withSize(LayoutParams::kMatchParent, 30).margin(10, 0).withWeight(1.0f));
+  row.addView(button, LayoutParams{}.withSize(76, 30));
+
+  row.layout(Rect{0, 0, 400, 30});
+
+  AIUI_CHECK_EQ(label->bounds().left, 0);
+  AIUI_CHECK_EQ(input->bounds().left, 94);
+  AIUI_CHECK_EQ(input->bounds().width(), 220);
+  AIUI_CHECK_EQ(button->bounds().left, 324);
+  AIUI_CHECK_EQ(button->bounds().right, 400);
+}
+
 AIUI_TEST(viewgroup_rejects_second_parent) {
   TestEnv env;
   FrameLayout a;

@@ -93,10 +93,12 @@ void LinearLayout::arrangeChildren(const Rect& content) {
     const Size available{(std::max)(0, content.width() - slot.ml - slot.mr),
                          (std::max)(0, content.height() - slot.mt - slot.mb)};
     slot.desired = child->measure(available);
-    // 带权重的子视图不占固定空间，剩余空间全部分给它们
+    // 边距无论权重都要占位：剩余空间里必须扣掉，否则 cursor 再加一遍
+    // 就会把整行推出右边（带 weight 的输入框配 marginX 时最明显）
+    used += horizontal ? (slot.ml + slot.mr) : (slot.mt + slot.mb);
+    // 带权重的子视图只分剩余空间，自身尺寸不占固定配额
     if (lp.weight <= 0.0f) {
-      used += horizontal ? (slot.desired.width + slot.ml + slot.mr)
-                         : (slot.desired.height + slot.mt + slot.mb);
+      used += horizontal ? slot.desired.width : slot.desired.height;
     }
     totalWeight += lp.weight;
     slots.push_back(slot);
