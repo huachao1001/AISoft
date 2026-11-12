@@ -27,17 +27,11 @@ const wchar_t* kLevelNames[] = {L"存储", L"最快", L"快速", L"标准", L"�
 const int kLevelValues[] = {0, 1, 3, 5, 7, 9};
 constexpr int kLevelCount = 6;
 
-const wchar_t* kUpdateModes[] = {L"添加并替换文件", L"添加并更新文件", L"仅更新已存在的文件",
-                                 L"同步文件夹内容"};
-
 // 压缩任务：对话框关闭后再跑，避免把进度框的模态循环嵌进 onAccept
 struct CompressTask {
-  std::vector<std::pair<std::wstring, std::vector<std::wstring>>> jobs;
-  arc::CompressOptions options;
-  std::vector<std::wstring> sources;
   std::wstring outPath;
-  bool deleteAfter = false;
-  bool testAfter = false;
+  std::vector<std::wstring> sources;
+  arc::CompressOptions options;
 };
 
 std::wstring extFor(int formatIndex) {
@@ -114,13 +108,8 @@ class DlgCompress : public DialogActivity {
   AiUI::RadioGroup* formatGroup_ = nullptr;
   AiUI::ComboBox* otherFormat_ = nullptr;
   AiUI::ComboBox* level_ = nullptr;
-  AiUI::ComboBox* updateMode_ = nullptr;
   AiUI::InputBox* volume_ = nullptr;
   AiUI::ComboBox* volumeUnit_ = nullptr;
-  AiUI::CheckBox* optSolid_ = nullptr;
-  AiUI::CheckBox* optTest_ = nullptr;
-  AiUI::CheckBox* optDelete_ = nullptr;
-  AiUI::CheckBox* optSeparate_ = nullptr;
 };
 
 void DlgCompress::onCreate() {
@@ -146,13 +135,8 @@ void DlgCompress::onCreate() {
   formatGroup_ = findView<AiUI::RadioGroup>("formatGroup");
   otherFormat_ = findView<AiUI::ComboBox>("otherFormat");
   level_ = findView<AiUI::ComboBox>("level");
-  updateMode_ = findView<AiUI::ComboBox>("updateMode");
   volume_ = findView<AiUI::InputBox>("volume");
   volumeUnit_ = findView<AiUI::ComboBox>("volumeUnit");
-  optSolid_ = findView<AiUI::CheckBox>("optSolid");
-  optTest_ = findView<AiUI::CheckBox>("optTest");
-  optDelete_ = findView<AiUI::CheckBox>("optDelete");
-  optSeparate_ = findView<AiUI::CheckBox>("optSeparate");
 
   if (path_) path_->setText(defaultArchivePath(sources_, formatIndex_));
 
@@ -184,24 +168,9 @@ void DlgCompress::onCreate() {
     level_->setSelectedIndex(levelIndex);
   }
 
-  if (updateMode_) {
-    std::vector<std::wstring> items;
-    for (const wchar_t* mode : kUpdateModes) items.emplace_back(mode);
-    updateMode_->setItems(items);
-    updateMode_->setSelectedIndex(0);
-  }
-
   if (volumeUnit_) {
     volumeUnit_->setItems({L"MB", L"GB", L"KB"});
     volumeUnit_->setSelectedIndex(0);
-  }
-
-  if (optSolid_) {
-    optSolid_->setChecked(g_app.settings.solid);
-    // 固实只有 7Z 支持，格式变化时随之置灰
-    optSolid_->setOnChange([this](bool checked) {
-      if (optSolid_->isEnabled()) g_app.settings.solid = checked;
-    });
   }
 
   applyFormat(formatIndex_);
@@ -268,18 +237,13 @@ void DlgCompress::syncExtension(int formatIndex) {
   path_->setText(util::JoinPath(util::DirName(current), stem + extFor(formatIndex)));
 }
 
-// 切换格式后同步固实与档位的可用性，以及单位下拉的默认值
+// 切换格式后同步档位的可用性
 void DlgCompress::refreshFormatUi() {
   const int n = z7::FormatCount();
   const bool valid = formatIndex_ >= 0 && formatIndex_ < n;
   const z7::FormatInfo* info = valid ? &z7::Formats()[formatIndex_] : nullptr;
 
-  // 只有 7Z 支持固实；TAR/WIM 只有存储档
-  if (optSolid_) {
-    const bool capable = info && info->solidCapable;
-    optSolid_->setEnabled(capable);
-    if (!capable) optSolid_->setChecked(false, false);
-  }
+  // TAR/WIM 只有存储档，档位下拉置灰
   if (level_) {
     level_->setEnabled(!info || info->maxLevel > 0);
   }
@@ -307,7 +271,6 @@ void DlgCompress::editPassword() {
 void DlgCompress::saveAsDefault() {
   g_app.settings.compressFormat = nameFor(selectedFormat());
   g_app.settings.compressLevel = kLevelValues[selectedLevel()];
-  g_app.settings.solid = optSolid_ && optSolid_->isChecked();
   util::SaveSettings(g_app.settings);
 
   AiUI::MessageBoxParams params;
@@ -353,11 +316,10 @@ bool DlgCompress::onAccept() {
 
   const int formatIndex = selectedFormat();
   const int levelIndex = selectedLevel();
-  const bool separate = optSeparate_ && optSeparate_->isChecked();
   const z7::FormatInfo& info = z7::Formats()[formatIndex];
 
-  // GZIP/BZIP2/XZ 只收单文件：分离模式天然满足，合并模式多文件/目录要提前拦下
-  if (!separate && info.singleFile) {
+  // GZIP/BZIP2/XZ 只收单文件：多文件/目录提前拦下，提示改用 TAR 组合格式
+  if (info.singleFile) {
     std::vector<util::SourceItem> probe;
     util::CollectSources(sources_, probe);
     if (probe.size() != 1) {
@@ -365,91 +327,50 @@ bool DlgCompress::onAccept() {
       params.title = L"AIZip";
       params.message = std::wstring(L"「") + info.name +
                        L"」格式一次只能压缩一个文件。\n\n"
-                       L"要打包多个文件或整个文件夹，请改用 TAR 组合格式，"
-                       L"或勾选「压缩每个选中项到单独的压缩文件」。";
+                       L"要打包多个文件或整个文件夹，请改用 TAR 组合格式。";
       params.icon = AiUI::MessageBoxIcon::kInfo;
       AiUI::platform()->showMessageBox(window()->handle(), params);
       return false;
     }
   }
 
+  // 固实只有 7Z 支持；界面上不再提供勾选，按保存的设置与格式能力决定
+  const bool solid = g_app.settings.solid && info.solidCapable;
+
   g_app.settings.compressFormat = nameFor(formatIndex);
   g_app.settings.compressLevel = kLevelValues[levelIndex];
-  g_app.settings.solid = optSolid_ && optSolid_->isChecked();
 
   arc::CompressOptions options;
   options.level = kLevelValues[levelIndex];
-  options.solid = optSolid_ && optSolid_->isChecked();
+  options.solid = solid;
   options.password = password_;
   options.formatName = nameFor(formatIndex);
   // TAR/WIM 只有存储档，内核不认 x 参数
   if (info.maxLevel == 0) options.level = 0;
 
-  // 分离模式：每个源各打一个包
-  task_.jobs.clear();
-  if (separate) {
-    for (const auto& src : sources_) {
-      const std::wstring base = util::IsDirectory(src) ? util::BaseName(src) : util::FileStem(src);
-      task_.jobs.emplace_back(util::JoinPath(dir, base + extFor(formatIndex)),
-                              std::vector<std::wstring>{src});
-    }
-  } else {
-    task_.jobs.emplace_back(outPath, sources_);
-  }
-
   task_.options = options;
   task_.sources = sources_;
   task_.outPath = outPath;
-  task_.deleteAfter = optDelete_ && optDelete_->isChecked();
-  task_.testAfter = optTest_ && optTest_->isChecked();
   hasTask_ = true;
   return true;
 }
 
 // 压缩任务：对话框已经关闭，owner 退回主窗口
 void runCompressTask(AiUI::NativeHandle owner, const CompressTask& task) {
+  arc::CompressOptions options = task.options;
+  options.archivePath = task.outPath;
+
   std::wstring error;
   const bool ok = ShowProgressDialog(owner, L"正在压缩", [&](const arc::ProgressFn& prog) {
-    for (const auto& job : task.jobs) {
-      arc::CompressOptions options = task.options;
-      options.archivePath = job.first;
-      if (!arc::Compress(job.second, options, prog, error)) return false;
-    }
-    return true;
+    return arc::Compress(task.sources, options, prog, error);
   });
 
-  if (!ok) {
-    if (!error.empty()) {
-      AiUI::MessageBoxParams params;
-      params.title = L"AIZip";
-      params.message = L"压缩失败：\n" + error;
-      params.icon = AiUI::MessageBoxIcon::kError;
-      AiUI::platform()->showMessageBox(owner, params);
-    }
-    return;
-  }
-
-  // 压缩后删除源文件；目录走回收站，保持与资源管理器一致
-  if (task.deleteAfter) {
-    for (const auto& src : task.sources) {
-      if (util::IsDirectory(src)) {
-        AiUI::platform()->moveToTrash(src);
-      } else {
-        AiUI::platform()->deleteFile(src);
-      }
-    }
-  }
-
-  if (task.testAfter) {
-    arc::Archive check;
-    const auto result = check.Open(task.outPath);
-    if (!result.ok) {
-      AiUI::MessageBoxParams params;
-      params.title = L"AIZip";
-      params.message = L"压缩包测试失败。";
-      params.icon = AiUI::MessageBoxIcon::kWarning;
-      AiUI::platform()->showMessageBox(owner, params);
-    }
+  if (!ok && !error.empty()) {
+    AiUI::MessageBoxParams params;
+    params.title = L"AIZip";
+    params.message = L"压缩失败：\n" + error;
+    params.icon = AiUI::MessageBoxIcon::kError;
+    AiUI::platform()->showMessageBox(owner, params);
   }
 }
 

@@ -24,15 +24,12 @@
     <ComboBox id="otherFormat" width="180" height="30" marginX="4"/>
   </LinearLayout>
 
-  <!-- 左栏：压缩级别 / 更新方式 / 分卷；右栏：压缩选项 -->
+  <!-- 左栏：压缩级别 / 分卷；右栏：压缩选项 -->
   <LinearLayout orientation="horizontal" marginY="8">
 
     <LinearLayout orientation="vertical" width="240">
       <TextView text="压缩级别(C)" height="18" textColor="textHead"/>
       <ComboBox id="level" height="30" marginY="4"/>
-
-      <TextView text="更新方式(U)" height="18" marginY="4" textColor="textHead"/>
-      <ComboBox id="updateMode" height="30" marginY="4"/>
 
       <TextView text="压缩分卷大小设置(V)" height="18" marginY="4" textColor="textHead"/>
       <LinearLayout orientation="horizontal" height="30">
@@ -43,12 +40,7 @@
 
     <GroupBox title="压缩选项" weight="1" marginX="12">
       <LinearLayout orientation="vertical">
-        <CheckBox id="optSolid">创建固实压缩文件(S)(仅 7Z)</CheckBox>
-        <CheckBox id="optTest" marginY="8">压缩后测试压缩文件(E)</CheckBox>
-        <CheckBox id="optDelete" marginY="8">压缩后删除源文件(L)</CheckBox>
-        <CheckBox id="optSeparate" marginY="8">压缩每个选中项到单独的压缩文件</CheckBox>
-        <Button id="btnPassword" text="设置密码(P)..." style="outline" width="120" height="28"
-                marginY="8"/>
+        <Button id="btnPassword" text="设置密码(P)..." style="outline" width="120" height="28"/>
       </LinearLayout>
     </GroupBox>
 
