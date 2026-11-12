@@ -257,9 +257,9 @@ void InputBox::onPaint(Painter& painter, const Rect& rect) {
   const int radius = spec_.radius * d / 96;
   const Theme& t = theme();
 
-  // 未显式指定时跟随主题；底色变了描边也跟着派生
+  // 未显式指定时跟随主题；描边统一取主题的控件描边，和单选/复选对齐
   const Color background = spec_.background != kNoColor ? spec_.background : t.inputBg;
-  const Color border = spec_.border != kNoColor ? spec_.border : edgeOn(background, 17);
+  const Color border = spec_.border != kNoColor ? spec_.border : t.controlBorder;
   const Color focusBorder = spec_.focusBorder != kNoColor ? spec_.focusBorder : t.inputFocus;
   const Color textColor = spec_.text != kNoColor ? spec_.text : t.text;
   const Color cueColor = spec_.cueColor != kNoColor ? spec_.cueColor : t.textFaint;

@@ -116,11 +116,32 @@ window.setAppTheme(&theme);
 
 可用的名字就是 `Theme` 的字段：`body`、`tool`、`pane`、`line`、`text`、
 `textHead`、`textMuted`、`textFaint`、`ink`、`link`、`selBg`、`inputBg`、
-`inputFocus`、`dialogBg`、`titleBg`……写错名字会退回控件默认值。
+`inputFocus`、`controlBorder`、`dialogBg`、`titleBg`……写错名字会退回控件默认值。
+
+## 控件描边：默认必须统一
+
+输入框、下拉框、单选/复选盒、分组框的默认描边都取 `Theme::controlBorder`，
+而不是各自按底色算。原因很直接：同一排控件如果描边深浅不一，看起来就像
+两套设计拼在一起。
+
+```cpp
+// 控件里的默认分支统一这么写
+const Color border = spec_.border != kNoColor ? spec_.border : theme().controlBorder;
+```
+
+需要精确控制时仍然可以用 `spec.border` / `spec.boxBorder` 覆盖单个控件，
+但**默认主题下不应该出现第二种灰**。选中态才用 `inputFocus` 这类强调色。
+
+在 `themes.xml` 里换这一支灰，就同时改掉了所有输入类控件的描边：
+
+```xml
+<Theme name="light" controlBorder="#d0d5dd" ... />
+<Theme name="dark"  controlBorder="#4a4d52" ... />
+```
 
 ## 派生色：描边不要写死
 
-描边色一律由底色派生，不要配一组固定灰：
+局部需要"比底色深一点"的描边（例如按钮悬停态）时，用 `edgeOn` 按底色派生：
 
 ```cpp
 painter.strokeRoundRect(rect, edgeOn(background, 17), radius);
@@ -129,7 +150,8 @@ painter.strokeRoundRect(rect, edgeOn(background, 17), radius);
 `edgeOn` 按底色的亮度选墨色——浅底叠黑、深底叠白——再按百分比混合。
 写死 `#d1d5db` 在白底上正常，到了深色主题上就是一根刺眼的白线。
 
-`spec.border` 这类显式描边仍可覆盖派生值，只在确实需要精确控制时用。
+注意两者分工：**控件之间要对齐时用 `controlBorder`，只在一处做层次时用
+`edgeOn`**。前者保证整屏一致，后者保证换肤不自相矛盾。
 
 ## 深色主题下的注意事项
 

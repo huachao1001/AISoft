@@ -56,6 +56,9 @@ struct Theme {
   // ── 输入类控件 ──
   Color inputBg = makeColor(0xff, 0xff, 0xff);
   Color inputFocus = makeColor(0x60, 0xa5, 0xfa);
+  // 控件默认描边：输入框、下拉框、单选/复选、分组框共用同一支。
+  // 各控件仍可单独覆盖，但默认外观要对齐，否则同一排控件会深浅不一。
+  Color controlBorder = makeColor(0xd0, 0xd5, 0xdd);
 
   // ── 标题栏 ──
   Color titleBg = makeColor(0xff, 0xff, 0xff);
@@ -116,6 +119,7 @@ inline constexpr Theme kDarkTheme = [] {
 
   t.inputBg = makeColor(0x1e, 0x1e, 0x1e);
   t.inputFocus = makeColor(0x4a, 0x9e, 0xff);
+  t.controlBorder = makeColor(0x4a, 0x4d, 0x52);
 
   t.titleBg = makeColor(0x20, 0x20, 0x20);
   t.titleBgInactive = makeColor(0x20, 0x20, 0x20);
