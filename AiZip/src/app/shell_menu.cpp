@@ -1,9 +1,7 @@
-// Windows 资源管理器右键菜单注册：HKCU\Software\Classes，无需管理员权限
+// 系统右键菜单注册：动作清单在这里，落到哪个系统机制由平台层决定
 #include "shell_menu.h"
 
-#include "util.h"
-
-#include <shlobj.h>
+#include "AiUI/platform.h"
 
 #include <vector>
 
@@ -20,154 +18,63 @@ constexpr const wchar_t* kLabelCompress = L"压缩该文件...";
 constexpr const wchar_t* kLabelCompressZip = L"压缩到 ZIP";
 constexpr const wchar_t* kLabelExtract = L"解压该文件...";
 
-// 命令行开关：资源管理器通过它告诉程序该做什么
+// 命令行开关：系统通过它告诉程序该做什么
 constexpr const wchar_t* kArgCompress = L"-compress";
 constexpr const wchar_t* kArgCompressZip = L"-compress-zip";
 constexpr const wchar_t* kArgExtract = L"-extract";
 
-std::wstring ExePath() {
-  wchar_t buf[MAX_PATH * 2]{};
-  const DWORD n = ::GetModuleFileNameW(nullptr, buf, static_cast<DWORD>(std::size(buf)));
-  return std::wstring(buf, n);
-}
-
 // 支持的压缩包后缀，和 Archive::IsArchiveFile 保持一致
 const std::vector<std::wstring>& ArchiveExts() {
   static const std::vector<std::wstring> kExts = {
-      L".zip", L".7z",  L".rar", L".tar",  L".gz",  L".tgz", L".bz2",
-      L".tbz2", L".xz", L".txz", L".cab",  L".iso", L".wim", L".jar",
-      L".apk", L".epub", L".lzh", L".arj", L".z",   L".001"};
+      L".zip",  L".7z",  L".rar",  L".tar",  L".gz",   L".tgz", L".bz2",
+      L".tbz2", L".xz",  L".txz",  L".cab",  L".iso",  L".wim", L".jar",
+      L".apk",  L".epub", L".lzh", L".arj",  L".z",    L".001"};
   return kExts;
 }
 
-// 写一个默认值（REG_SZ）。已存在同名值时覆盖。
-bool SetString(const std::wstring& subKey, const wchar_t* name, const std::wstring& value) {
-  HKEY key = nullptr;
-  if (::RegCreateKeyExW(HKEY_CURRENT_USER, subKey.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, &key,
-                        nullptr) != ERROR_SUCCESS) {
-    return false;
-  }
-  const LONG r = ::RegSetValueExW(key, name, 0, REG_SZ,
-                                  reinterpret_cast<const BYTE*>(value.c_str()),
-                                  static_cast<DWORD>((value.size() + 1) * sizeof(wchar_t)));
-  ::RegCloseKey(key);
-  return r == ERROR_SUCCESS;
-}
+// 完整动作清单：所有文件与目录可压缩，压缩包后缀可解压
+std::vector<AiUI::ContextMenuEntry> Entries() {
+  std::vector<AiUI::ContextMenuEntry> entries;
 
-bool ReadString(const std::wstring& subKey, const wchar_t* name, std::wstring& out) {
-  HKEY key = nullptr;
-  if (::RegOpenKeyExW(HKEY_CURRENT_USER, subKey.c_str(), 0, KEY_READ, &key) != ERROR_SUCCESS) {
-    return false;
-  }
-  wchar_t buf[1024]{};
-  DWORD size = sizeof(buf);
-  DWORD type = 0;
-  const LONG r = ::RegQueryValueExW(key, name, nullptr, &type, reinterpret_cast<LPBYTE>(buf), &size);
-  ::RegCloseKey(key);
-  if (r != ERROR_SUCCESS || type != REG_SZ) return false;
-  out.assign(buf, size / sizeof(wchar_t));
-  while (!out.empty() && out.back() == L'\0') out.pop_back();
-  return true;
-}
+  AiUI::ContextMenuEntry compress;
+  compress.verb = kVerbCompress;
+  compress.label = kLabelCompress;
+  compress.command = kArgCompress;
+  entries.push_back(compress);
 
-// 递归删除整棵子树；键不存在也算成功
-bool DeleteTree(const std::wstring& subKey) {
-  LONG r = ::RegDeleteTreeW(HKEY_CURRENT_USER, subKey.c_str());
-  if (r == ERROR_FILE_NOT_FOUND || r == ERROR_PATH_NOT_FOUND) return true;
-  return r == ERROR_SUCCESS;
-}
-
-// 一个动词挂在某个 ProgID 下：返回写入的第一个失败点，空串表示成功
-std::wstring WriteVerb(const std::wstring& parent, const wchar_t* verb, const wchar_t* label,
-                       const std::wstring& exe, const wchar_t* argSwitch, bool topMost = false) {
-  const std::wstring base = parent + L"\\shell\\" + verb;
-  const std::wstring cmdKey = base + L"\\command";
-
-  if (!SetString(base, nullptr, label)) return L"写入菜单文字失败：" + base;
-  if (!SetString(base, L"Icon", exe)) return L"写入图标失败：" + base;
-
+  AiUI::ContextMenuEntry quickZip;
+  quickZip.verb = kVerbCompressZip;
+  quickZip.label = kLabelCompressZip;
+  quickZip.command = kArgCompressZip;
   // 置顶：右键就能看到，不用展开级联菜单
-  if (topMost && !SetString(base, L"Position", L"Top")) return L"写入菜单位置失败：" + base;
+  quickZip.topLevel = true;
+  entries.push_back(quickZip);
 
-  // 静态动词只认 %1..%N，没有 %*（写了也展开成空）。多选时 shell 会为每个
-  // 选中项各启动一次进程，各带一个 %1，靠程序内的单实例聚合合并成一次操作。
-  if (!SetString(base, L"MultiSelectModel", L"Player")) return L"写入多选模式失败：" + base;
-
-  const std::wstring cmd = L"\"" + exe + L"\" " + argSwitch + L" \"%1\"";
-  if (!SetString(cmdKey, nullptr, cmd)) return L"写入命令行失败：" + cmdKey;
-  return L"";
+  // 压缩包后缀挂解压项。按类型挂动词，不碰默认打开方式，
+  // 避免抢走用户的文件关联。
+  for (const auto& ext : ArchiveExts()) {
+    AiUI::ContextMenuEntry extract;
+    extract.verb = kVerbExtract;
+    extract.label = kLabelExtract;
+    extract.command = kArgExtract;
+    extract.extensions = {ext};
+    entries.push_back(extract);
+  }
+  return entries;
 }
 
 }  // namespace
 
 std::wstring RegisterContextMenu() {
-  const std::wstring exe = ExePath();
-  if (exe.empty()) return L"无法取得程序路径";
-
-  // 1) 所有文件（包括未知类型）都挂上压缩项
-  std::wstring err = WriteVerb(L"Software\\Classes\\*", kVerbCompress, kLabelCompress, exe,
-                               kArgCompress);
-  if (!err.empty()) return err;
-  // 2) 一键压缩到 ZIP：菜单文字固定，点一下直接产出 <文件名>.zip，不弹对话框
-  err = WriteVerb(L"Software\\Classes\\*", kVerbCompressZip, kLabelCompressZip, exe, kArgCompressZip,
-                  true);
-  if (!err.empty()) return err;
-  // 3) 文件夹同样可以压缩
-  err = WriteVerb(L"Software\\Classes\\Directory", kVerbCompress, kLabelCompress, exe, kArgCompress);
-  if (!err.empty()) return err;
-  err = WriteVerb(L"Software\\Classes\\Directory", kVerbCompressZip, kLabelCompressZip, exe,
-                  kArgCompressZip, true);
-  if (!err.empty()) return err;
-
-  // 4) 压缩包后缀挂解压项。用 SystemFileAssociations 按类型挂动词，
-  //    不碰 ProgID 和默认打开方式，避免抢走用户的文件关联。
-  for (const auto& ext : ArchiveExts()) {
-    err = WriteVerb(L"Software\\Classes\\SystemFileAssociations\\" + ext, kVerbExtract,
-                    kLabelExtract, exe, kArgExtract);
-    if (!err.empty()) return err;
-  }
-
-  // 通知资源管理器刷新关联缓存
-  ::SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
-  return L"";
+  return AiUI::platform()->registerContextMenu(Entries());
 }
 
 std::wstring UnregisterContextMenu() {
-  const std::vector<std::wstring> keys = {
-      L"Software\\Classes\\*\\shell\\" + std::wstring(kVerbCompress),
-      L"Software\\Classes\\*\\shell\\" + std::wstring(kVerbCompressZip),
-      L"Software\\Classes\\Directory\\shell\\" + std::wstring(kVerbCompress),
-      L"Software\\Classes\\Directory\\shell\\" + std::wstring(kVerbCompressZip),
-  };
-  for (const auto& k : keys) DeleteTree(k);
-
-  for (const auto& ext : ArchiveExts()) {
-    DeleteTree(L"Software\\Classes\\SystemFileAssociations\\" + ext + L"\\shell\\" +
-               kVerbExtract);
-  }
-
-  ::SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
-  return L"";
+  return AiUI::platform()->unregisterContextMenu(Entries());
 }
 
 bool IsContextMenuRegistered() {
-  const std::wstring exe = ExePath();
-  if (exe.empty()) return false;
-
-  // 认命令行里的 exe 路径：程序换了位置就视为未注册。
-  // 两个压缩动词都要在，只缺一个（比如从旧版本升级）也要重新注册。
-  // 另外旧版本用的是 %*（静态动词不支持，展开成空），这里要求必须带 "%1"，
-  // 老版本升级时会自动纠正过来。
-  for (const auto* verb : {kVerbCompress, kVerbCompressZip}) {
-    std::wstring cmd;
-    if (!ReadString(L"Software\\Classes\\*\\shell\\" + std::wstring(verb) + L"\\command", nullptr,
-                    cmd)) {
-      return false;
-    }
-    if (cmd.find(L"\"" + exe + L"\"") == std::wstring::npos) return false;
-    if (cmd.find(L"\"%1\"") == std::wstring::npos) return false;
-  }
-  return true;
+  return AiUI::platform()->isContextMenuRegistered(Entries());
 }
 
 }  // namespace shell

@@ -1,4 +1,4 @@
-// 主界面 Activity 实现：装配控件、响应交互、窗口级行为
+﻿// 主界面 Activity 实现：装配控件、响应交互、窗口级行为
 #include "main_activity.h"
 
 #include "app.h"
@@ -16,9 +16,7 @@
 #include "AiUI/widgets/status_bar.h"
 #include "AiUI/widgets/tree_view.h"
 
-#include <commctrl.h>
-#include <shellapi.h>
-#include <shlwapi.h>
+#include "AiUI/platform.h"
 
 #include <algorithm>
 
@@ -26,6 +24,34 @@ namespace ui {
 namespace {
 
 MainActivity* g_activity = nullptr;
+
+// 消息框出口：图标与按钮组合由平台层映射到各系统原生样式
+void info(const std::wstring& text, AiUI::NativeHandle owner) {
+  AiUI::MessageBoxParams params;
+  params.title = L"AIZip";
+  params.message = text;
+  params.icon = AiUI::MessageBoxIcon::kInfo;
+  AiUI::platform()->showMessageBox(owner, params);
+}
+
+void warn(const std::wstring& text, AiUI::NativeHandle owner) {
+  AiUI::MessageBoxParams params;
+  params.title = L"AIZip";
+  params.message = text;
+  params.icon = AiUI::MessageBoxIcon::kWarning;
+  AiUI::platform()->showMessageBox(owner, params);
+}
+
+// 返回 true 表示用户选了「是」；默认停在「否」，避免误删
+bool confirm(const std::wstring& title, const std::wstring& text, AiUI::NativeHandle owner) {
+  AiUI::MessageBoxParams params;
+  params.title = title;
+  params.message = text;
+  params.icon = AiUI::MessageBoxIcon::kWarning;
+  params.buttons = AiUI::MessageBoxButtons::kYesNo;
+  params.defaultButton = AiUI::MessageBoxResult::kNo;
+  return AiUI::platform()->showMessageBox(owner, params) == AiUI::MessageBoxResult::kYes;
+}
 
 // 包内路径是否存在：任一条目就是它，或在它下面。
 // 7z 条目里的分隔符可能是 '/'，两种都要认。
@@ -37,12 +63,8 @@ bool innerPathExists(std::wstring inner) {
     std::wstring path = entry.path;
     std::replace(path.begin(), path.end(), L'/', L'\\');
     while (!path.empty() && path.back() == L'\\') path.pop_back();
-    if (::CompareStringOrdinal(path.c_str(), -1, inner.c_str(), -1, TRUE) == CSTR_EQUAL) return true;
-    if (path.size() > inner.size() && path[inner.size()] == L'\\' &&
-        ::CompareStringOrdinal(path.c_str(), static_cast<int>(inner.size()), inner.c_str(),
-                               static_cast<int>(inner.size()), TRUE) == CSTR_EQUAL) {
-      return true;
-    }
+    if (AiUI::platform()->equalsPath(path, inner)) return true;
+    if (AiUI::platform()->isPathPrefix(inner, path)) return true;
   }
   return false;
 }
@@ -176,17 +198,13 @@ void MainActivity::onCreate() {
   attachFileList();
   attachStatusBar();
 
-  // 拖放与单实例转发挂在 AiUI 建的顶层窗口上（类名 AiUIWindow）
-  HWND host = nativeWindow();
-  g_app.mainWnd = host;
-  AttachHostHooks(host);
-  if (HWND inner = static_cast<HWND>(contentView() ? contentView()->handle() : nullptr)) {
-    if (inner != host) AttachHostHooks(inner);
-  }
+  // 拖放与单实例转发挂在 AiUI 建的顶层窗口上
+  g_app.mainWnd = nativeWindow();
+  AttachHostHooks();
 }
 
-HWND MainActivity::nativeWindow() const {
-  return window() ? static_cast<HWND>(window()->handle()) : nullptr;
+AiUI::NativeHandle MainActivity::nativeWindow() const {
+  return window() ? window()->handle() : nullptr;
 }
 
 void MainActivity::attachCrumbBar() {
@@ -369,15 +387,7 @@ void MainActivity::refreshStatusBar() {
   if (g_app.archiveMode) {
     fields.left = g_app.archivePath;
     fields.tag = z7::FormatNameFromExtension(util::FileExtension(g_app.archivePath));
-    LARGE_INTEGER size{};
-    HANDLE file = ::CreateFileW(g_app.archivePath.c_str(), GENERIC_READ,
-                                FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
-                                FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (file != INVALID_HANDLE_VALUE) {
-      ::GetFileSizeEx(file, &size);
-      ::CloseHandle(file);
-    }
-    fields.size = util::FormatSize(static_cast<uint64_t>(size.QuadPart));
+    fields.size = util::FormatSize(AiUI::platform()->fileSize(g_app.archivePath));
     fields.showHome = true;
   } else {
     fields.left = g_app.curDir;
@@ -480,17 +490,14 @@ void MainActivity::syncSideTree() {
 void MainActivity::onTreeNodeSelected(AiUI::TreeNode* node) {
   if (!node) return;
   if (g_app.archiveMode) {
-    if (::CompareStringOrdinal(node->path.c_str(), -1, g_app.innerPath.c_str(), -1, TRUE) !=
-        CSTR_EQUAL) {
+    if (!AiUI::platform()->equalsPath(node->path, g_app.innerPath)) {
       // 包内换目录必须按新前缀重新筛条目，走完整刷新；
       // 树这边 syncSideTree 会按根标识判断，只同步选中、不重建
       g_app.innerPath = node->path;
       AppRefreshView();
       return;
     }
-  } else if (!node->path.empty() &&
-             ::CompareStringOrdinal(node->path.c_str(), -1, g_app.curDir.c_str(), -1, TRUE) !=
-                 CSTR_EQUAL) {
+  } else if (!node->path.empty() && !AiUI::platform()->equalsPath(node->path, g_app.curDir)) {
     AppNavigateTo(node->path);
     return;
   }
@@ -527,7 +534,7 @@ std::vector<std::wstring> MainActivity::selectedPaths() const {
 void MainActivity::onRowActivated(int row) {
   const Item* item = model_.itemAt(row);
   if (!item) return;
-  HWND host = nativeWindow();
+  const AiUI::NativeHandle host = nativeWindow();
 
   if (g_app.archiveMode) {
     if (item->isDir) {
@@ -548,41 +555,60 @@ void MainActivity::onRowActivated(int row) {
     AppOpenArchive(item->fullPath);
     return;
   }
-  ::ShellExecuteW(host, L"open", item->fullPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+  AiUI::platform()->openWithSystem(item->fullPath);
 }
 
 void MainActivity::showListContextMenu() {
   const auto selected = selectedItemIndices();
   const bool hasSelection = !selected.empty();
-  HWND host = nativeWindow();
-
-  HMENU menu = ::CreatePopupMenu();
+  const AiUI::NativeHandle host = nativeWindow();
   const bool canExtract = canExtractSelected();
-  ::AppendMenuW(menu, MF_STRING | (canExtract ? 0 : MF_GRAYED), 1, L"解压到...");
-  ::AppendMenuW(menu, MF_STRING, 2, L"压缩为...");
-  ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-  ::AppendMenuW(menu, MF_STRING | (hasSelection ? 0 : MF_GRAYED), 3, L"删除");
-  ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-  ::AppendMenuW(menu, MF_STRING, 4, L"刷新");
-  ::AppendMenuW(menu, MF_STRING | (hasSelection ? 0 : MF_GRAYED), 5, L"属性");
 
-  POINT pt;
-  ::GetCursorPos(&pt);
-  // 菜单 owner 必须是前台窗口，否则 TrackPopupMenu 会立即取消
-  ::SetForegroundWindow(host);
-  const UINT command = ::TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, host,
-                                        nullptr);
-  ::PostMessageW(host, WM_NULL, 0, 0);
-  ::DestroyMenu(menu);
+  // 顺序即下标：showPopupMenu 返回的也是下标
+  std::vector<AiUI::MenuItem> menu;
+  AiUI::MenuItem extractItem;
+  extractItem.label = L"解压到...";
+  extractItem.enabled = canExtract;
+  menu.push_back(extractItem);
+
+  AiUI::MenuItem compressItem;
+  compressItem.label = L"压缩为...";
+  menu.push_back(compressItem);
+
+  AiUI::MenuItem sep1;
+  sep1.separator = true;
+  menu.push_back(sep1);
+
+  AiUI::MenuItem deleteItem;
+  deleteItem.label = L"删除";
+  deleteItem.enabled = hasSelection;
+  menu.push_back(deleteItem);
+
+  AiUI::MenuItem sep2;
+  sep2.separator = true;
+  menu.push_back(sep2);
+
+  AiUI::MenuItem refreshItem;
+  refreshItem.label = L"刷新";
+  menu.push_back(refreshItem);
+
+  AiUI::MenuItem propsItem;
+  propsItem.label = L"属性";
+  propsItem.enabled = hasSelection;
+  menu.push_back(propsItem);
+
+  auto* platform = AiUI::platform();
+  // 弹出菜单必须先让窗口在前台，否则点别处菜单不消失
+  platform->bringToFront(host);
+  const int command = platform->showPopupMenu(host, platform->cursorPosition(), menu);
 
   switch (command) {
-    case 1:
+    case 0:
       extractSelection();
       break;
-    case 2: {
+    case 1: {
       if (g_app.archiveMode) {
-        ::MessageBoxW(host, L"压缩包内无法直接创建新压缩包，请先解压。", L"AIZip",
-                      MB_OK | MB_ICONINFORMATION);
+        info(L"压缩包内无法直接创建新压缩包，请先解压。", host);
         break;
       }
       ShowCompressDialog(host, selectedPaths());
@@ -591,13 +617,12 @@ void MainActivity::showListContextMenu() {
     case 3:
       deleteItems(selected);
       break;
-    case 4:
+    case 5:
       AppRefreshView();
       break;
-    case 5:
+    case 7:
       if (hasSelection && !g_app.archiveMode) {
-        ::ShellExecuteW(host, L"properties", g_app.items[selected[0]].fullPath.c_str(), nullptr,
-                        nullptr, SW_SHOW);
+        platform->showProperties(host, g_app.items[selected[0]].fullPath);
       }
       break;
     default:
@@ -629,7 +654,7 @@ bool MainActivity::canExtractSelected() const {
 // 解压入口：右侧有选中项就按选中项，否则用左侧树的当前节点
 void MainActivity::extractSelection() {
   const auto selected = selectedItemIndices();
-  HWND host = nativeWindow();
+  const AiUI::NativeHandle host = nativeWindow();
   if (!selected.empty()) {
     if (g_app.archiveMode) {
       ShowExtractDialog(host, selected);
@@ -654,40 +679,27 @@ void MainActivity::extractSelection() {
 }
 
 void MainActivity::deleteItems(const std::vector<int>& indices) {
-  HWND host = nativeWindow();
+  const AiUI::NativeHandle host = nativeWindow();
   if (g_app.archiveMode) {
-    ::MessageBoxW(host, L"压缩包内的条目不支持直接删除。\n请解压后重新打包。", L"AIZip",
-                  MB_OK | MB_ICONINFORMATION);
+    info(L"压缩包内的条目不支持直接删除。\n请解压后重新打包。", host);
     return;
   }
   if (indices.empty()) {
-    ::MessageBoxW(host, L"请先选择要删除的文件或文件夹。", L"AIZip", MB_OK | MB_ICONINFORMATION);
+    info(L"请先选择要删除的文件或文件夹。", host);
     return;
   }
 
   const std::wstring message =
       L"确定把选中的 " + std::to_wstring(indices.size()) + L" 项移到回收站吗？";
-  if (::MessageBoxW(host, message.c_str(), L"确认删除",
-                    MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) {
-    return;
-  }
+  if (!confirm(L"确认删除", message, host)) return;
 
-  std::wstring list;
+  bool failed = false;
   for (int index : indices) {
     if (index < 0 || index >= static_cast<int>(g_app.items.size())) continue;
-    list += g_app.items[index].fullPath;
-    list.push_back(L'\0');
+    // 移到回收站而非直接删除：误删后还能还原
+    if (!AiUI::platform()->moveToTrash(g_app.items[index].fullPath)) failed = true;
   }
-  list.push_back(L'\0');
-
-  SHFILEOPSTRUCTW op{};
-  op.hwnd = host;
-  op.wFunc = FO_DELETE;
-  op.pFrom = list.c_str();
-  op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI;
-  if (::SHFileOperationW(&op) != 0) {
-    ::MessageBoxW(host, L"部分项目删除失败。", L"AIZip", MB_OK | MB_ICONWARNING);
-  }
+  if (failed) warn(L"部分项目删除失败。", host);
   AppRefreshView();
 }
 
@@ -695,14 +707,12 @@ void MainActivity::deleteItems(const std::vector<int>& indices) {
 
 void MainActivity::commitAddress(const std::wstring& target) {
   if (target.empty()) return;
-  HWND host = nativeWindow();
+  const AiUI::NativeHandle host = nativeWindow();
 
   if (g_app.archiveMode) {
     std::wstring inner;
     const std::wstring base = g_app.archivePath;
-    if (target.size() > base.size() &&
-        ::CompareStringOrdinal(target.c_str(), static_cast<int>(base.size()), base.c_str(),
-                               static_cast<int>(base.size()), TRUE) == CSTR_EQUAL) {
+    if (target.size() > base.size() && AiUI::platform()->isPathPrefix(base, target)) {
       inner = target.substr(base.size());
       while (!inner.empty() && (inner.front() == L'\\' || inner.front() == L'/')) {
         inner.erase(inner.begin());
@@ -719,8 +729,7 @@ void MainActivity::commitAddress(const std::wstring& target) {
 
     if (target == base || !inner.empty()) {
       if (!innerPathExists(inner)) {
-        ::MessageBoxW(host, (L"压缩包内没有该路径：\n" + inner).c_str(), L"AIZip",
-                      MB_OK | MB_ICONWARNING);
+        warn(L"压缩包内没有该路径：\n" + inner, host);
         return;
       }
       g_app.innerPath = inner;
@@ -739,7 +748,7 @@ void MainActivity::commitAddress(const std::wstring& target) {
   } else if (arc::Archive::IsArchiveFile(target) && util::PathExists(target)) {
     AppOpenArchive(target);
   } else {
-    ::MessageBoxW(host, (L"路径不存在：\n" + target).c_str(), L"AIZip", MB_OK | MB_ICONWARNING);
+    warn(L"路径不存在：\n" + target, host);
   }
 }
 
@@ -758,15 +767,15 @@ bool MainActivity::onKeyDown(const AiUI::Key& key, const AiUI::Modifiers& mods) 
 }
 
 bool MainActivity::onCloseRequest() {
-  // 关闭前保存窗口状态；位置尺寸由平台层处理
-  WINDOWPLACEMENT wp{};
-  wp.length = sizeof(wp);
-  HWND hwnd = nativeWindow();
-  if (hwnd && ::GetWindowPlacement(hwnd, &wp)) {
-    g_app.settings.winMax = (wp.showCmd == SW_SHOWMAXIMIZED);
-    if (!g_app.settings.winMax) {
-      g_app.settings.winW = wp.rcNormalPosition.right - wp.rcNormalPosition.left;
-      g_app.settings.winH = wp.rcNormalPosition.bottom - wp.rcNormalPosition.top;
+  // 关闭前保存窗口状态；正常尺寸取还原态，最大化时也记下来
+  if (AiUI::Window* win = window()) {
+    if (AiUI::PlatformWindow* pw = win->platformWindow()) {
+      g_app.settings.winMax = pw->isMaximized();
+      if (!g_app.settings.winMax) {
+        const AiUI::Rect rc = pw->normalBounds();
+        g_app.settings.winW = rc.right - rc.left;
+        g_app.settings.winH = rc.bottom - rc.top;
+      }
     }
   }
   util::SaveSettings(g_app.settings);

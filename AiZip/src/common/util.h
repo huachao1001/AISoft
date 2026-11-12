@@ -1,7 +1,9 @@
-// 通用工具：路径、字符串、格式化、DPI、设置
+// 通用工具：路径、字符串、格式化、设置
+//
+// 这里不出现平台类型：时间用 Unix 纪元毫秒，句柄走 AiUI 的平台接口。
 #pragma once
 
-#include <windows.h>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -26,20 +28,23 @@ struct SourceItem {
   std::wstring fullPath;
   std::wstring relPath;
   uint64_t size = 0;
-  DWORD attrib = 0;
-  FILETIME mtime{};
+  // Unix 纪元毫秒；0 表示未知
+  int64_t modifiedMillis = 0;
+  // 平台属性位（只做透传，压缩时原样写回包里）；0 表示无
+  uint32_t attributes = 0;
   bool isDir = false;
 };
 void CollectSources(const std::vector<std::wstring>& paths, std::vector<SourceItem>& out);
 
 // ── 格式化 ──
 std::wstring FormatSize(uint64_t bytes);                    // 1.5 MB
-std::wstring FormatTime(const FILETIME& ft);                // 2026-10-26 10:15
+std::wstring FormatTime(int64_t millis);                    // 2026-10-26 10:15
 std::wstring FormatCrc(uint32_t crc, bool has);             // 8 位大写十六进制
 
-// ── 字体/DPI ──
-int DpiForWindow(HWND hwnd);
-void EnableDpiAwareness();
+// ── 文本编码 ──
+// 落盘与跨进程传递统一用 UTF-8：不依赖系统区域设置
+std::string toUtf8(const std::wstring& text);
+std::wstring fromUtf8(const std::string& text);
 
 // ── 设置持久化（%APPDATA%\AIZip\settings.ini）──
 struct Settings {

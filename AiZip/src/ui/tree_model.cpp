@@ -3,31 +3,24 @@
 
 #include "app.h"
 #include "util.h"
-
-#include <shlobj.h>
-#include <shlwapi.h>
+#include "AiUI/platform.h"
 
 #include <algorithm>
 
 namespace ui {
 namespace {
 
+using AiUI::platform;
+
 // 枚举目录下的一级子目录（跳过隐藏与系统目录）
 std::vector<std::wstring> subDirs(const std::wstring& dir) {
   std::vector<std::wstring> out;
-  WIN32_FIND_DATAW find{};
-  HANDLE handle = ::FindFirstFileW(util::JoinPath(dir, L"*").c_str(), &find);
-  if (handle == INVALID_HANDLE_VALUE) return out;
-  do {
-    if (find.cFileName[0] == L'.') continue;
-    if (!(find.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
-    if (find.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN) continue;
-    if (find.dwFileAttributes & FILE_ATTRIBUTE_SYSTEM) continue;
-    out.emplace_back(find.cFileName);
-  } while (::FindNextFileW(handle, &find));
-  ::FindClose(handle);
+  // skipHidden 为 true 时平台层已过滤掉隐藏与系统项
+  for (const auto& entry : platform()->listDirectory(dir, true)) {
+    if (entry.isDir) out.push_back(entry.name);
+  }
   std::sort(out.begin(), out.end(), [](const std::wstring& a, const std::wstring& b) {
-    return ::CompareStringOrdinal(a.c_str(), -1, b.c_str(), -1, TRUE) == CSTR_LESS_THAN;
+    return platform()->compareText(a, b) < 0;
   });
   return out;
 }
@@ -58,12 +51,7 @@ std::vector<std::unique_ptr<AiUI::TreeNode>> TreeModel::loadChildren(AiUI::TreeN
     std::vector<std::wstring> names;
     for (const auto& entry : g_app.archive.Entries()) {
       if (entry.path.size() <= prefix.size()) continue;
-      if (!prefix.empty() &&
-          ::CompareStringOrdinal(entry.path.c_str(), static_cast<int>(prefix.size()),
-                                 prefix.c_str(), static_cast<int>(prefix.size()), TRUE) !=
-              CSTR_EQUAL) {
-        continue;
-      }
+      if (!prefix.empty() && !platform()->isPathPrefix(prefix, entry.path)) continue;
       const std::wstring relative = entry.path.substr(prefix.size());
       const size_t slash = relative.find_first_of(L"\\/");
       // 只有还带子路径的条目（或本身是目录）才算树节点
@@ -73,7 +61,7 @@ std::vector<std::unique_ptr<AiUI::TreeNode>> TreeModel::loadChildren(AiUI::TreeN
       if (std::find(names.begin(), names.end(), name) == names.end()) names.push_back(name);
     }
     std::sort(names.begin(), names.end(), [](const std::wstring& a, const std::wstring& b) {
-      return ::CompareStringOrdinal(a.c_str(), -1, b.c_str(), -1, TRUE) == CSTR_LESS_THAN;
+      return platform()->compareText(a, b) < 0;
     });
     for (const auto& name : names) {
       const std::wstring inner = node->path.empty() ? name : node->path + L"\\" + name;
@@ -103,35 +91,23 @@ std::unique_ptr<AiUI::TreeNode> TreeModel::buildRoot() {
     return root;
   }
 
-  wchar_t desktop[MAX_PATH] = {};
-  if (::SHGetFolderPathW(nullptr, CSIDL_DESKTOPDIRECTORY, nullptr, 0, desktop) == S_OK) {
+  const std::wstring desktop = platform()->specialFolder(AiUI::SpecialFolder::kDesktop);
+  if (!desktop.empty()) {
     auto node = makeNode(L"桌面", desktop, 0, root.get(), AiUI::IconId::kHome);
     node->isRoot = true;
     root->children.push_back(std::move(node));
   }
-  const DWORD drives = ::GetLogicalDrives();
-  for (int i = 0; i < 26; ++i) {
-    if (!(drives & (1u << i))) continue;
-    std::wstring path;
-    path.push_back(static_cast<wchar_t>(L'A' + i));
-    path += L":\\";
-    const UINT type = ::GetDriveTypeW(path.c_str());
-    if (type == DRIVE_UNKNOWN || type == DRIVE_NO_ROOT_DIR) continue;
-    if ((type == DRIVE_REMOVABLE || type == DRIVE_CDROM) && !util::PathExists(path)) continue;
-    std::wstring label = path.substr(0, 2);
-    wchar_t volume[MAX_PATH] = {};
-    if (::GetVolumeInformationW(path.c_str(), volume, MAX_PATH, nullptr, nullptr, nullptr, nullptr,
-                                0) &&
-        volume[0]) {
-      label = std::wstring(volume) + L" (" + path.substr(0, 2) + L")";
-    }
-    auto node = makeNode(label, path, 0, root.get(), AiUI::IconId::kFolder);
+
+  // 挂载的卷由平台层枚举；空卷（如空读卡器）后端已过滤
+  for (const auto& drive : platform()->listDrives()) {
+    auto node = makeNode(drive.label, drive.path, 0, root.get(), AiUI::IconId::kFolder);
     node->isRoot = true;
     root->children.push_back(std::move(node));
   }
-  wchar_t profile[MAX_PATH] = {};
-  if (::SHGetFolderPathW(nullptr, CSIDL_PROFILE, nullptr, 0, profile) == S_OK) {
-    auto node = makeNode(L"用户目录", profile, 0, root.get(), AiUI::IconId::kFolder);
+
+  const std::wstring home = platform()->specialFolder(AiUI::SpecialFolder::kHome);
+  if (!home.empty()) {
+    auto node = makeNode(L"用户目录", home, 0, root.get(), AiUI::IconId::kFolder);
     node->isRoot = true;
     root->children.push_back(std::move(node));
   }

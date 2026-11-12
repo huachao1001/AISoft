@@ -2,11 +2,34 @@
 
 #include "sevenzip_loader.h"
 #include "util.h"
+#include "AiUI/platform.h"
 
 #include <atomic>
 
 namespace arc {
 namespace {
+
+// FILETIME 自 1601-01-01 起算，每单位 100ns；统一换算成 Unix 纪元毫秒
+int64_t fileTimeToUnixMillis(const FILETIME& ft) {
+  ULARGE_INTEGER value{};
+  value.LowPart = ft.dwLowDateTime;
+  value.HighPart = ft.dwHighDateTime;
+  constexpr uint64_t kEpochDiff = 116444736000000000ULL;
+  if (value.QuadPart <= kEpochDiff) return 0;
+  return static_cast<int64_t>((value.QuadPart - kEpochDiff) / 10000ULL);
+}
+
+// Unix 纪元毫秒 → FILETIME（1601 起的 100ns）；0 表示未知，返回全零
+FILETIME unixMillisToFileTime(int64_t millis) {
+  if (millis <= 0) return FILETIME{};
+  constexpr uint64_t kEpochDiff = 116444736000000000ULL;
+  ULARGE_INTEGER value{};
+  value.QuadPart = static_cast<uint64_t>(millis) * 10000ULL + kEpochDiff;
+  FILETIME ft{};
+  ft.dwLowDateTime = value.LowPart;
+  ft.dwHighDateTime = value.HighPart;
+  return ft;
+}
 
 // ───────────────────────── 口令提供者 ─────────────────────────
 
@@ -139,13 +162,25 @@ class PasswordSource {
 };
 
 // ───────────────────────── 文件流 ─────────────────────────
+//
+// 流对象包一层平台 FileStream：7z 内核要的是自己的 COM 接口，而打开文件
+// 的方式（共享模式、顺序扫描提示）各平台不同，统一交给平台层。
+
+// 7z 的 Seek 起点常量（STREAM_SEEK_SET / CUR / END）与平台枚举一一对应
+AiUI::SeekOrigin seekOriginFrom(uint32_t origin) {
+  switch (origin) {
+    case 1:
+      return AiUI::SeekOrigin::kCurrent;
+    case 2:
+      return AiUI::SeekOrigin::kEnd;
+    default:
+      return AiUI::SeekOrigin::kBegin;
+  }
+}
 
 class FileInStream final : public z7::IInStream {
  public:
-  explicit FileInStream(HANDLE h) : handle_(h) {}
-  ~FileInStream() {
-    if (handle_ && handle_ != INVALID_HANDLE_VALUE) ::CloseHandle(handle_);
-  }
+  explicit FileInStream(std::unique_ptr<AiUI::FileStream> stream) : stream_(std::move(stream)) {}
 
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override {
     if (!ppv) return E_POINTER;
@@ -169,33 +204,34 @@ class FileInStream final : public z7::IInStream {
     return n;
   }
   HRESULT STDMETHODCALLTYPE Read(void* data, uint32_t size, uint32_t* processed) override {
-    DWORD read = 0;
-    if (!::ReadFile(handle_, data, size, &read, nullptr)) {
+    if (!stream_) {
       if (processed) *processed = 0;
       return E_FAIL;
     }
-    if (processed) *processed = read;
+    const int64_t got = stream_->read(data, static_cast<int64_t>(size));
+    if (got < 0) {
+      if (processed) *processed = 0;
+      return E_FAIL;
+    }
+    if (processed) *processed = static_cast<uint32_t>(got);
     return S_OK;
   }
   HRESULT STDMETHODCALLTYPE Seek(int64_t offset, uint32_t origin, uint64_t* newPos) override {
-    LARGE_INTEGER li, np;
-    li.QuadPart = offset;
-    if (!::SetFilePointerEx(handle_, li, &np, origin)) return E_FAIL;
-    if (newPos) *newPos = static_cast<uint64_t>(np.QuadPart);
+    if (!stream_) return E_FAIL;
+    uint64_t position = 0;
+    if (!stream_->seek(offset, seekOriginFrom(origin), &position)) return E_FAIL;
+    if (newPos) *newPos = position;
     return S_OK;
   }
 
  private:
-  HANDLE handle_;
+  std::unique_ptr<AiUI::FileStream> stream_;
   std::atomic<ULONG> refs_{1};
 };
 
 class FileOutStream final : public z7::IOutStream {
  public:
-  explicit FileOutStream(HANDLE h) : handle_(h) {}
-  ~FileOutStream() {
-    if (handle_ && handle_ != INVALID_HANDLE_VALUE) ::CloseHandle(handle_);
-  }
+  explicit FileOutStream(std::unique_ptr<AiUI::FileStream> stream) : stream_(std::move(stream)) {}
 
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override {
     if (!ppv) return E_POINTER;
@@ -219,30 +255,31 @@ class FileOutStream final : public z7::IOutStream {
     return n;
   }
   HRESULT STDMETHODCALLTYPE Write(const void* data, uint32_t size, uint32_t* processed) override {
-    DWORD written = 0;
-    if (!::WriteFile(handle_, data, size, &written, nullptr)) {
+    if (!stream_) {
       if (processed) *processed = 0;
       return E_FAIL;
     }
-    if (processed) *processed = written;
+    const int64_t put = stream_->write(data, static_cast<int64_t>(size));
+    if (put < 0) {
+      if (processed) *processed = 0;
+      return E_FAIL;
+    }
+    if (processed) *processed = static_cast<uint32_t>(put);
     return S_OK;
   }
   HRESULT STDMETHODCALLTYPE Seek(int64_t offset, uint32_t origin, uint64_t* newPos) override {
-    LARGE_INTEGER li, np;
-    li.QuadPart = offset;
-    if (!::SetFilePointerEx(handle_, li, &np, origin)) return E_FAIL;
-    if (newPos) *newPos = static_cast<uint64_t>(np.QuadPart);
+    if (!stream_) return E_FAIL;
+    uint64_t position = 0;
+    if (!stream_->seek(offset, seekOriginFrom(origin), &position)) return E_FAIL;
+    if (newPos) *newPos = position;
     return S_OK;
   }
   HRESULT STDMETHODCALLTYPE SetSize(uint64_t newSize) override {
-    LARGE_INTEGER li, np;
-    li.QuadPart = static_cast<LONGLONG>(newSize);
-    if (!::SetFilePointerEx(handle_, li, &np, FILE_BEGIN)) return E_FAIL;
-    return ::SetEndOfFile(handle_) ? S_OK : E_FAIL;
+    return (stream_ && stream_->setSize(newSize)) ? S_OK : E_FAIL;
   }
 
  private:
-  HANDLE handle_;
+  std::unique_ptr<AiUI::FileStream> stream_;
   std::atomic<ULONG> refs_{1};
 };
 
@@ -288,12 +325,12 @@ bool GetBoolProp(z7::IInArchive* a, uint32_t idx, z7::PropId id) {
   return out;
 }
 
-bool GetFileTimeProp(z7::IInArchive* a, uint32_t idx, z7::PropId id, FILETIME& out) {
+bool GetFileTimeProp(z7::IInArchive* a, uint32_t idx, z7::PropId id, int64_t& outMillis) {
   PROPVARIANT v;
   ::PropVariantInit(&v);
   bool ok = false;
   if (a->GetProperty(idx, id, &v) == S_OK && v.vt == VT_FILETIME) {
-    out = v.filetime;
+    outMillis = fileTimeToUnixMillis(v.filetime);
     ok = true;
   }
   ::PropVariantClear(&v);
@@ -412,9 +449,9 @@ class ExtractCallback final : public z7::IArchiveExtractCallback {
 
     const bool exists = util::PathExists(target);
     if (exists && opts_.update == ExtractOptions::Update::kNewerOnly && e.hasMtime) {
-      WIN32_FILE_ATTRIBUTE_DATA fad;
-      if (::GetFileAttributesExW(target.c_str(), GetFileExInfoStandard, &fad) &&
-          ::CompareFileTime(&fad.ftLastWriteTime, &e.mtime) >= 0) {
+      // 归档里的时间已经是 Unix 毫秒，直接和现有文件的修改时间比
+      const int64_t existing = AiUI::platform()->modifiedTime(target);
+      if (existing > 0 && existing >= e.modifiedMillis) {
         currentSkip_ = true;
         currentEntry_ = nullptr;
         return S_OK;
@@ -456,9 +493,8 @@ class ExtractCallback final : public z7::IArchiveExtractCallback {
       if (action == 2) target = util::MakeUniquePath(target);
     }
 
-    HANDLE h = ::CreateFileW(target.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
-                             FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE) {
+    auto stream = AiUI::platform()->openFileStream(target, true);
+    if (!stream) {
       currentSkip_ = true;
       currentEntry_ = nullptr;
       return S_OK;
@@ -467,7 +503,7 @@ class ExtractCallback final : public z7::IArchiveExtractCallback {
       outStream_->Release();
       outStream_ = nullptr;
     }
-    outStream_ = new FileOutStream(h);
+    outStream_ = new FileOutStream(std::move(stream));
     *outStream = static_cast<z7::ISequentialOutStream*>(outStream_);
     outStream_->AddRef();
     currentSkip_ = false;
@@ -487,12 +523,7 @@ class ExtractCallback final : public z7::IArchiveExtractCallback {
 
     if (result == 0 && !currentSkip_ && currentEntry_ && currentEntry_->hasMtime &&
         !currentTarget_.empty()) {
-      HANDLE h = ::CreateFileW(currentTarget_.c_str(), FILE_WRITE_ATTRIBUTES, 0, nullptr,
-                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-      if (h != INVALID_HANDLE_VALUE) {
-        ::SetFileTime(h, nullptr, nullptr, &currentEntry_->mtime);
-        ::CloseHandle(h);
-      }
+      AiUI::platform()->setModifiedTime(currentTarget_, currentEntry_->modifiedMillis);
     }
     if (result != 0) errorCount_++;
     currentTarget_.clear();
@@ -600,11 +631,11 @@ class UpdateCallback final : public z7::IArchiveUpdateCallback {
         break;
       case z7::kpidAttrib:
         value->vt = VT_UI4;
-        value->ulVal = it.attrib;
+        value->ulVal = it.attributes;
         break;
       case z7::kpidMTime:
         value->vt = VT_FILETIME;
-        value->filetime = it.mtime;
+        value->filetime = unixMillisToFileTime(it.modifiedMillis);
         break;
       case z7::kpidIsAnti:
         value->vt = VT_BOOL;
@@ -623,16 +654,14 @@ class UpdateCallback final : public z7::IArchiveUpdateCallback {
     const util::SourceItem& it = items_[index];
     if (it.isDir) return S_OK;
 
-    HANDLE h = ::CreateFileW(it.fullPath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
-                             OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
-                             nullptr);
-    if (h == INVALID_HANDLE_VALUE) return E_FAIL;
+    auto stream = AiUI::platform()->openFileStream(it.fullPath, false);
+    if (!stream) return E_FAIL;
 
     if (inStream_) {
       inStream_->Release();
       inStream_ = nullptr;
     }
-    inStream_ = new FileInStream(h);
+    inStream_ = new FileInStream(std::move(stream));
     *inStream = static_cast<z7::ISequentialInStream*>(inStream_);
     inStream_->AddRef();
     currentPath_ = it.relPath;
@@ -684,16 +713,14 @@ OpenResult Archive::Open(const std::wstring& filePath, const std::wstring& passw
   OpenResult r;
   Close();
 
-  HANDLE h = ::CreateFileW(filePath.c_str(), GENERIC_READ,
-                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
-                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-  if (h == INVALID_HANDLE_VALUE) {
+  auto fileStream = AiUI::platform()->openFileStream(filePath, false);
+  if (!fileStream) {
     r.error = L"无法打开文件";
     return r;
   }
 
   auto* pwd = new PasswordSource(password, nullptr);
-  auto* inStream = new FileInStream(h);
+  auto* inStream = new FileInStream(std::move(fileStream));
   auto* cb = new OpenCallback(pwd);
 
   const std::wstring ext = util::FileExtension(filePath);
@@ -703,11 +730,8 @@ OpenResult Archive::Open(const std::wstring& filePath, const std::wstring& passw
     if (!::IsEqualGUID(g, candidates[0])) candidates.push_back(g);
   }
 
-  LARGE_INTEGER fileSize;
-  fileSize.QuadPart = 0;
-  ::GetFileSizeEx(h, &fileSize);
-  const uint64_t maxCheck =
-      fileSize.QuadPart > 0 ? static_cast<uint64_t>(fileSize.QuadPart) : (1ull << 23);
+  const uint64_t size = AiUI::platform()->fileSize(filePath);
+  const uint64_t maxCheck = size > 0 ? size : (1ull << 23);
 
   z7::IInArchive* opened = nullptr;
   for (const GUID& cls : candidates) {
@@ -755,7 +779,7 @@ OpenResult Archive::Open(const std::wstring& filePath, const std::wstring& passw
     e.encrypted = GetBoolProp(opened, i, z7::kpidEncrypted);
     GetUInt64Prop(opened, i, z7::kpidSize, e.size);
     GetUInt64Prop(opened, i, z7::kpidPackSize, e.packSize);
-    e.hasMtime = GetFileTimeProp(opened, i, z7::kpidMTime, e.mtime);
+    e.hasMtime = GetFileTimeProp(opened, i, z7::kpidMTime, e.modifiedMillis);
     e.method = GetStringProp(opened, i, z7::kpidMethod);
 
     uint64_t crc = 0;
@@ -884,16 +908,15 @@ static bool CompressOnce(const std::vector<util::SourceItem>& items, const GUID&
     sp->SetProperties(names.data(), valStore.data(), static_cast<uint32_t>(nameStore.size()));
   }
 
-  HANDLE hOut = ::CreateFileW(outPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
-                              FILE_ATTRIBUTE_NORMAL, nullptr);
-  if (hOut == INVALID_HANDLE_VALUE) {
+  auto fileStream = AiUI::platform()->openFileStream(outPath, true);
+  if (!fileStream) {
     for (auto& pv : valStore) ::PropVariantClear(&pv);
     if (sp) sp->Release();
     out->Release();
     error = L"无法创建压缩包文件";
     return false;
   }
-  auto* outStream = new FileOutStream(hOut);
+  auto* outStream = new FileOutStream(std::move(fileStream));
 
   auto* pwd = new PasswordSource(password, nullptr);
   auto* cb = new UpdateCallback(items, progress, pwd);
@@ -912,12 +935,12 @@ static bool CompressOnce(const std::vector<util::SourceItem>& items, const GUID&
   for (auto& pv : valStore) ::PropVariantClear(&pv);
 
   if (canceled) {
-    ::DeleteFileW(outPath.c_str());
+    AiUI::platform()->deleteFile(outPath);
     error = L"操作已取消";
     return false;
   }
   if (hr != S_OK || errors > 0) {
-    ::DeleteFileW(outPath.c_str());
+    AiUI::platform()->deleteFile(outPath);
     error = L"压缩失败";
     return false;
   }
@@ -949,15 +972,11 @@ bool Compress(const std::vector<std::wstring>& sources, const CompressOptions& o
 
   // TAR.GZ / TAR.BZ2 / TAR.XZ：先打 tar，再整体压一层
   if (fi && fi->tarWrapped) {
-    wchar_t tmpDir[MAX_PATH];
-    wchar_t tmpFile[MAX_PATH];
-    if (!::GetTempPathW(MAX_PATH, tmpDir) ||
-        !::GetTempFileNameW(tmpDir, L"mzt", 0, tmpFile)) {
-      error = L"无法创建临时文件";
-      return false;
-    }
-    std::wstring tarPath = tmpFile;
-    // GetTempFileName 会建一个空文件，tar handler 用 CREATE_ALWAYS 覆盖，无需先删
+    // 名字带进程号与单调时钟，避免并发或残留的临时文件互相覆盖
+    const std::wstring tarPath =
+        util::JoinPath(AiUI::platform()->tempDir(),
+                       L"aizip-" + std::to_wstring(AiUI::platform()->processId()) + L"-" +
+                           std::to_wstring(AiUI::platform()->monotonicMillis()) + L".tar");
     bool ok = MakeTarStaging(items, tarPath, error);
     if (ok) {
       std::vector<util::SourceItem> one;
@@ -967,17 +986,14 @@ bool Compress(const std::vector<std::wstring>& sources, const CompressOptions& o
       std::wstring innerName = util::BaseName(opts.archivePath);
       const size_t dot = innerName.find(L".tar.");
       it.relPath = dot == std::wstring::npos ? innerName : innerName.substr(0, dot) + L".tar";
-      WIN32_FILE_ATTRIBUTE_DATA fad;
-      if (::GetFileAttributesExW(tarPath.c_str(), GetFileExInfoStandard, &fad)) {
-        it.size = (static_cast<uint64_t>(fad.nFileSizeHigh) << 32) | fad.nFileSizeLow;
-        it.mtime = fad.ftLastWriteTime;
-        it.attrib = fad.dwFileAttributes;
-      }
+      // 中间 tar 的元数据走平台接口取
+      it.size = AiUI::platform()->fileSize(tarPath);
+      it.modifiedMillis = AiUI::platform()->modifiedTime(tarPath);
       one.push_back(it);
       ok = CompressOnce(one, cls, opts.archivePath, opts.level, false, opts.password, progress,
                         error);
     }
-    ::DeleteFileW(tarPath.c_str());
+    AiUI::platform()->deleteFile(tarPath);
     return ok;
   }
 

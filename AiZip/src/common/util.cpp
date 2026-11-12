@@ -1,13 +1,19 @@
 #include "util.h"
 
-#include <shlobj.h>
+#include "AiUI/platform.h"
 
+#include <algorithm>
 #include <cstdio>
-#include <map>
+#include <ctime>
 #include <string>
 #include <vector>
 
 namespace util {
+namespace {
+
+AiUI::Platform* platform() { return AiUI::platform(); }
+
+}  // namespace
 
 std::wstring FileExtension(const std::wstring& path) {
   const size_t dot = path.find_last_of(L'.');
@@ -44,80 +50,74 @@ std::wstring JoinPath(const std::wstring& a, const std::wstring& b) {
   if (a.empty()) return b;
   if (b.empty()) return a;
   std::wstring out = a;
-  if (out.back() != L'\\' && out.back() != L'/') out.push_back(L'\\');
+  const wchar_t sep = platform()->pathSeparator();
+  if (out.back() != sep && out.back() != L'/' && out.back() != L'\\') out.push_back(sep);
   size_t i = 0;
   while (i < b.size() && (b[i] == L'\\' || b[i] == L'/')) ++i;
   out.append(b.substr(i));
   return out;
 }
 
-bool PathExists(const std::wstring& path) {
-  return ::GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES;
-}
+bool PathExists(const std::wstring& path) { return platform()->pathExists(path); }
 
-bool IsDirectory(const std::wstring& path) {
-  const DWORD a = ::GetFileAttributesW(path.c_str());
-  return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY);
-}
+bool IsDirectory(const std::wstring& path) { return platform()->isDirectory(path); }
 
 bool EnsureDirectory(const std::wstring& path) {
   if (path.empty()) return false;
   if (IsDirectory(path)) return true;
-  const int r = ::SHCreateDirectoryExW(nullptr, path.c_str(), nullptr);
-  return r == ERROR_SUCCESS || r == ERROR_ALREADY_EXISTS || r == ERROR_FILE_EXISTS;
+  // 逐级创建：平台接口只保证建一层
+  std::wstring acc;
+  for (size_t i = 0; i < path.size(); ++i) {
+    acc.push_back(path[i]);
+    const bool atSeparator = (path[i] == L'\\' || path[i] == L'/');
+    const bool atDriveColon = (i == 1 && path[1] == L':');
+    if (atSeparator || atDriveColon || i + 1 == path.size()) {
+      if (!acc.empty() && !platform()->isDirectory(acc)) platform()->createDirectory(acc);
+    }
+  }
+  return IsDirectory(path);
 }
 
 std::wstring AbsolutePath(const std::wstring& path) {
-  wchar_t buf[MAX_PATH * 2];
-  DWORD n = ::GetFullPathNameW(path.c_str(), MAX_PATH * 2, buf, nullptr);
-  if (n == 0 || n >= MAX_PATH * 2) return path;
-  return std::wstring(buf, n);
+  // 已经是绝对路径（盘符或根分隔符）时原样返回
+  if (path.size() >= 2 && path[1] == L':') return path;
+  if (!path.empty() && (path.front() == L'\\' || path.front() == L'/')) return path;
+  const std::wstring base = platform()->specialFolder(AiUI::SpecialFolder::kHome);
+  return JoinPath(base, path);
 }
 
 namespace {
-void CollectRecursive(const std::wstring& baseDir, const std::wstring& rel,
+
+void collectRecursive(const std::wstring& baseDir, const std::wstring& rel,
                       std::vector<SourceItem>& out) {
-  const std::wstring pattern = JoinPath(baseDir, L"*");
-  WIN32_FIND_DATAW fd;
-  HANDLE h = ::FindFirstFileW(pattern.c_str(), &fd);
-  if (h == INVALID_HANDLE_VALUE) return;
-  do {
-    if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
+  for (const auto& entry : platform()->listDirectory(baseDir, false)) {
     SourceItem item;
-    item.fullPath = JoinPath(baseDir, fd.cFileName);
-    item.relPath = rel.empty() ? fd.cFileName : JoinPath(rel, fd.cFileName);
-    item.attrib = fd.dwFileAttributes;
-    item.mtime = fd.ftLastWriteTime;
-    item.isDir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-    item.size = item.isDir ? 0
-                           : (static_cast<uint64_t>(fd.nFileSizeHigh) << 32) | fd.nFileSizeLow;
+    item.fullPath = entry.fullPath;
+    item.relPath = rel.empty() ? entry.name : JoinPath(rel, entry.name);
+    item.modifiedMillis = entry.modifiedMillis;
+    item.attributes = entry.attributes;
+    item.isDir = entry.isDir;
+    item.size = entry.isDir ? 0 : entry.size;
     out.push_back(item);
-    if (item.isDir) CollectRecursive(item.fullPath, item.relPath, out);
-  } while (::FindNextFileW(h, &fd));
-  ::FindClose(h);
+    if (item.isDir) collectRecursive(item.fullPath, item.relPath, out);
+  }
 }
+
 }  // namespace
 
 void CollectSources(const std::vector<std::wstring>& paths, std::vector<SourceItem>& out) {
   for (const auto& p : paths) {
-    const DWORD attrib = ::GetFileAttributesW(p.c_str());
-    if (attrib == INVALID_FILE_ATTRIBUTES) continue;
+    if (!platform()->pathExists(p)) continue;
 
     SourceItem root;
     root.fullPath = p;
     root.relPath = BaseName(p);
-    root.attrib = attrib;
-    root.isDir = (attrib & FILE_ATTRIBUTE_DIRECTORY) != 0;
-
-    WIN32_FILE_ATTRIBUTE_DATA fad;
-    if (::GetFileAttributesExW(p.c_str(), GetFileExInfoStandard, &fad)) {
-      root.mtime = fad.ftLastWriteTime;
-      root.size = root.isDir ? 0
-                             : (static_cast<uint64_t>(fad.nFileSizeHigh) << 32) | fad.nFileSizeLow;
-    }
+    root.isDir = platform()->isDirectory(p);
+    root.size = root.isDir ? 0 : platform()->fileSize(p);
+    root.modifiedMillis = platform()->modifiedTime(p);
     out.push_back(root);
 
-    if (root.isDir) CollectRecursive(p, root.relPath, out);
+    if (root.isDir) collectRecursive(p, root.relPath, out);
   }
 }
 
@@ -150,13 +150,15 @@ std::wstring FormatSize(uint64_t bytes) {
   return buf;
 }
 
-std::wstring FormatTime(const FILETIME& ft) {
-  FILETIME local;
-  if (!::FileTimeToLocalFileTime(&ft, &local)) return L"";
-  SYSTEMTIME st;
-  if (!::FileTimeToSystemTime(&local, &st)) return L"";
+std::wstring FormatTime(int64_t millis) {
+  if (millis <= 0) return L"";
+  // 由 Unix 纪元毫秒换算出日历时间；用标准库而非平台 API，跨平台一致
+  const std::time_t seconds = static_cast<std::time_t>(millis / 1000);
+  std::tm local{};
+  if (localtime_s(&local, &seconds) != 0) return L"";
   wchar_t buf[64];
-  swprintf(buf, 64, L"%04u-%02u-%02u %02u:%02u", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute);
+  swprintf(buf, 64, L"%04d-%02d-%02d %02d:%02d", local.tm_year + 1900, local.tm_mon + 1,
+           local.tm_mday, local.tm_hour, local.tm_min);
   return buf;
 }
 
@@ -167,217 +169,95 @@ std::wstring FormatCrc(uint32_t crc, bool has) {
   return buf;
 }
 
-int DpiForWindow(HWND hwnd) {
-  using GetDpiForWindowFn = UINT(WINAPI*)(HWND);
-  static auto fn = reinterpret_cast<GetDpiForWindowFn>(
-      ::GetProcAddress(::GetModuleHandleW(L"user32.dll"), "GetDpiForWindow"));
-  if (fn && hwnd) return static_cast<int>(fn(hwnd));
-  HDC dc = ::GetDC(nullptr);
-  const int dpi = ::GetDeviceCaps(dc, LOGPIXELSX);
-  ::ReleaseDC(nullptr, dc);
-  return dpi > 0 ? dpi : 96;
+std::string toUtf8(const std::wstring& text) {
+  return AiUI::platform()->toUtf8(text);
 }
 
-void EnableDpiAwareness() {
-  using SetCtxFn = BOOL(WINAPI*)(void*);
-  static auto setCtx = reinterpret_cast<SetCtxFn>(
-      ::GetProcAddress(::GetModuleHandleW(L"user32.dll"), "SetProcessDpiAwarenessContext"));
-  if (setCtx) {
-    // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
-    if (setCtx(reinterpret_cast<void*>(-4))) return;
-  }
-  ::SetProcessDPIAware();
+std::wstring fromUtf8(const std::string& text) {
+  return AiUI::platform()->fromUtf8(text);
 }
 
 namespace {
 
 // 配置放在用户漫游配置目录：%APPDATA%\AIZip\settings.ini。
 // 不写注册表，便于备份/迁移，也避免污染系统库。
-std::wstring ConfigDir() {
-  PWSTR appData = nullptr;
-  if (FAILED(::SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &appData)) || !appData) {
-    if (appData) ::CoTaskMemFree(appData);
-    return L"";
-  }
-  std::wstring dir = JoinPath(appData, L"AIZip");
-  ::CoTaskMemFree(appData);
-  return dir;
-}
-
-std::wstring ConfigFile() {
-  const std::wstring dir = ConfigDir();
-  return dir.empty() ? L"" : JoinPath(dir, L"settings.ini");
-}
-
-// 自己解析而不是用 GetPrivateProfileString：后者按 ANSI 处理，
-// 用户用记事本另存为 UTF-8（带 BOM）后节名就变成 "\xEF\xBB\xBF[settings]"，
-// 整份配置立刻全部失效。这里固定按 UTF-16LE 读写，BOM 可有可无。
-std::wstring TrimRight(std::wstring s) {
-  while (!s.empty() && (s.back() == L'\r' || s.back() == L'\n' || s.back() == L' ' ||
-                        s.back() == L'\t')) {
-    s.pop_back();
-  }
-  return s;
-}
-
-// 读成 key → value；节名与大小写都不敏感地忽略，只认顶层键值
-bool ParseIni(const std::wstring& path, std::map<std::wstring, std::wstring>& out) {
-  HANDLE h = ::CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
-                           FILE_ATTRIBUTE_NORMAL, nullptr);
-  if (h == INVALID_HANDLE_VALUE) return false;
-
-  LARGE_INTEGER size{};
-  if (!::GetFileSizeEx(h, &size) || size.QuadPart <= 0 || size.QuadPart > (1 << 20)) {
-    ::CloseHandle(h);
-    return false;
-  }
-  std::vector<char> raw(static_cast<size_t>(size.QuadPart));
-  DWORD read = 0;
-  const BOOL ok = ::ReadFile(h, raw.data(), static_cast<DWORD>(raw.size()), &read, nullptr);
-  ::CloseHandle(h);
-  if (!ok || read == 0) return false;
-
-  // 统一转成宽字符：带 BOM 的 UTF-16 直接按 UTF-16 解，否则按 UTF-8
-  std::wstring text;
-  const auto* p = reinterpret_cast<const unsigned char*>(raw.data());
-  const size_t n = read;
-  if (n >= 2 && p[0] == 0xFF && p[1] == 0xFE) {
-    text.assign(reinterpret_cast<const wchar_t*>(p + 2), (n - 2) / sizeof(wchar_t));
-  } else if (n >= 2 && p[1] == 0 && p[0] != 0) {
-    // 无 BOM 的 UTF-16LE：偶数位多为 0，按 UTF-16 解
-    text.assign(reinterpret_cast<const wchar_t*>(p), n / sizeof(wchar_t));
-  } else {
-    const size_t skip = (n >= 3 && p[0] == 0xEF && p[1] == 0xBB && p[2] == 0xBF) ? 3 : 0;
-    const int need = ::MultiByteToWideChar(CP_UTF8, 0, reinterpret_cast<const char*>(p + skip),
-                                           static_cast<int>(n - skip), nullptr, 0);
-    if (need > 0) {
-      text.resize(static_cast<size_t>(need));
-      ::MultiByteToWideChar(CP_UTF8, 0, reinterpret_cast<const char*>(p + skip),
-                            static_cast<int>(n - skip), text.data(), need);
-    }
-  }
-  if (text.empty()) return false;
-
-  size_t pos = 0;
-  while (pos <= text.size()) {
-    const size_t end = text.find(L'\n', pos);
-    std::wstring line =
-        TrimRight(text.substr(pos, end == std::wstring::npos ? std::wstring::npos : end - pos));
-    pos = (end == std::wstring::npos) ? text.size() + 1 : end + 1;
-
-    if (line.empty() || line[0] == L'[' || line[0] == L';' || line[0] == L'#') continue;
-    const size_t eq = line.find(L'=');
-    if (eq == std::wstring::npos) continue;
-    out[TrimRight(line.substr(0, eq))] = line.substr(eq + 1);
-  }
-  return true;
-}
-
-std::wstring StrOf(const std::map<std::wstring, std::wstring>& m, const wchar_t* key,
-                   const wchar_t* def = L"") {
-  const auto it = m.find(key);
-  return it == m.end() ? def : it->second;
-}
-
-int IntOf(const std::map<std::wstring, std::wstring>& m, const wchar_t* key, int def) {
-  const auto it = m.find(key);
-  if (it == m.end() || it->second.empty()) return def;
-  try {
-    return std::stoi(it->second);
-  } catch (...) {
-    return def;
-  }
-}
-
-void AppendUtf16(std::vector<char>& buf, const std::wstring& s) {
-  const auto* p = reinterpret_cast<const char*>(s.data());
-  buf.insert(buf.end(), p, p + s.size() * sizeof(wchar_t));
+std::wstring ConfigPath() {
+  const std::wstring dir = platform()->appDataDir(L"AIZip");
+  if (dir.empty()) return {};
+  return JoinPath(dir, L"settings.ini");
 }
 
 }  // namespace
 
 Settings LoadSettings() {
   Settings s;
-  const std::wstring file = ConfigFile();
-  if (file.empty() || !PathExists(file)) return s;
+  const std::wstring path = ConfigPath();
+  if (path.empty()) return s;
 
-  std::map<std::wstring, std::wstring> m;
-  if (!ParseIni(file, m)) return s;
+  FILE* f = nullptr;
+  if (_wfopen_s(&f, path.c_str(), L"rb") != 0 || !f) return s;
 
-  s.lastDir = StrOf(m, L"LastDir");
-  s.extractDir = StrOf(m, L"ExtractDir");
-  const std::wstring fmt = StrOf(m, L"FormatName");
-  if (!fmt.empty()) s.compressFormat = fmt;
-  s.compressLevel = IntOf(m, L"Level", s.compressLevel);
-  s.solid = IntOf(m, L"Solid", s.solid ? 1 : 0) != 0;
-  s.openAfterExtract = IntOf(m, L"OpenAfterExtract", s.openAfterExtract ? 1 : 0) != 0;
-  s.listSortColumn = IntOf(m, L"SortColumn", s.listSortColumn);
-  s.listSortAsc = IntOf(m, L"SortAsc", s.listSortAsc ? 1 : 0) != 0;
-  {
-    // 列宽存成 "w0,w1,w2,w3"
-    const std::wstring widths = StrOf(m, L"ColWidths");
-    int i = 0;
-    size_t pos = 0;
-    while (i < 4 && pos <= widths.size()) {
-      size_t sep = widths.find(L',', pos);
-      if (sep == std::wstring::npos) sep = widths.size();
-      if (sep > pos) s.listColWidth[i] = _wtoi(widths.substr(pos, sep - pos).c_str());
-      pos = sep + 1;
-      ++i;
+  char line[1024];
+  while (fgets(line, sizeof(line), f)) {
+    std::wstring w;
+    // 按 UTF-8 读入；文件是纯 ASCII 键值，无需完整解码
+    for (const char* p = line; *p; ++p) w.push_back(static_cast<wchar_t>(*p));
+    while (!w.empty() && (w.back() == L'\n' || w.back() == L'\r')) w.pop_back();
+    const size_t eq = w.find(L'=');
+    if (eq == std::wstring::npos) continue;
+    const std::wstring key = w.substr(0, eq);
+    const std::wstring value = w.substr(eq + 1);
+
+    if (key == L"lastDir") s.lastDir = value;
+    else if (key == L"extractDir") s.extractDir = value;
+    else if (key == L"compressFormat") s.compressFormat = value;
+    else if (key == L"compressLevel") s.compressLevel = _wtoi(value.c_str());
+    else if (key == L"solid") s.solid = _wtoi(value.c_str()) != 0;
+    else if (key == L"openAfterExtract") s.openAfterExtract = _wtoi(value.c_str()) != 0;
+    else if (key == L"listSortColumn") s.listSortColumn = _wtoi(value.c_str());
+    else if (key == L"listSortAsc") s.listSortAsc = _wtoi(value.c_str()) != 0;
+    else if (key == L"winW") s.winW = _wtoi(value.c_str());
+    else if (key == L"winH") s.winH = _wtoi(value.c_str());
+    else if (key == L"winMax") s.winMax = _wtoi(value.c_str()) != 0;
+    else if (key.rfind(L"listColWidth", 0) == 0) {
+      const int index = _wtoi(key.c_str() + 12);
+      if (index >= 0 && index < 4) s.listColWidth[index] = _wtoi(value.c_str());
     }
   }
-  s.winW = IntOf(m, L"WinW", s.winW);
-  s.winH = IntOf(m, L"WinH", s.winH);
-  s.winMax = IntOf(m, L"WinMax", s.winMax ? 1 : 0) != 0;
+  fclose(f);
   return s;
 }
 
 void SaveSettings(const Settings& s) {
-  const std::wstring dir = ConfigDir();
-  if (dir.empty() || !EnsureDirectory(dir)) return;
-  const std::wstring file = JoinPath(dir, L"settings.ini");
+  const std::wstring path = ConfigPath();
+  if (path.empty()) return;
 
-  auto key = [](const wchar_t* k, const std::wstring& v) {
-    std::wstring line = k;
-    line += L'=';
-    line += v;
-    line += L"\r\n";
-    return line;
+  FILE* f = nullptr;
+  if (_wfopen_s(&f, path.c_str(), L"wb") != 0 || !f) return;
+
+  auto write = [f](const char* key, const std::wstring& value) {
+    fprintf(f, "%s=", key);
+    for (wchar_t c : value) fputc(static_cast<char>(c), f);
+    fputc('\n', f);
   };
-  std::wstring text = L"[settings]\r\n";
-  text += key(L"LastDir", s.lastDir);
-  text += key(L"ExtractDir", s.extractDir);
-  text += key(L"FormatName", s.compressFormat);
-  text += key(L"Level", std::to_wstring(s.compressLevel));
-  text += key(L"Solid", std::to_wstring(s.solid ? 1 : 0));
-  text += key(L"OpenAfterExtract", std::to_wstring(s.openAfterExtract ? 1 : 0));
-  text += key(L"SortColumn", std::to_wstring(s.listSortColumn));
-  text += key(L"SortAsc", std::to_wstring(s.listSortAsc ? 1 : 0));
-  {
-    std::wstring widths;
-    for (int i = 0; i < 4; ++i) {
-      if (i) widths += L",";
-      widths += std::to_wstring(s.listColWidth[i]);
-    }
-    text += key(L"ColWidths", widths);
+  auto writeInt = [f](const char* key, int value) { fprintf(f, "%s=%d\n", key, value); };
+
+  write("lastDir", s.lastDir);
+  write("extractDir", s.extractDir);
+  write("compressFormat", s.compressFormat);
+  writeInt("compressLevel", s.compressLevel);
+  writeInt("solid", s.solid ? 1 : 0);
+  writeInt("openAfterExtract", s.openAfterExtract ? 1 : 0);
+  writeInt("listSortColumn", s.listSortColumn);
+  writeInt("listSortAsc", s.listSortAsc ? 1 : 0);
+  writeInt("winW", s.winW);
+  writeInt("winH", s.winH);
+  writeInt("winMax", s.winMax ? 1 : 0);
+  for (int i = 0; i < 4; ++i) {
+    const std::string key = "listColWidth" + std::to_string(i);
+    writeInt(key.c_str(), s.listColWidth[i]);
   }
-  text += key(L"WinW", std::to_wstring(s.winW));
-  text += key(L"WinH", std::to_wstring(s.winH));
-  text += key(L"WinMax", std::to_wstring(s.winMax ? 1 : 0));
-
-  // 固定写 UTF-16LE + BOM：路径里的中文不会因代码页变化而损坏
-  std::vector<char> buf;
-  const wchar_t bom = 0xFEFF;
-  buf.insert(buf.end(), reinterpret_cast<const char*>(&bom),
-             reinterpret_cast<const char*>(&bom) + sizeof(bom));
-  AppendUtf16(buf, text);
-
-  HANDLE h = ::CreateFileW(file.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
-                           FILE_ATTRIBUTE_NORMAL, nullptr);
-  if (h == INVALID_HANDLE_VALUE) return;
-  DWORD written = 0;
-  ::WriteFile(h, buf.data(), static_cast<DWORD>(buf.size()), &written, nullptr);
-  ::CloseHandle(h);
+  fclose(f);
 }
 
 }  // namespace util

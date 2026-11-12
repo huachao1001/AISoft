@@ -1,9 +1,9 @@
-// 文件列表模型实现
+﻿// 文件列表模型实现
 #include "file_list_model.h"
 
 #include "util.h"
 
-#include <shlwapi.h>
+#include "AiUI/platform.h"
 
 #include <algorithm>
 
@@ -17,8 +17,7 @@ std::wstring FileListModel::cellText(int column, const Item& item) {
       // 文件夹不统计大小，留空比画横线干净
       return item.isDir ? L"" : util::FormatSize(item.size);
     case kColModified:
-      return (item.mtime.dwLowDateTime || item.mtime.dwHighDateTime) ? util::FormatTime(item.mtime)
-                                                                     : L"";
+      return item.modifiedMillis > 0 ? util::FormatTime(item.modifiedMillis) : L"";
     default:
       return item.name;
   }
@@ -29,7 +28,7 @@ uint64_t FileListModel::sortKey(int column, const Item& item) {
     case kColSize:
       return item.size;
     case kColModified:
-      return (static_cast<uint64_t>(item.mtime.dwHighDateTime) << 32) | item.mtime.dwLowDateTime;
+      return static_cast<uint64_t>(item.modifiedMillis);
     default:
       return 0;
   }
@@ -38,9 +37,8 @@ uint64_t FileListModel::sortKey(int column, const Item& item) {
 bool FileListModel::lessByColumn(int column, const Item& a, const Item& b) {
   const bool numeric = (column == kColSize || column == kColModified);
   if (numeric) return sortKey(column, a) < sortKey(column, b);
-  // 文件名义比较：忽略大小写，避免排序结果随系统区域设置变化
-  return ::CompareStringOrdinal(cellText(column, a).c_str(), -1, cellText(column, b).c_str(), -1,
-                                TRUE) == CSTR_LESS_THAN;
+  // 文件名比较忽略大小写，避免排序结果随系统区域设置变化
+  return AiUI::platform()->compareText(cellText(column, a), cellText(column, b)) < 0;
 }
 
 void FileListModel::sort(int column, bool ascending) {
@@ -55,7 +53,7 @@ void FileListModel::sort(int column, bool ascending) {
 
 bool FileListModel::matches(const Item& item) const {
   if (filter_.empty()) return true;
-  return ::StrStrIW(item.name.c_str(), filter_.c_str()) != nullptr;
+  return AiUI::platform()->containsTextIgnoreCase(item.name, filter_);
 }
 
 void FileListModel::rebuild() {

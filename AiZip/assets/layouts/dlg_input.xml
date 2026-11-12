@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  单行输入对话框：一行说明 + 输入框 + 底部按钮。
+  行为（初始值、密码模式、确认后写回）在 DlgInput 里配置。
+-->
+<LinearLayout orientation="vertical" padding="16" background="#f0f7fc">
+
+  <TextView id="label" height="20" small="false" textColor="#555555"/>
+
+  <InputBox id="edit" height="30" marginY="8" padding="8"/>
+
+  <!-- 右对齐的按钮行 -->
+  <LinearLayout orientation="horizontal" height="30" align="end">
+    <Button id="btnOk" text="确定" width="76" height="30"/>
+    <Button id="btnCancel" text="取消" style="outline" width="76" height="30" marginX="8"/>
+  </LinearLayout>
+
+</LinearLayout>

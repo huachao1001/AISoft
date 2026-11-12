@@ -1,107 +1,81 @@
-// 单实例聚合：静态动词没有 %*，多选时 shell 会为每个文件各起一个进程（各带 %1）。
-// 用命名互斥体分出「收集者」，后到的进程把请求写进收件箱后退出；
+// 单实例聚合：静态动词没有 %*，多选时系统会为每个文件各起一个进程（各带 %1）。
+// 用平台层的单实例锁分出「收集者」，后到的进程把请求写进收件箱后退出；
 // 收集者合并全部路径，只执行一次，避免选十个文件弹十个窗口。
+// 锁只在收集窗口内持有，收集完就释放——这样对话框开着时再右键仍能独立开一个操作。
 #include "single_instance.h"
+
+#include "util.h"
+#include "AiUI/platform.h"
+
+#include <vector>
 
 namespace inst {
 namespace {
 
-constexpr const wchar_t* kMutexName = L"Local\\AIZip.Instance.v2";
-constexpr wchar_t kInboxDir[] = L"AIZip.inbox";
-constexpr DWORD kSettleMs = 150;    // 每轮等这么久，够 shell 把同批进程拉起来
-constexpr DWORD kMaxWaitMs = 2000;  // 上限，避免异常情况一直等
-
-std::wstring InboxDir() {
-  wchar_t tmp[MAX_PATH]{};
-  if (!::GetTempPathW(static_cast<DWORD>(std::size(tmp)), tmp)) return L"";
-  return std::wstring(tmp) + kInboxDir;
+constexpr const wchar_t* kInstanceId = L"AIZip.Instance.v2";
+constexpr const wchar_t* kInboxDirName = L"AIZip.inbox";
+constexpr int kSettleMs = 150;    // 每轮等这么久，够系统把同批进程拉起来
+constexpr int kMaxWaitMs = 2000;  // 上限，避免异常情况一直等
+constexpr int64_t kStaleMillis = 10000;  // 超过这么久的是崩溃遗留
+std::wstring inboxDir() {
+  const std::wstring tmp = AiUI::platform()->tempDir();
+  if (tmp.empty()) return {};
+  return util::JoinPath(tmp, kInboxDirName);
 }
 
 // 请求落盘：动作一行 + 每个路径一行，复用 SerializeLaunch 的格式
-bool WriteRequest(const std::wstring& file, const LaunchRequest& req) {
-  HANDLE h = ::CreateFileW(file.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
-                           FILE_ATTRIBUTE_TEMPORARY, nullptr);
-  if (h == INVALID_HANDLE_VALUE) return false;
-
-  const std::wstring buf = SerializeLaunch(req) + L'\n';
-  DWORD written = 0;
-  const DWORD bytes = static_cast<DWORD>(buf.size() * sizeof(wchar_t));
-  const bool ok = ::WriteFile(h, buf.data(), bytes, &written, nullptr) && written == bytes;
-  ::CloseHandle(h);
-  return ok;
+bool writeRequest(const std::wstring& file, const LaunchRequest& req) {
+  // 统一按 UTF-8 存，跨平台一致
+  const std::string payload = util::toUtf8(SerializeLaunch(req) + L'\n');
+  return AiUI::platform()->writeFile(file, payload);
 }
 
-bool ReadRequest(const std::wstring& file, LaunchRequest& out) {
-  HANDLE h = ::CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
-                           FILE_ATTRIBUTE_TEMPORARY, nullptr);
-  if (h == INVALID_HANDLE_VALUE) return false;
-
-  LARGE_INTEGER size{};
-  bool ok = false;
-  if (::GetFileSizeEx(h, &size) && size.QuadPart > 0 && size.QuadPart < (1 << 20)) {
-    std::wstring buf(static_cast<size_t>(size.QuadPart / sizeof(wchar_t)), L'\0');
-    DWORD read = 0;
-    if (::ReadFile(h, buf.data(), static_cast<DWORD>(size.QuadPart), &read, nullptr) && read > 0) {
-      buf.resize(read / sizeof(wchar_t));
-      out = DeserializeLaunch(buf);
-      ok = true;
-    }
-  }
-  ::CloseHandle(h);
-  return ok;
+bool readRequest(const std::wstring& file, LaunchRequest& out) {
+  const std::string raw = AiUI::platform()->readFile(file, 1 << 20);
+  if (raw.empty()) return false;
+  out = DeserializeLaunch(util::fromUtf8(raw));
+  return true;
 }
 
-bool Forward(const LaunchRequest& req) {
-  const std::wstring dir = InboxDir();
+bool forward(const LaunchRequest& req) {
+  const std::wstring dir = inboxDir();
   if (dir.empty()) return false;
   util::EnsureDirectory(dir);
-  const std::wstring name = std::to_wstring(::GetCurrentProcessId()) + L"_" +
-                            std::to_wstring(::GetTickCount64()) + L".req";
-  return WriteRequest(util::JoinPath(dir, name), req);
+  const std::wstring name = std::to_wstring(AiUI::platform()->processId()) + L"_" +
+                            std::to_wstring(AiUI::platform()->monotonicMillis()) + L".req";
+  return writeRequest(util::JoinPath(dir, name), req);
 }
 
-// 取走收件箱里的请求并删除；返回条数。超过 10 秒的残留（崩溃遗留）直接丢弃
-int DrainInbox(std::vector<LaunchRequest>& out) {
-  const std::wstring dir = InboxDir();
+// 取走收件箱里的请求并删除；返回条数。过期残留（崩溃遗留）直接丢弃
+int drainInbox(std::vector<LaunchRequest>& out) {
+  const std::wstring dir = inboxDir();
   if (dir.empty()) return 0;
 
-  const std::wstring pattern = util::JoinPath(dir, L"*.req");
-  WIN32_FIND_DATAW fd{};
-  HANDLE h = ::FindFirstFileW(pattern.c_str(), &fd);
-  if (h == INVALID_HANDLE_VALUE) return 0;
-
-  FILETIME nowFt{};
-  ::GetSystemTimeAsFileTime(&nowFt);
-  ULARGE_INTEGER now{}, written{};
-  now.LowPart = nowFt.dwLowDateTime;
-  now.HighPart = nowFt.dwHighDateTime;
-
+  const int64_t now = AiUI::platform()->monotonicMillis();
   int count = 0;
-  do {
-    if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+  for (const auto& entry : AiUI::platform()->listDirectory(dir, false)) {
+    if (entry.isDir) continue;
+    const std::wstring ext = util::FileExtension(entry.name);
+    if (ext != L".req") continue;
 
-    const std::wstring file = util::JoinPath(dir, fd.cFileName);
-    written.LowPart = fd.ftLastWriteTime.dwLowDateTime;
-    written.HighPart = fd.ftLastWriteTime.dwHighDateTime;
-
-    // FILETIME 单位是 100ns：10 秒 = 1e8
-    const bool stale = now.QuadPart > written.QuadPart &&
-                       (now.QuadPart - written.QuadPart) > 100000000ull;
+    const std::wstring file = entry.fullPath;
+    // 时间戳只用于判断残留；平台给不出时按 0 处理，不会误删刚写好的
+    const bool stale = entry.modifiedMillis > 0 && now > 0 &&
+                       entry.modifiedMillis + kStaleMillis < now;
     if (!stale) {
       LaunchRequest req;
-      if (ReadRequest(file, req) && !req.paths.empty()) {
+      if (readRequest(file, req) && !req.paths.empty()) {
         out.push_back(std::move(req));
         ++count;
       }
     }
-    ::DeleteFileW(file.c_str());
-  } while (::FindNextFileW(h, &fd));
-  ::FindClose(h);
+    AiUI::platform()->deleteFile(file);
+  }
   return count;
 }
 
 // 动作以先到的为准，路径依次拼接
-void MergeInto(LaunchRequest& into, const LaunchRequest& more) {
+void mergeInto(LaunchRequest& into, const LaunchRequest& more) {
   if (more.paths.empty()) return;
   if (into.paths.empty()) into.action = more.action;
   into.paths.insert(into.paths.end(), more.paths.begin(), more.paths.end());
@@ -110,33 +84,28 @@ void MergeInto(LaunchRequest& into, const LaunchRequest& more) {
 }  // namespace
 
 bool Collect(const LaunchRequest& first, LaunchRequest& merged) {
-  HANDLE mutex = ::CreateMutexW(nullptr, FALSE, kMutexName);
-  if (!mutex) {  // 拿不到互斥体就退化成不聚合，功能仍可用
-    merged = first;
-    return true;
-  }
-  if (::GetLastError() == ERROR_ALREADY_EXISTS) {
-    ::CloseHandle(mutex);
-    Forward(first);
+  auto* platform = AiUI::platform();
+  if (!platform->claimSingleInstance(kInstanceId)) {
+    // 已有收集者在跑：把请求交过去，本进程可以直接退出
+    forward(first);
     return false;
   }
 
   merged = first;
 
-  // 等一小会儿，把 shell 同时拉起的那批进程收齐
-  const DWORD start = ::GetTickCount();
+  // 等一小会儿，把同时拉起的那批进程收齐
+  const int64_t start = platform->monotonicMillis();
   for (;;) {
-    ::Sleep(kSettleMs);
+    platform->sleepMillis(kSettleMs);
 
     std::vector<LaunchRequest> batch;
-    const int got = DrainInbox(batch);
-    for (const auto& r : batch) MergeInto(merged, r);
+    const int got = drainInbox(batch);
+    for (const auto& r : batch) mergeInto(merged, r);
 
-    if (got == 0 || ::GetTickCount() - start >= kMaxWaitMs) break;
+    if (got == 0 || platform->monotonicMillis() - start >= kMaxWaitMs) break;
   }
 
   // 收集结束立刻释放：对话框开着时再右键，新进程能独立成为收集者
-  ::CloseHandle(mutex);
   return true;
 }
 

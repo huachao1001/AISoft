@@ -1,13 +1,11 @@
-﻿// 主窗口的原生宿主接入
+﻿// 主窗口的宿主接入：拖放与单实例转发
 //
-// 界面本体在 MainActivity（main_activity.h）：XML 布局、控件装配、生命周期。
-// 这里只剩绕不开的平台细节：把拖放与单实例转发挂到 AiUI 建的窗口上。
+// 界面与生命周期在 MainActivity 里。拖放由平台层的 setFileDropHandler 提供，
+// 单实例转递走平台层的进程间通道，两者都不需要应用侧碰系统消息。
 #pragma once
 
-#include <windows.h>
-#include <shellapi.h>
-
 #include <string>
+#include <vector>
 
 namespace ui {
 
@@ -16,9 +14,9 @@ constexpr int kMinWidth = 860;
 constexpr int kMinHeight = 520;
 
 // 把拖放与单实例转发挂到主窗口上；MainActivity::onCreate 之后调用
-void AttachHostHooks(HWND host);
+void AttachHostHooks();
 // 处理拖进窗口的文件：单个压缩包直接打开，其余弹压缩对话框
-void HandleDroppedFiles(HWND host, HDROP drop);
+void HandleDroppedFiles(const std::vector<std::wstring>& paths);
 // 单实例转发：把路径送到已在运行的窗口
 bool ForwardPathToRunningWindow(const std::wstring& path);
 

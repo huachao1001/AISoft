@@ -1,251 +1,206 @@
-﻿// 进度对话框：工作线程跑压缩/解压，UI 线程只负责刷新
+﻿// 进度对话框
+//
+// 工作线程只更新一份加锁的快照并请求刷新；控件只在 UI 线程上碰。
+// 取消用原子标志，工作线程的进度回调读它返回 false 即可中断。
 #include "dlg_progress.h"
 
-#include "app.h"
-#include "ui.h"
 #include "util.h"
-
-#include <commctrl.h>
+#include "AiUI/widgets/button.h"
+#include "AiUI/widgets/form_controls.h"
+#include "AiUI/widgets/text_view.h"
+#include "dialog_activity.h"
 
 #include <atomic>
-#include <deque>
 #include <mutex>
 #include <thread>
 
 namespace ui {
 namespace {
 
-constexpr const wchar_t* kClass = L"AIZipProgressDlg";
-constexpr UINT kMsgProgress = WM_APP + 1;
-constexpr UINT kMsgSyncCall = WM_APP + 3;
-constexpr UINT kMsgDone = WM_APP + 4;
-constexpr int kIdBar = 3001;
-constexpr int kIdCancel = 3002;
+class DlgProgress : public DialogActivity {
+ public:
+  DlgProgress(std::wstring title, WorkFn work)
+      : title_(std::move(title)), work_(std::move(work)) {}
+  ~DlgProgress() override;
 
-struct ProgressState {
-  WorkFn work;
-  HWND owner = nullptr;
-  HWND wnd = nullptr;
-  HWND bar = nullptr;
-  HWND labelFile = nullptr;
-  HWND labelPct = nullptr;
-  HWND cancelBtn = nullptr;
+  bool succeeded() const { return succeeded_; }
 
-  std::atomic<bool> cancel{false};
-  std::atomic<int> lastPostTick{0};
+ protected:
+  const wchar_t* layoutName() const override { return L"dlg_progress"; }
+  void onCreate() override;
+  void onDestroy() override;
+  bool onCloseRequest() override;
+  bool onAccept() override { return true; }
 
-  std::mutex mu;
-  std::wstring currentFile;
-  uint64_t completed = 0;
-  uint64_t total = 0;
+ private:
+  // 工作线程：跑 work，结束后请求 UI 线程收尾
+  void startWork();
+  // UI 线程：按快照刷新控件
+  void applySnapshot();
+  // UI 线程：工作结束，关闭窗口
+  void finishWork();
+  bool progressCallback(uint64_t completed, uint64_t total, const std::wstring& current);
 
-  // 工作线程投递给 UI 线程的同步调用
-  std::mutex callMu;
-  std::deque<std::function<void()>> calls;
+  std::wstring title_;
+  WorkFn work_;
 
-  bool ok = false;
-  std::thread worker;
+  AiUI::TextView* fileLabel_ = nullptr;
+  AiUI::TextView* detailLabel_ = nullptr;
+  AiUI::ProgressBar* bar_ = nullptr;
+  AiUI::Button* cancelButton_ = nullptr;
+
+  std::atomic<bool> cancel_{false};
+  std::atomic<bool> finished_{false};
+  // 投递的回调可能在对话框销毁后才被消息循环取出；共享标志用来判断是否还该碰控件
+  std::shared_ptr<std::atomic<bool>> alive_ = std::make_shared<std::atomic<bool>>(true);
+  bool succeeded_ = false;
+
+  std::mutex snapshotMutex_;
+  std::wstring currentFile_;
+  uint64_t completed_ = 0;
+  uint64_t total_ = 0;
+  int64_t lastPostMillis_ = 0;
+
+  std::thread worker_;
 };
 
-ProgressState* g_state = nullptr;
+DlgProgress::~DlgProgress() {
+  // 正常路径已在 onDestroy 里 join；这里是异常退出的兜底
+  if (worker_.joinable()) {
+    cancel_.store(true);
+    worker_.join();
+  }
+}
 
-// 进度快照投递给 UI 线程；限流 60ms，避免消息洪水
-bool ReportProgress(uint64_t completed, uint64_t total, const std::wstring& current) {
-  ProgressState* st = g_state;
-  if (!st) return true;
-  if (st->cancel.load(std::memory_order_relaxed)) return false;
+bool DlgProgress::progressCallback(uint64_t completed, uint64_t total,
+                                   const std::wstring& current) {
+  if (cancel_.load(std::memory_order_relaxed)) return false;
 
+  bool shouldPost = false;
   {
-    std::lock_guard<std::mutex> lock(st->mu);
-    st->completed = completed;
-    st->total = total;
-    if (!current.empty()) st->currentFile = current;
-  }
+    std::lock_guard<std::mutex> lock(snapshotMutex_);
+    completed_ = completed;
+    total_ = total;
+    if (!current.empty()) currentFile_ = current;
 
-  const int now = ::GetTickCount();
-  const int last = st->lastPostTick.load(std::memory_order_relaxed);
-  if (now - last >= 60) {
-    st->lastPostTick.store(now, std::memory_order_relaxed);
-    if (st->wnd) ::PostMessageW(st->wnd, kMsgProgress, 0, 0);
+    // 限流 60ms：进度回调可能极密集，每次都投递会把消息队列灌满
+    const int64_t now = AiUI::platform()->monotonicMillis();
+    if (now - lastPostMillis_ >= 60) {
+      lastPostMillis_ = now;
+      shouldPost = true;
+    }
   }
-  return !st->cancel.load(std::memory_order_relaxed);
+  if (shouldPost) {
+    auto alive = alive_;
+    AiUI::platform()->postToUiThread([this, alive] {
+      if (alive->load()) applySnapshot();
+    });
+  }
+  return !cancel_.load(std::memory_order_relaxed);
 }
 
-void CreateControls(HWND hwnd) {
-  CreateDlgItem(hwnd, L"STATIC", L"正在处理，请稍候…", SS_LEFT, 14, 14, 340, 18, 0);
-  g_state->labelFile = CreateDlgItem(hwnd, L"STATIC", L"", SS_LEFT | SS_ENDELLIPSIS, 14, 36, 340,
-                                     18, 0);
-  g_state->bar = CreateDlgItem(hwnd, PROGRESS_CLASSW, L"", PBS_SMOOTH, 14, 60, 340, 18, kIdBar);
-  g_state->labelPct = CreateDlgItem(hwnd, L"STATIC", L"0%", SS_LEFT, 14, 82, 340, 16, 0);
-  g_state->cancelBtn =
-      CreateDlgItem(hwnd, L"BUTTON", L"取消", BS_PUSHBUTTON | WS_TABSTOP, 286, 106, 68, 26, kIdCancel);
-
-  ::SendMessageW(g_state->bar, PBM_SETRANGE32, 0, 1000);
-  ::SendMessageW(g_state->bar, PBM_SETPOS, 0, 0);
-
-  for (HWND c = ::GetWindow(hwnd, GW_CHILD); c; c = ::GetWindow(c, GW_HWNDNEXT)) {
-    ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(DialogFont()), TRUE);
-  }
+void DlgProgress::startWork() {
+  worker_ = std::thread([this] {
+    bool ok = false;
+    try {
+      ok = work_([this](uint64_t completed, uint64_t total, const std::wstring& current) {
+        return progressCallback(completed, total, current);
+      });
+    } catch (...) {
+      ok = false;
+    }
+    succeeded_ = ok;
+    // 收尾必须回到 UI 线程：控件只能在那里销毁
+    auto alive = alive_;
+    AiUI::platform()->postToUiThread([this, alive] {
+      if (alive->load()) finishWork();
+    });
+  });
 }
 
-void ApplyProgress() {
-  ProgressState* st = g_state;
-  if (!st || !st->wnd) return;
+void DlgProgress::applySnapshot() {
+  if (!bar_) return;
 
   std::wstring file;
   uint64_t completed = 0;
   uint64_t total = 0;
   {
-    std::lock_guard<std::mutex> lock(st->mu);
-    file = st->currentFile;
-    completed = st->completed;
-    total = st->total;
+    std::lock_guard<std::mutex> lock(snapshotMutex_);
+    file = currentFile_;
+    completed = completed_;
+    total = total_;
   }
 
-  int pos = 0;
-  if (total > 0) {
-    pos = static_cast<int>(completed * 1000 / total);
-    if (pos > 1000) pos = 1000;
-  }
-  ::SendMessageW(st->bar, PBM_SETPOS, pos, 0);
+  const float ratio = total > 0 ? static_cast<float>(static_cast<double>(completed) /
+                                                     static_cast<double>(total))
+                                : 0.0f;
+  bar_->setProgress(ratio);
 
-  std::wstring pct = std::to_wstring(total > 0 ? completed * 100 / total : 0) + L"%";
+  std::wstring detail = std::to_wstring(total > 0 ? completed * 100 / total : 0) + L"%";
   if (total > 0) {
-    pct += L"   " + util::FormatSize(completed) + L" / " + util::FormatSize(total);
+    detail += L"   " + util::FormatSize(completed) + L" / " + util::FormatSize(total);
   } else if (completed > 0) {
-    pct += L"   " + util::FormatSize(completed);
+    detail += L"   " + util::FormatSize(completed);
   }
-  ::SetWindowTextW(st->labelPct, pct.c_str());
-
-  if (!file.empty()) {
-    ::SetWindowTextW(st->labelFile, (L"当前文件：" + util::BaseName(file)).c_str());
-  }
-}
-
-void DrainSyncCalls() {
-  ProgressState* st = g_state;
-  if (!st) return;
-  for (;;) {
-    std::function<void()> fn;
-    {
-      std::lock_guard<std::mutex> lock(st->callMu);
-      if (st->calls.empty()) break;
-      fn = std::move(st->calls.front());
-      st->calls.pop_front();
-    }
-    if (fn) fn();
+  if (detailLabel_) detailLabel_->setText(detail);
+  if (fileLabel_ && !file.empty()) {
+    fileLabel_->setText(L"当前文件：" + util::BaseName(file));
   }
 }
 
-LRESULT CALLBACK Proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-  switch (msg) {
-    case WM_CREATE:
-      g_state->wnd = hwnd;
-      CreateControls(hwnd);
-      return 0;
+void DlgProgress::finishWork() {
+  finished_.store(true);
+  applySnapshot();
+  close();
+}
 
-    case kMsgProgress:
-      ApplyProgress();
-      return 0;
+void DlgProgress::onCreate() {
+  setEscapeCloses(true);
+  setTitle(title_);
 
-    case kMsgSyncCall:
-      DrainSyncCalls();
-      ::SetEvent(reinterpret_cast<HANDLE>(lParam));
-      return 0;
+  fileLabel_ = findView<AiUI::TextView>("file");
+  detailLabel_ = findView<AiUI::TextView>("detail");
+  bar_ = findView<AiUI::ProgressBar>("bar");
+  cancelButton_ = findView<AiUI::Button>("btnCancel");
 
-    case kMsgDone:
-      ApplyProgress();
-      ::DestroyWindow(hwnd);
-      return 0;
-
-    case WM_COMMAND:
-      if (LOWORD(wParam) == kIdCancel && g_state) {
-        g_state->cancel.store(true, std::memory_order_relaxed);
-        ::EnableWindow(g_state->cancelBtn, FALSE);
-        ::SetWindowTextW(g_state->cancelBtn, L"正在取消…");
-        return 0;
-      }
-      break;
-
-    case WM_CLOSE:
-      if (g_state) g_state->cancel.store(true, std::memory_order_relaxed);
-      return 0;
-
-    case WM_DESTROY:
-      return 0;
-
-    default:
-      break;
+  if (cancelButton_) {
+    cancelButton_->setOnClick([this] {
+      cancel_.store(true);
+      // 取消后按钮置灰，避免连点；文字改成「正在取消」给用户反馈
+      cancelButton_->setEnabled(false);
+      cancelButton_->setLabel(L"正在取消…");
+    });
   }
-  return ::DefWindowProcW(hwnd, msg, wParam, lParam);
+
+  startWork();
+}
+
+bool DlgProgress::onCloseRequest() {
+  // 关窗等同取消，但窗口要等 worker 退出后才能销毁
+  if (finished_.load()) return true;
+  cancel_.store(true);
+  return false;
+}
+
+void DlgProgress::onDestroy() {
+  // 必须在窗口销毁前回收工作线程：它还会读 this
+  cancel_.store(true);
+  if (worker_.joinable()) worker_.join();
+  // 之后到达的投递回调直接丢弃，不再碰已经销毁的控件
+  alive_->store(false);
 }
 
 }  // namespace
 
-bool ShowProgressDialog(HWND owner, const std::wstring& title, const WorkFn& work) {
-  static bool registered = false;
-  if (!registered) {
-    registered = RegisterWindowClass(kClass, Proc, g_app.instance, CS_HREDRAW | CS_VREDRAW,
-                                     reinterpret_cast<HBRUSH>(::GetStockObject(WHITE_BRUSH)));
-  }
-
-  ProgressState state;
-  state.work = work;
-  state.owner = owner;
-  g_state = &state;
-
-  const int w = g_app.px(380);
-  const int h = g_app.px(150);
-  const RECT dr = DialogRect(owner, w, h);
-
-  HWND dlg = ::CreateWindowExW(WS_EX_DLGMODALFRAME, kClass, title.c_str(),
-                               WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE, dr.left, dr.top, w,
-                               h, owner, nullptr, g_app.instance, nullptr);
-  if (!dlg) {
-    g_state = nullptr;
-    return false;
-  }
-
-  state.worker = std::thread([&state]() {
-    bool ok = false;
-    try {
-      ok = state.work([](uint64_t c, uint64_t t, const std::wstring& cur) {
-        return ReportProgress(c, t, cur);
-      });
-    } catch (...) {
-      ok = false;
-    }
-    state.ok = ok;
-    if (state.wnd) ::PostMessageW(state.wnd, kMsgDone, 0, 0);
-  });
-
-  RunModalDialog(dlg, owner, [&state]() {
-    // 必须在恢复 owner 之前回收工作线程，否则 owner 已可用而线程仍在跑
-    if (state.worker.joinable()) state.worker.join();
-  });
-
-  g_state = nullptr;
-  return state.ok;
+bool ShowProgressDialog(AiUI::NativeHandle owner, const std::wstring& title, const WorkFn& work) {
+  DlgProgress dlg(title, work);
+  dlg.runModal(owner, 420, 190);
+  return dlg.succeeded();
 }
 
 void RunOnUiThread(const std::function<void()>& fn) {
-  ProgressState* st = g_state;
-  if (!st || !st->wnd) {
-    fn();
-    return;
-  }
-  if (::GetCurrentThreadId() == ::GetWindowThreadProcessId(st->wnd, nullptr)) {
-    fn();
-    return;
-  }
-  HANDLE done = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
-  {
-    std::lock_guard<std::mutex> lock(st->callMu);
-    st->calls.push_back(fn);
-  }
-  ::PostMessageW(st->wnd, kMsgSyncCall, 0, reinterpret_cast<LPARAM>(done));
-  ::WaitForSingleObject(done, INFINITE);
-  ::CloseHandle(done);
+  if (!fn) return;
+  AiUI::platform()->invokeOnUiThread(fn);
 }
 
 }  // namespace ui

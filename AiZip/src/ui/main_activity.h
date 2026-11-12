@@ -83,7 +83,7 @@ class MainActivity : public AiUI::Activity {
   bool canExtractSelected() const;
   void extractSelection();
   void deleteItems(const std::vector<int>& indices);
-  HWND nativeWindow() const;
+  AiUI::NativeHandle nativeWindow() const;
 
   // 控件由布局创建，这里只借用
   AiUI::BreadcrumbBar* crumb_ = nullptr;

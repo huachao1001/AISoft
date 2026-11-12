@@ -36,7 +36,7 @@ add_executable(AiZip WIN32
   src/ui/main_activity.cpp
   src/ui/file_list_model.cpp
   src/ui/tree_model.cpp
-  src/dialogs/dlg_util.cpp
+  src/dialogs/dialog_activity.cpp
   src/dialogs/dlg_compress.cpp
   src/dialogs/dlg_extract.cpp
   src/dialogs/dlg_input.cpp
@@ -61,7 +61,16 @@ target_include_directories(AiZip PRIVATE
 )
 
 # XML 布局在构建期自动转成 C++ 并加入编译，改 .xml 后重新构建即可
-aiui_add_layouts(AiZip assets/layouts/main_frame.xml)
+aiui_add_layouts(AiZip
+  assets/layouts/main_frame.xml
+  assets/layouts/dlg_input.xml
+  assets/layouts/dlg_progress.xml
+  assets/layouts/dlg_extract.xml
+  assets/layouts/dlg_compress.xml
+)
+
+# 平台入口（wWinMain / NSApplication / main）由 AiUI 提供，应用只实现 AiUI::runApp()
+aiui_add_app_entry(AiZip)
 
 target_compile_options(AiZip PRIVATE /O2 /Gy /Gw /GF /utf-8 /W4 /permissive- /Zc:__cplusplus /GL)
 
@@ -91,6 +100,7 @@ target_include_directories(test_arc PRIVATE
   src/archive
   src/common
 )
+target_link_libraries(test_arc PRIVATE AiUI)
 target_compile_definitions(test_arc PRIVATE
   UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS
 )

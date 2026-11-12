@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  进度对话框：一行说明、当前文件、进度条、百分比，右下角取消。
+  进度与文件名由 ProgressDialog 在收到工作线程快照后刷新。
+-->
+<LinearLayout orientation="vertical" padding="16" background="#f0f7fc">
+
+  <TextView id="title" text="正在处理，请稍候…" height="20" textColor="#555555"/>
+  <TextView id="file" height="20" marginY="6" textColor="#777777"/>
+  <ProgressBar id="bar" height="12" marginY="6"/>
+  <TextView id="detail" height="18" textColor="#777777"/>
+
+  <LinearLayout orientation="horizontal" height="32" align="end" marginY="10">
+    <Button id="btnCancel" text="取消" style="outline" width="76" height="30"/>
+  </LinearLayout>
+
+</LinearLayout>

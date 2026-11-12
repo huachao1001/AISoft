@@ -9,8 +9,6 @@
 #include "ui_main.h"
 #include "util.h"
 
-#include <shellapi.h>
-
 #include <map>
 
 App g_app;
@@ -31,27 +29,18 @@ std::wstring TypeNameFor(const std::wstring& name, bool isDir) {
 
 void LoadDirectoryItems(const std::wstring& dir) {
   g_app.items.clear();
-  WIN32_FIND_DATAW fd;
-  HANDLE h = ::FindFirstFileW(util::JoinPath(dir, L"*").c_str(), &fd);
-  if (h == INVALID_HANDLE_VALUE) return;
-
-  const bool showHidden = false;
-  do {
-    if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
-    if (!showHidden && (fd.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN)) continue;
-    if (!showHidden && (fd.dwFileAttributes & FILE_ATTRIBUTE_SYSTEM)) continue;
-
+  // 隐藏与系统项不进文件列表：与资源管理器默认观感一致
+  for (const auto& entry : AiUI::platform()->listDirectory(dir, true)) {
     Item it;
-    it.name = fd.cFileName;
-    it.fullPath = util::JoinPath(dir, fd.cFileName);
-    it.isDir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-    it.size = it.isDir ? 0 : (static_cast<uint64_t>(fd.nFileSizeHigh) << 32) | fd.nFileSizeLow;
+    it.name = entry.name;
+    it.fullPath = entry.fullPath;
+    it.isDir = entry.isDir;
+    it.size = entry.isDir ? 0 : entry.size;
     it.packSize = it.size;
-    it.mtime = fd.ftLastWriteTime;
-    it.typeName = TypeNameFor(it.name, it.isDir);
+    it.modifiedMillis = entry.modifiedMillis;
+    it.typeName = entry.typeName.empty() ? TypeNameFor(it.name, it.isDir) : entry.typeName;
     g_app.items.push_back(std::move(it));
-  } while (::FindNextFileW(h, &fd));
-  ::FindClose(h);
+  }
 }
 
 void LoadArchiveItems() {
@@ -68,10 +57,7 @@ void LoadArchiveItems() {
     std::wstring rel = e.path;
     if (!prefix.empty()) {
       if (rel.size() <= prefix.size()) continue;
-      if (::CompareStringOrdinal(rel.c_str(), static_cast<int>(prefix.size()), prefix.c_str(),
-                                 static_cast<int>(prefix.size()), TRUE) != CSTR_EQUAL) {
-        continue;
-      }
+      if (!AiUI::platform()->isPathPrefix(prefix, rel)) continue;
       rel = rel.substr(prefix.size());
     }
     if (rel.empty()) continue;
@@ -91,7 +77,7 @@ void LoadArchiveItems() {
       }
       auto& agg = dirItems[dirIndex[dirName]];
       agg.size += e.size;
-      if (e.hasMtime) agg.mtime = e.mtime;
+      if (e.hasMtime) agg.modifiedMillis = e.modifiedMillis;
       continue;
     }
 
@@ -103,7 +89,7 @@ void LoadArchiveItems() {
         d.name = rel;
         d.typeName = L"文件夹";
         d.isDir = true;
-        d.mtime = e.mtime;
+        d.modifiedMillis = e.modifiedMillis;
         dirIndex[rel] = dirItems.size();
         dirItems.push_back(std::move(d));
       }
@@ -117,7 +103,7 @@ void LoadArchiveItems() {
     it.packSize = e.packSize;
     it.crc = e.crc;
     it.hasCrc = e.hasCrc;
-    it.mtime = e.mtime;
+    it.modifiedMillis = e.modifiedMillis;
     it.method = e.method;
     it.encrypted = e.encrypted;
     it.entryIndex = static_cast<int>(i);
@@ -128,17 +114,41 @@ void LoadArchiveItems() {
   g_app.items.insert(g_app.items.begin(), dirItems.begin(), dirItems.end());
 }
 
-// 本程序内的窗口才能当模态 owner
-HWND DialogOwner() {
-  HWND h = g_app.mainWnd;
-  // 最小化时被 owner 的弹窗会一起隐藏，退化为无 owner
-  if (h && ::IsWindow(h) && !::IsIconic(h)) return h;
-  return nullptr;
+// 本程序内的窗口才能当模态 owner；最小化时被 owner 的弹窗会一起隐藏，
+// 这种情况下退化为无 owner
+AiUI::NativeHandle DialogOwner() {
+  AiUI::NativeHandle h = g_app.mainWnd;
+  return AiUI::platform()->canOwnModal(h) ? h : nullptr;
+}
+
+// 统一的提示框出口：图标与按钮组合在平台层映射到各系统的原生样式
+void Info(const std::wstring& text, AiUI::NativeHandle owner = nullptr) {
+  AiUI::MessageBoxParams params;
+  params.title = L"AIZip";
+  params.message = text;
+  params.icon = AiUI::MessageBoxIcon::kInfo;
+  AiUI::platform()->showMessageBox(owner, params);
+}
+
+void Warn(const std::wstring& text, AiUI::NativeHandle owner = nullptr) {
+  AiUI::MessageBoxParams params;
+  params.title = L"AIZip";
+  params.message = text;
+  params.icon = AiUI::MessageBoxIcon::kWarning;
+  AiUI::platform()->showMessageBox(owner, params);
+}
+
+void Fail(const std::wstring& text, AiUI::NativeHandle owner = nullptr) {
+  AiUI::MessageBoxParams params;
+  params.title = L"AIZip";
+  params.message = text;
+  params.icon = AiUI::MessageBoxIcon::kError;
+  AiUI::platform()->showMessageBox(owner, params);
 }
 
 // 打开压缩包；头部加密的包需要密码，失败时弹框询问后重试
-bool OpenArchiveWithPassword(arc::Archive& a, const std::wstring& path, HWND owner,
-                             arc::OpenResult& r) {
+bool OpenArchiveWithPassword(arc::Archive& a, const std::wstring& path,
+                             AiUI::NativeHandle owner, arc::OpenResult& r) {
   r = a.Open(path);
   if (r.ok) return true;
 
@@ -177,7 +187,7 @@ void AppNavigateTo(const std::wstring& dirIn) {
   // 归一化
   while (dir.size() > 3 && (dir.back() == L'\\')) dir.pop_back();
   if (!util::IsDirectory(dir)) {
-    ::MessageBoxW(g_app.mainWnd, (L"路径不存在：\n" + dir).c_str(), L"AIZip", MB_OK | MB_ICONWARNING);
+    Warn(L"路径不存在：\n" + dir, g_app.mainWnd);
     return;
   }
 
@@ -193,8 +203,7 @@ void AppNavigateTo(const std::wstring& dirIn) {
 
   // 历史前进
   if (g_app.historyPos < 0 || g_app.historyPos >= static_cast<int>(g_app.history.size()) ||
-      ::CompareStringOrdinal(g_app.history[g_app.historyPos].c_str(), -1, dir.c_str(), -1, TRUE) !=
-          CSTR_EQUAL) {
+      !AiUI::platform()->equalsPath(g_app.history[g_app.historyPos], dir)) {
     if (g_app.historyPos + 1 < static_cast<int>(g_app.history.size())) {
       g_app.history.erase(g_app.history.begin() + g_app.historyPos + 1, g_app.history.end());
     }
@@ -209,8 +218,7 @@ void AppOpenArchive(const std::wstring& path) {
   arc::OpenResult r;
   if (!OpenArchiveWithPassword(g_app.archive, path, DialogOwner(), r)) {
     if (r.error.empty()) return;  // 用户取消
-    ::MessageBoxW(g_app.mainWnd, (L"无法打开压缩包：\n" + path + L"\n\n" + r.error).c_str(),
-                  L"AIZip", MB_OK | MB_ICONERROR);
+    Fail(L"无法打开压缩包：\n" + path + L"\n\n" + r.error, g_app.mainWnd);
     return;
   }
   g_app.archiveMode = true;
@@ -226,18 +234,16 @@ void AppOpenArchive(const std::wstring& path) {
   AppRefreshView();
 }
 
-bool AppExtractArchive(HWND owner, const std::wstring& path) {
+bool AppExtractArchive(AiUI::NativeHandle owner, const std::wstring& path) {
   if (!arc::Archive::IsArchiveFile(path) || !util::PathExists(path)) {
-    ::MessageBoxW(owner, (L"不是可识别的压缩包：\n" + path).c_str(), L"AIZip",
-                  MB_OK | MB_ICONWARNING);
+    Warn(L"不是可识别的压缩包：\n" + path, owner);
     return false;
   }
 
   arc::OpenResult r;
   if (!OpenArchiveWithPassword(g_app.archive, path, owner, r)) {
     if (!r.error.empty()) {
-      ::MessageBoxW(owner, (L"无法打开压缩包：\n" + path + L"\n\n" + r.error).c_str(), L"AIZip",
-                    MB_OK | MB_ICONERROR);
+      Fail(L"无法打开压缩包：\n" + path + L"\n\n" + r.error, owner);
     }
     return false;
   }
@@ -316,7 +322,7 @@ bool AppCanForward() {
 namespace {
 
 bool EqualsNoCase(const std::wstring& a, const wchar_t* b) {
-  return ::CompareStringOrdinal(a.c_str(), -1, b, -1, TRUE) == CSTR_EQUAL;
+  return AiUI::platform()->equalsPath(a, b);
 }
 
 // 一键压缩：直接用源文件名生成 <名字>.zip，不弹对话框。
@@ -339,13 +345,8 @@ std::wstring QuickZipUniquePath(const std::wstring& path) {
 
 LaunchRequest ParseLaunchArgs() {
   LaunchRequest req;
-  int argc = 0;
-  LPWSTR* argv = ::CommandLineToArgvW(::GetCommandLineW(), &argc);
-  if (!argv) return req;
-
   bool actionGiven = false;
-  for (int i = 1; i < argc; ++i) {
-    const std::wstring a = argv[i];
+  for (const auto& a : AiUI::platform()->commandLineArgs()) {
     if (EqualsNoCase(a, L"-compress")) {
       req.action = LaunchRequest::Action::kCompress;
       actionGiven = true;
@@ -359,8 +360,6 @@ LaunchRequest ParseLaunchArgs() {
       req.paths.push_back(a);
     }
   }
-  ::LocalFree(argv);
-
   req.explicitAction = actionGiven;
   // 没有动作开关时按后缀推断，这样资源管理器里「打开方式」选 AIZip 也能用
   if (!actionGiven && !req.paths.empty() && arc::Archive::IsArchiveFile(req.paths[0])) {
@@ -428,11 +427,11 @@ void AppDispatchLaunch(const LaunchRequest& req) {
     return;
   }
 
-  const HWND owner = DialogOwner();
+  const AiUI::NativeHandle owner = DialogOwner();
 
   if (req.action == LaunchRequest::Action::kQuickZip) {
     if (req.paths.empty()) {
-      ::MessageBoxW(owner, L"没有可压缩的文件。", L"AIZip", MB_OK | MB_ICONINFORMATION);
+      Info(L"没有可压缩的文件。", owner);
       return;
     }
     AppQuickZip(req.paths);
@@ -441,7 +440,7 @@ void AppDispatchLaunch(const LaunchRequest& req) {
 
   if (req.action == LaunchRequest::Action::kCompress) {
     if (req.paths.empty()) {
-      ::MessageBoxW(owner, L"没有可压缩的文件。", L"AIZip", MB_OK | MB_ICONINFORMATION);
+      Info(L"没有可压缩的文件。", owner);
       return;
     }
     ui::ShowCompressDialog(owner, req.paths);
@@ -450,11 +449,11 @@ void AppDispatchLaunch(const LaunchRequest& req) {
 
   // ── 解压 ──
   if (req.paths.empty()) {
-    ::MessageBoxW(owner, L"没有指定压缩包。", L"AIZip", MB_OK | MB_ICONINFORMATION);
+    Info(L"没有指定压缩包。", owner);
     return;
   }
   if (req.paths.size() > 1) {
-    ::MessageBoxW(owner, L"一次只能解压一个压缩包。", L"AIZip", MB_OK | MB_ICONINFORMATION);
+    Info(L"一次只能解压一个压缩包。", owner);
     return;
   }
   const std::wstring& path = req.paths[0];
@@ -478,7 +477,7 @@ void AppQuickZip(const std::vector<std::wstring>& paths) {
       });
 
   if (!ok && !err.empty()) {
-    ::MessageBoxW(DialogOwner(), (L"压缩失败：\n" + err).c_str(), L"AIZip", MB_OK | MB_ICONERROR);
+    Fail(L"压缩失败：\n" + err, DialogOwner());
   }
   if (ok && g_app.mainWnd) AppRefreshView();
 }

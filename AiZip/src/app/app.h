@@ -1,10 +1,12 @@
 // 应用状态与操作编排
+//
+// 不出现平台类型：窗口句柄用 AiUI::NativeHandle，时间用 Unix 纪元毫秒。
 #pragma once
 
 #include "archive.h"
 #include "util.h"
+#include "AiUI/platform.h"
 
-#include <windows.h>
 #include <string>
 #include <vector>
 
@@ -20,13 +22,14 @@ struct Item {
   uint64_t packSize = 0;
   uint32_t crc = 0;
   bool hasCrc = false;
-  FILETIME mtime{};
+  // Unix 纪元毫秒；0 表示未知
+  int64_t modifiedMillis = 0;
   int entryIndex = -1;   // 压缩包模式下的成员下标
 };
 
 struct App {
-  HINSTANCE instance = nullptr;
-  HWND mainWnd = nullptr;
+  // 主窗口的原生句柄；只用于给系统弹窗做 owner，不参与业务判断
+  AiUI::NativeHandle mainWnd = nullptr;
   util::Settings settings;
 
   // 视图状态
@@ -42,7 +45,7 @@ struct App {
   int historyPos = -1;
 
   int dpi = 96;
-  int px(int v) const { return ::MulDiv(v, dpi, 96); }
+  int px(int v) const { return (v * dpi + 48) / 96; }
 };
 
 extern App g_app;
@@ -57,7 +60,7 @@ void AppGoForward();
 bool AppCanBack();
 bool AppCanForward();
 // 打开指定压缩包并弹出解压对话框（不进入包内浏览）
-bool AppExtractArchive(HWND owner, const std::wstring& path);
+bool AppExtractArchive(AiUI::NativeHandle owner, const std::wstring& path);
 
 // 外部发起的一次操作（资源管理器右键菜单、单实例转发、命令行）
 struct LaunchRequest {

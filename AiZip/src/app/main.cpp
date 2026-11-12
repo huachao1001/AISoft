@@ -1,4 +1,6 @@
-﻿// 程序入口：单实例、DPI、命令行分发
+﻿// 程序入口：单实例、命令行分发、主窗口
+//
+// 不出现任何平台 API：DPI、公共控件、消息循环、窗口状态都走 AiUI::Platform。
 #include "app.h"
 #include "main_activity.h"
 #include "shell_menu.h"
@@ -6,37 +8,26 @@
 #include "ui.h"
 #include "ui_main.h"
 #include "util.h"
+#include "AiUI/app.h"
 #include "AiUI/font.h"
 #include "AiUI/icon.h"
 #include "AiUI/platform.h"
 
-#include <commctrl.h>
-#include <shellapi.h>
-#include <shlobj.h>
-
 namespace {
 
-// 浏览窗口的单实例锁：只包住"有没有主窗口"，与右键菜单的收件箱互斥体互不干扰
-constexpr const wchar_t* kBrowserMutex = L"Local\\AIZip.Browser.v1";
-
-void ShowFatal(const wchar_t* message) {
-  ::MessageBoxW(nullptr, message, L"AIZip", MB_OK | MB_ICONERROR);
+// 无参数启动且已有主窗口时，把路径转过去；返回是否应退出本进程
+bool forwardIfRunning(const std::wstring& path) {
+  return ui::ForwardPathToRunningWindow(path);
 }
 
 }  // namespace
 
-int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
-  util::EnableDpiAwareness();
-
-  INITCOMMONCONTROLSEX icc{sizeof(icc), ICC_WIN95_CLASSES | ICC_LISTVIEW_CLASSES |
-                                               ICC_TREEVIEW_CLASSES | ICC_PROGRESS_CLASS |
-                                               ICC_STANDARD_CLASSES | ICC_BAR_CLASSES};
-  ::InitCommonControlsEx(&icc);
-
-  g_app.instance = hInst;
-  g_app.settings = util::LoadSettings();
-  g_app.dpi = util::DpiForWindow(nullptr);
+int AiUI::runApp() {
+  AiUI::initHostProcess();
   AiUI::startupPlatform();
+
+  g_app.settings = util::LoadSettings();
+  g_app.dpi = AiUI::platform()->screenDpi();
   AiUI::fonts.create(g_app.dpi);
 
   // 右键菜单默认注册到当前用户（不需要管理员，也不改任何文件关联）。
@@ -44,13 +35,17 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
   if (!shell::IsContextMenuRegistered()) {
     const std::wstring err = shell::RegisterContextMenu();
     if (!err.empty()) {
-      ::MessageBoxW(nullptr, err.c_str(), L"AIZip", MB_OK | MB_ICONWARNING);
+      AiUI::MessageBoxParams params;
+      params.title = L"AIZip";
+      params.message = err;
+      params.icon = AiUI::MessageBoxIcon::kWarning;
+      AiUI::platform()->showMessageBox(nullptr, params);
     }
   }
 
   LaunchRequest req = ParseLaunchArgs();
 
-  // 右键菜单发起的压缩类动作：静态动词没有 %*，多选时 shell 为每个文件各起
+  // 右键菜单发起的压缩类动作：静态动词没有 %*，多选时系统为每个文件各起
   // 一个进程。先在收集窗口里把同批进程合并成一次操作，再往下走。
   if (req.explicitAction && req.action != LaunchRequest::Action::kExtract) {
     LaunchRequest merged;
@@ -68,43 +63,28 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
     return 0;
   }
 
-  // 浏览模式：无参数双击 exe 打开主窗口；带路径则定位过去
-  // 先用一个独立的互斥体把"只允许一个浏览窗口"定住：
-  // 原来的实现靠 FindWindow 判断，如果两个进程几乎同时启动，都在对方建窗之前
-  // 查不到窗口，就会各自开一个主窗口。
-  HANDLE browserLock = ::CreateMutexW(nullptr, FALSE, kBrowserMutex);
-  const bool browserExists = browserLock && ::GetLastError() == ERROR_ALREADY_EXISTS;
-  if (browserExists) {
+  // 浏览模式：已有主窗口时把路径转过去。用平台层的单实例锁判断，
+  // 避免两个进程几乎同时启动时都在对方建窗之前查不到窗口。
+  const std::wstring targetPath = req.paths.empty() ? L"" : req.paths[0];
+  if (!AiUI::platform()->claimSingleInstance(L"AIZip.Browser.v1")) {
     // 先启动的进程可能还没建完窗口，短暂等一下再转发
-    const std::wstring path = req.paths.empty() ? L"" : req.paths[0];
     bool forwarded = false;
     for (int i = 0; i < 20 && !forwarded; ++i) {
-      forwarded = ui::ForwardPathToRunningWindow(path);
-      if (!forwarded) ::Sleep(50);
+      forwarded = forwardIfRunning(targetPath);
+      if (!forwarded) AiUI::platform()->sleepMillis(50);
     }
-    if (!forwarded) ui::ForwardPathToRunningWindow(L"");
-    ::CloseHandle(browserLock);
-    AiUI::fonts.destroy();
-    return 0;
-  }
-  // 主窗口可能已存在但互斥体被上次崩溃遗留（极少见），补一次检查
-  if (!req.paths.empty() && ui::ForwardPathToRunningWindow(req.paths[0])) {
-    if (browserLock) ::CloseHandle(browserLock);
+    if (!forwarded) forwardIfRunning(L"");
     AiUI::fonts.destroy();
     return 0;
   }
 
-  // 初始目录：上次浏览的目录，其次用户目录，最后退回 C 盘根
+  // 初始目录：上次浏览的目录，其次用户目录，最后退回根目录
   if (!g_app.settings.lastDir.empty() && util::IsDirectory(g_app.settings.lastDir)) {
     g_app.curDir = g_app.settings.lastDir;
   } else {
-    PWSTR profile = nullptr;
-    if (SUCCEEDED(::SHGetKnownFolderPath(FOLDERID_Profile, 0, nullptr, &profile)) && profile) {
-      g_app.curDir = profile;
-      ::CoTaskMemFree(profile);
-    } else {
-      g_app.curDir = L"C:\\";
-    }
+    const std::wstring home = AiUI::platform()->specialFolder(AiUI::SpecialFolder::kHome);
+    g_app.curDir = home.empty() ? AiUI::platform()->executablePath() : home;
+    g_app.curDir = util::DirName(g_app.curDir);
   }
 
   // 初始目录记为历史第一项，否则首次导航后 historyPos 停在 0，返回按钮永远禁用
@@ -114,13 +94,11 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
   // 主窗口交给 MainActivity：XML 布局与控件装配都在里面
   ui::MainActivity activity;
   if (!activity.create(nullptr)) {
-    ShowFatal(L"主窗口创建失败。");
+    AiUI::reportFatalError(L"主窗口创建失败。");
     AiUI::fonts.destroy();
-    if (browserLock) ::CloseHandle(browserLock);
     return 1;
   }
-  HWND mainWnd = static_cast<HWND>(activity.window()->handle());
-  g_app.mainWnd = mainWnd;
+  g_app.mainWnd = activity.window()->handle();
 
   // 恢复上次的窗口尺寸并居中；超出工作区时收进来
   {
@@ -132,10 +110,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
     int w = (s.winW >= minW) ? s.winW : g_app.px(kDefW);
     int h = (s.winH >= minH) ? s.winH : g_app.px(kDefH);
 
-    RECT work{};
-    if (!::SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0)) {
-      work = RECT{0, 0, ::GetSystemMetrics(SM_CXSCREEN), ::GetSystemMetrics(SM_CYSCREEN)};
-    }
+    const AiUI::Rect work = AiUI::platform()->workArea();
     if (w > work.right - work.left) w = work.right - work.left;
     if (h > work.bottom - work.top) h = work.bottom - work.top;
 
@@ -159,21 +134,14 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
   }
 
   activity.show();
-  if (g_app.settings.winMax) ::ShowWindow(mainWnd, SW_SHOWMAXIMIZED);
-  ::UpdateWindow(mainWnd);
-
-  MSG msg;
-  while (::GetMessageW(&msg, nullptr, 0, 0) > 0) {
-    // 快捷键由 MainActivity 通过 ViewRoot 的按键回调接管，这里只管派发。
-    // 不用 IsDialogMessage：它会把回车吃掉，自绘控件收不到。
-    ::TranslateMessage(&msg);
-    ::DispatchMessageW(&msg);
+  if (g_app.settings.winMax && activity.window()) {
+    if (AiUI::PlatformWindow* pw = activity.window()->platformWindow()) pw->toggleMaximize();
   }
+
+  const int code = AiUI::platform()->runEventLoop();
 
   AiUI::releaseFileIcons();
   AiUI::fonts.destroy();
   AiUI::shutdownPlatform();
-  if (browserLock) ::CloseHandle(browserLock);
-  return static_cast<int>(msg.wParam);
+  return code;
 }
-

@@ -18,7 +18,9 @@ struct Entry {
   uint64_t packSize = 0;  // 压缩后大小
   uint32_t crc = 0;
   bool hasCrc = false;
-  FILETIME mtime{};
+  // 修改时间：Unix 纪元毫秒。7z 内核给的是 FILETIME，跨层前就换算掉，
+  // 展示与比较都只认这一种表示。
+  int64_t modifiedMillis = 0;
   bool hasMtime = false;
   std::wstring method;    // 压缩算法
 };

@@ -1,87 +1,64 @@
 ﻿// 压缩对话框
+//
+// 原来的原生控件消息读写（BM_GETCHECK / CB_GETCURSEL / GetWindowText）
+// 全部换成了控件对象，界面状态只有一份来源。
 #include "dlg_compress.h"
 
 #include "app.h"
 #include "archive.h"
+#include "sevenzip_loader.h"
 #include "dlg_input.h"
 #include "dlg_progress.h"
-#include "sevenzip_loader.h"
-#include "ui.h"
 #include "util.h"
+#include "AiUI/widgets/button.h"
+#include "AiUI/widgets/form_controls.h"
+#include "AiUI/widgets/input_box.h"
+#include "AiUI/widgets/option_view.h"
+#include "AiUI/widgets/text_view.h"
+#include "dialog_activity.h"
 
-#include <commctrl.h>
-#include <commdlg.h>
-#include <shellapi.h>
-#include <shlobj.h>
-#include <shlwapi.h>
-#include <strsafe.h>
-
-#include <string>
+#include <utility>
 #include <vector>
 
 namespace ui {
 namespace {
 
-constexpr const wchar_t* kClass = L"AIZipCompressDlg";
-
-constexpr int kIdPath = 2001;
-constexpr int kIdBrowse = 2002;
-constexpr int kIdFormat7z = 2010;
-constexpr int kIdFormatZip = 2011;
-constexpr int kIdFormatOther = 2012;  // 第三个单选：无文字，标签就是旁边的下拉框
-constexpr int kIdFormatCombo = 2013;  // 其余格式的下拉列表
-constexpr int kIdLevel = 2021;
-constexpr int kIdUpdate = 2022;
-constexpr int kIdVolume = 2023;
-constexpr int kIdVolumeUnit = 2024;
-constexpr int kIdPassword = 2025;
-constexpr int kIdComment = 2026;
-constexpr int kIdOptSolid = 2040;
-constexpr int kIdOptTest = 2041;
-constexpr int kIdOptDelete = 2042;
-constexpr int kIdOptSeparate = 2043;
-constexpr int kIdOptSfx = 2044;
-constexpr int kIdDefault = 2050;
-constexpr int kIdOk = IDOK;
-constexpr int kIdCancel = IDCANCEL;
-
-struct DlgState {
-  std::vector<std::wstring> sources;
-  // 指向 z7::Formats() 的索引：0=ZIP 1=7Z，其余走下拉
-  int formatIndex = 1;
-  int levelIndex = 3;   // 指向 kLevelValues
-  bool solid = true;
-};
-
-DlgState* g_state = nullptr;
-
 const wchar_t* kLevelNames[] = {L"存储", L"最快", L"快速", L"标准", L"最大", L"极限"};
 const int kLevelValues[] = {0, 1, 3, 5, 7, 9};
 constexpr int kLevelCount = 6;
 
-// 当前格式对应的扩展名
-std::wstring ExtFor(int formatIndex) {
+const wchar_t* kUpdateModes[] = {L"添加并替换文件", L"添加并更新文件", L"仅更新已存在的文件",
+                                 L"同步文件夹内容"};
+
+// 压缩任务：对话框关闭后再跑，避免把进度框的模态循环嵌进 onAccept
+struct CompressTask {
+  std::vector<std::pair<std::wstring, std::vector<std::wstring>>> jobs;
+  arc::CompressOptions options;
+  std::vector<std::wstring> sources;
+  std::wstring outPath;
+  bool deleteAfter = false;
+  bool testAfter = false;
+};
+
+std::wstring extFor(int formatIndex) {
   const int n = z7::FormatCount();
   if (formatIndex < 0 || formatIndex >= n) return L".zip";
   return z7::Formats()[formatIndex].ext;
 }
 
-const wchar_t* NameFor(int formatIndex) {
+std::wstring nameFor(int formatIndex) {
   const int n = z7::FormatCount();
   if (formatIndex < 0 || formatIndex >= n) return L"ZIP";
   return z7::Formats()[formatIndex].name;
 }
 
 // 取不含归档扩展名的文件名（.tar.gz 这类两段扩展要整段剥掉）。
-// 只返回末段名，调用方自己拼目录。
-std::wstring StripArchiveExt(const std::wstring& path) {
+std::wstring stripArchiveExt(const std::wstring& path) {
   const std::wstring base = util::BaseName(path);
   for (int i = 0; i < z7::FormatCount(); ++i) {
     const std::wstring ext = z7::Formats()[i].ext;
     if (base.size() > ext.size() &&
-        ::CompareStringOrdinal(base.c_str() + (base.size() - ext.size()),
-                               static_cast<int>(ext.size()), ext.c_str(),
-                               static_cast<int>(ext.size()), TRUE) == CSTR_EQUAL) {
+        AiUI::platform()->equalsPath(base.substr(base.size() - ext.size()), ext)) {
       return base.substr(0, base.size() - ext.size());
     }
   }
@@ -89,474 +66,408 @@ std::wstring StripArchiveExt(const std::wstring& path) {
   return (dot == std::wstring::npos) ? base : base.substr(0, dot);
 }
 
-std::wstring DefaultArchivePath(const DlgState& st) {
-  if (st.sources.empty()) return L"";
-  const std::wstring first = st.sources.front();
+std::wstring defaultArchivePath(const std::vector<std::wstring>& sources, int formatIndex) {
+  if (sources.empty()) return L"";
+  const std::wstring first = sources.front();
   const std::wstring dir = util::DirName(first);
   std::wstring base = util::IsDirectory(first) ? util::BaseName(first) : util::FileStem(first);
   if (base.empty()) base = L"archive";
-  return util::JoinPath(dir, base + ExtFor(st.formatIndex));
+  return util::JoinPath(dir, base + extFor(formatIndex));
 }
 
-void CreateControls(HWND hwnd) {
-  auto make = [&](const wchar_t* cls, const wchar_t* text, DWORD style, int x, int y, int w, int h,
-                  int id) {
-    return CreateDlgItem(hwnd, cls, text, style, x, y, w, h, id);
-  };
+class DlgCompress : public DialogActivity {
+ public:
+  explicit DlgCompress(std::vector<std::wstring> sources)
+      : sources_(std::move(sources)) {}
 
-  make(L"STATIC", L"压缩文件名(F)", SS_LEFT, 12, 12, 160, 16, 0);
-  make(L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 12, 30, 330, 22, kIdPath);
-  make(L"BUTTON", L"浏览(B)...", BS_PUSHBUTTON | WS_TABSTOP, 348, 29, 88, 24, kIdBrowse);
+  const CompressTask& task() const { return task_; }
+  bool hasTask() const { return hasTask_; }
 
-  make(L"STATIC", L"压缩文件格式", SS_LEFT, 12, 62, 160, 16, 0);
-  // 格式选择：○ ZIP ○ 7Z ○ [格式▾]，第三个单选没有文字，下拉框充当它的标签
-  make(L"BUTTON", L"ZIP", BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP, 12, 82, 46, 18, kIdFormatZip);
-  make(L"BUTTON", L"7Z", BS_AUTORADIOBUTTON | WS_TABSTOP, 62, 82, 40, 18, kIdFormat7z);
-  make(L"BUTTON", L"", BS_AUTORADIOBUTTON | WS_TABSTOP, 104, 82, 16, 18, kIdFormatOther);
-  // 宽度止于 204：右侧「压缩选项」分组框从 216 开始，越界会压住它
-  HWND fmtCombo = make(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 122, 81,
-                       82, 220, kIdFormatCombo);
-  for (int i = 2; i < z7::FormatCount(); ++i) {
-    ::SendMessageW(fmtCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(z7::Formats()[i].name));
-  }
-  ::SendMessageW(fmtCombo, CB_SETCURSEL, 0, 0);
+ protected:
+  const wchar_t* layoutName() const override { return L"dlg_compress"; }
+  void onCreate() override;
+  bool onAccept() override;
 
-  make(L"STATIC", L"压缩方式(M)", SS_LEFT, 12, 110, 160, 16, 0);
-  HWND level = make(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 12, 128, 190, 200,
-                    kIdLevel);
+ private:
+  // 界面 → 状态
+  int selectedFormat() const;
+  int selectedLevel() const;
+  // 状态 → 界面：单选项、下拉可用性、扩展名联动
+  void applyFormat(int formatIndex);
+  void syncExtension(int formatIndex);
+  void refreshFormatUi();
+
+  void browse();
+  void editPassword();
+  void saveAsDefault();
+
+  std::vector<std::wstring> sources_;
+  std::wstring password_;
+
+  CompressTask task_;
+  bool hasTask_ = false;
+
+  // 界面当前显示的格式；下拉框只承载第 3 项及以后
+  int formatIndex_ = 0;
+
+  AiUI::InputBox* path_ = nullptr;
+  AiUI::RadioGroup* formatGroup_ = nullptr;
+  AiUI::ComboBox* otherFormat_ = nullptr;
+  AiUI::ComboBox* level_ = nullptr;
+  AiUI::ComboBox* updateMode_ = nullptr;
+  AiUI::InputBox* volume_ = nullptr;
+  AiUI::ComboBox* volumeUnit_ = nullptr;
+  AiUI::CheckBox* optSolid_ = nullptr;
+  AiUI::CheckBox* optTest_ = nullptr;
+  AiUI::CheckBox* optDelete_ = nullptr;
+  AiUI::CheckBox* optSeparate_ = nullptr;
+};
+
+void DlgCompress::onCreate() {
+  setEscapeCloses(true);
+  setTitle(L"压缩文件");
+  // 左栏固定宽度，右侧分组框要放得下勾选项文字；高度容纳三行 + 底部按钮
+  setMinSize(620, 480);
+
+  // ── 初始状态：从设置恢复格式、档位、固实 ──
+  int format = z7::FormatIndexByName(g_app.settings.compressFormat.c_str());
+  if (format < 0 || format >= z7::FormatCount()) format = 0;
+  formatIndex_ = format;
+
+  int levelIndex = 3;
   for (int i = 0; i < kLevelCount; ++i) {
-    ::SendMessageW(level, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(kLevelNames[i]));
-  }
-  ::SendMessageW(level, CB_SETCURSEL, 3, 0);
-
-  make(L"STATIC", L"更新方式(U)", SS_LEFT, 12, 158, 160, 16, 0);
-  HWND update = make(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 12, 176, 190, 200,
-                     kIdUpdate);
-  for (const wchar_t* s : {L"添加并替换文件", L"添加并更新文件", L"仅更新已存在的文件",
-                           L"同步文件夹内容"}) {
-    ::SendMessageW(update, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(s));
-  }
-  ::SendMessageW(update, CB_SETCURSEL, 0, 0);
-
-  make(L"STATIC", L"压缩分卷大小设置(V)", SS_LEFT, 12, 206, 200, 16, 0);
-  // 同左栏约束：输入框与单位下拉合计必须止于 204
-  make(L"COMBOBOX", L"", CBS_DROPDOWN | WS_VSCROLL | WS_TABSTOP | CBS_AUTOHSCROLL, 12, 224, 138,
-       200, kIdVolume);
-  HWND volUnit = make(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 156, 224, 48,
-                      200, kIdVolumeUnit);
-  for (const wchar_t* s : {L"MB", L"GB", L"KB"}) {
-    ::SendMessageW(volUnit, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(s));
-  }
-  ::SendMessageW(volUnit, CB_SETCURSEL, 0, 0);
-
-  // 右侧压缩选项
-  make(L"BUTTON", L"压缩选项", BS_GROUPBOX, 216, 62, 220, 190, 0);
-  make(L"BUTTON", L"压缩后删除源文件(L)", BS_AUTOCHECKBOX | WS_TABSTOP, 226, 82, 200, 18,
-       kIdOptDelete);
-  make(L"BUTTON", L"压缩后测试压缩文件(E)", BS_AUTOCHECKBOX | WS_TABSTOP, 226, 104, 200, 18,
-       kIdOptTest);
-  HWND solid = make(L"BUTTON", L"创建固实压缩文件(S)(仅 7Z)", BS_AUTOCHECKBOX | WS_TABSTOP, 226,
-                    126, 200, 18, kIdOptSolid);
-  ::SendMessageW(solid, BM_SETCHECK, BST_CHECKED, 0);
-  make(L"BUTTON", L"压缩每个选中项到单独的压缩文件", BS_AUTOCHECKBOX | WS_TABSTOP, 226, 148, 200,
-       18, kIdOptSeparate);
-  make(L"BUTTON", L"创建自解压格式压缩文件(X)", BS_AUTOCHECKBOX | WS_DISABLED, 226, 170, 200, 18,
-       kIdOptSfx);
-
-  make(L"BUTTON", L"密码(P)...", BS_PUSHBUTTON | WS_TABSTOP, 12, 258, 88, 24, kIdPassword);
-  make(L"BUTTON", L"注释(M)...", BS_PUSHBUTTON | WS_TABSTOP, 106, 258, 88, 24, kIdComment);
-
-  make(L"BUTTON", L"保存为默认(S)", BS_PUSHBUTTON | WS_TABSTOP, 12, 314, 110, 24, kIdDefault);
-  make(L"BUTTON", L"确定(O)", BS_DEFPUSHBUTTON | WS_TABSTOP, 290, 314, 72, 26, kIdOk);
-  make(L"BUTTON", L"取消(C)", BS_PUSHBUTTON | WS_TABSTOP, 368, 314, 72, 26, kIdCancel);
-
-  for (HWND c = ::GetWindow(hwnd, GW_CHILD); c; c = ::GetWindow(c, GW_HWNDNEXT)) {
-    ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(DialogFont()), TRUE);
-  }
-}
-
-// 三个互斥单选：ZIP、7Z、以及“其他格式”（无文字，由旁边下拉框承载）。
-// 选中下拉框里某项等于选中第三个单选。
-void SetFormatSelection(HWND hwnd, int formatIndex) {
-  HWND zip = ::GetDlgItem(hwnd, kIdFormatZip);
-  HWND sevenZ = ::GetDlgItem(hwnd, kIdFormat7z);
-  HWND other = ::GetDlgItem(hwnd, kIdFormatOther);
-  HWND combo = ::GetDlgItem(hwnd, kIdFormatCombo);
-  if (zip) ::SendMessageW(zip, BM_SETCHECK, formatIndex == 0 ? BST_CHECKED : BST_UNCHECKED, 0);
-  if (sevenZ) {
-    ::SendMessageW(sevenZ, BM_SETCHECK, formatIndex == 1 ? BST_CHECKED : BST_UNCHECKED, 0);
-  }
-  const bool isOther = formatIndex >= 2;
-  if (other) ::SendMessageW(other, BM_SETCHECK, isOther ? BST_CHECKED : BST_UNCHECKED, 0);
-  if (combo) {
-    if (isOther) {
-      ::SendMessageW(combo, CB_SETCURSEL, static_cast<WPARAM>(formatIndex - 2), 0);
-      ::EnableWindow(combo, TRUE);
-    } else {
-      ::SendMessageW(combo, CB_SETCURSEL, 0, 0);
-      ::EnableWindow(combo, FALSE);
+    if (kLevelValues[i] == g_app.settings.compressLevel) {
+      levelIndex = i;
+      break;
     }
   }
+
+  path_ = findView<AiUI::InputBox>("path");
+  formatGroup_ = findView<AiUI::RadioGroup>("formatGroup");
+  otherFormat_ = findView<AiUI::ComboBox>("otherFormat");
+  level_ = findView<AiUI::ComboBox>("level");
+  updateMode_ = findView<AiUI::ComboBox>("updateMode");
+  volume_ = findView<AiUI::InputBox>("volume");
+  volumeUnit_ = findView<AiUI::ComboBox>("volumeUnit");
+  optSolid_ = findView<AiUI::CheckBox>("optSolid");
+  optTest_ = findView<AiUI::CheckBox>("optTest");
+  optDelete_ = findView<AiUI::CheckBox>("optDelete");
+  optSeparate_ = findView<AiUI::CheckBox>("optSeparate");
+
+  if (path_) path_->setText(defaultArchivePath(sources_, formatIndex_));
+
+  // 下拉框的第 3 项起是「其他格式」
+  if (otherFormat_) {
+    std::vector<std::wstring> items;
+    for (int i = 2; i < z7::FormatCount(); ++i) items.emplace_back(z7::Formats()[i].name);
+    otherFormat_->setItems(items);
+    otherFormat_->setOnChange([this](int index) {
+      if (!formatGroup_) return;
+      formatGroup_->setCheckedIndex(2);
+      applyFormat(2 + index);
+    });
+  }
+
+  if (formatGroup_) {
+    formatGroup_->setOnChange([this](int index) {
+      // 第三项的真实格式由下拉框决定
+      const int target = index < 2 ? index : 2 + otherFormat_->selectedIndex();
+      applyFormat(target);
+      refreshFormatUi();
+    });
+  }
+
+  if (level_) {
+    std::vector<std::wstring> items;
+    for (int i = 0; i < kLevelCount; ++i) items.emplace_back(kLevelNames[i]);
+    level_->setItems(items);
+    level_->setSelectedIndex(levelIndex);
+  }
+
+  if (updateMode_) {
+    std::vector<std::wstring> items;
+    for (const wchar_t* mode : kUpdateModes) items.emplace_back(mode);
+    updateMode_->setItems(items);
+    updateMode_->setSelectedIndex(0);
+  }
+
+  if (volumeUnit_) {
+    volumeUnit_->setItems({L"MB", L"GB", L"KB"});
+    volumeUnit_->setSelectedIndex(0);
+  }
+
+  if (optSolid_) {
+    optSolid_->setChecked(g_app.settings.solid);
+    // 固实只有 7Z 支持，格式变化时随之置灰
+    optSolid_->setOnChange([this](bool checked) {
+      if (optSolid_->isEnabled()) g_app.settings.solid = checked;
+    });
+  }
+
+  applyFormat(formatIndex_);
+  refreshFormatUi();
+
+  if (auto* browseButton = findView<AiUI::Button>("btnBrowse")) {
+    browseButton->setOnClick([this] { browse(); });
+  }
+  if (auto* pwd = findView<AiUI::Button>("btnPassword")) {
+    pwd->setOnClick([this] { editPassword(); });
+  }
+  if (auto* def = findView<AiUI::Button>("btnDefault")) {
+    def->setOnClick([this] { saveAsDefault(); });
+  }
+  if (auto* ok = findView<AiUI::Button>("btnOk")) {
+    ok->setOnClick([this] {
+      if (!onAccept()) return;
+      setAccepted(true);
+      close();
+    });
+  }
+  if (auto* cancel = findView<AiUI::Button>("btnCancel")) {
+    cancel->setOnClick([this] { close(); });
+  }
+
+  if (path_) path_->setFocus();
 }
 
-// 切换格式后同步扩展名、固实与档位可用性
-void SyncFormatUi(HWND hwnd, int formatIndex) {
+int DlgCompress::selectedFormat() const {
+  if (formatGroup_ && formatGroup_->checkedIndex() < 2) return formatGroup_->checkedIndex();
+  const int index = otherFormat_ ? otherFormat_->selectedIndex() : 0;
+  return 2 + (index < 0 ? 0 : index);
+}
+
+int DlgCompress::selectedLevel() const {
+  const int index = level_ ? level_->selectedIndex() : 3;
+  return (index >= 0 && index < kLevelCount) ? index : 3;
+}
+
+void DlgCompress::applyFormat(int formatIndex) {
+  if (formatIndex < 0 || formatIndex >= z7::FormatCount()) formatIndex = 0;
+  const bool changed = formatIndex != formatIndex_;
+  formatIndex_ = formatIndex;
+
+  // 单选项与下拉框互相对齐
+  if (formatGroup_) {
+    formatGroup_->setCheckedIndex(formatIndex < 2 ? formatIndex : 2);
+  }
+  if (otherFormat_) {
+    otherFormat_->setSelectedIndex(formatIndex >= 2 ? formatIndex - 2 : 0, false);
+  }
+
+  if (changed) syncExtension(formatIndex);
+}
+
+void DlgCompress::syncExtension(int formatIndex) {
+  if (!path_) return;
+  const std::wstring current = path_->text();
+  if (current.empty()) return;
+
+  // 已有归档扩展名要整段剥掉再拼新的，否则连续切换会叠成 xxx.tar.tar.xz
+  const std::wstring stem = stripArchiveExt(current);
+  if (stem.empty()) return;
+  path_->setText(util::JoinPath(util::DirName(current), stem + extFor(formatIndex)));
+}
+
+// 切换格式后同步固实与档位的可用性，以及单位下拉的默认值
+void DlgCompress::refreshFormatUi() {
   const int n = z7::FormatCount();
-  const bool valid = formatIndex >= 0 && formatIndex < n;
-  const z7::FormatInfo* fi = valid ? &z7::Formats()[formatIndex] : nullptr;
+  const bool valid = formatIndex_ >= 0 && formatIndex_ < n;
+  const z7::FormatInfo* info = valid ? &z7::Formats()[formatIndex_] : nullptr;
 
   // 只有 7Z 支持固实；TAR/WIM 只有存储档
-  if (HWND solid = ::GetDlgItem(hwnd, kIdOptSolid)) {
-    ::EnableWindow(solid, fi && fi->solidCapable);
+  if (optSolid_) {
+    const bool capable = info && info->solidCapable;
+    optSolid_->setEnabled(capable);
+    if (!capable) optSolid_->setChecked(false, false);
   }
-  if (HWND level = ::GetDlgItem(hwnd, kIdLevel)) {
-    ::EnableWindow(level, !fi || fi->maxLevel > 0);
-  }
-
-  HWND edit = ::GetDlgItem(hwnd, kIdPath);
-  if (!edit) return;
-  wchar_t buf[MAX_PATH * 2];
-  ::GetWindowTextW(edit, buf, MAX_PATH * 2);
-  std::wstring cur = buf;
-  if (cur.empty()) return;
-  // 要把已有的归档扩展名整段剥掉再拼新的，否则连续切换会叠成 xxx.tar.tar.xz
-  const std::wstring stem = StripArchiveExt(cur);
-  const std::wstring dir = util::DirName(cur);
-  if (stem.empty()) return;
-  const std::wstring next = util::JoinPath(dir, stem + ExtFor(formatIndex));
-  ::SetWindowTextW(edit, next.c_str());
-}
-
-void OnBrowse(HWND hwnd, DlgState& st) {
-  wchar_t file[MAX_PATH] = L"";
-  ::StringCchCopyW(file, MAX_PATH, DefaultArchivePath(st).c_str());
-
-  OPENFILENAMEW ofn{};
-  ofn.lStructSize = sizeof(ofn);
-  ofn.hwndOwner = hwnd;
-  ofn.lpstrFilter =
-      L"ZIP 压缩文件\0*.zip\07Z 压缩文件\0*.7z\0TAR.GZ 压缩文件\0*.tar.gz\0TAR.BZ2 压缩文件\0*.tar.bz2\0"
-      L"TAR.XZ 压缩文件\0*.tar.xz\0GZIP 文件\0*.gz\0BZIP2 文件\0*.bz2\0XZ 文件\0*.xz\0"
-      L"TAR 归档\0*.tar\0WIM 映像\0*.wim\0所有文件\0*.*\0";
-  ofn.lpstrFile = file;
-  ofn.nMaxFile = MAX_PATH;
-  ofn.lpstrTitle = L"选择压缩文件名";
-  ofn.lpstrDefExt = ExtFor(st.formatIndex).c_str() + 1;
-  ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
-  if (::GetSaveFileNameW(&ofn)) {
-    ::SetWindowTextW(::GetDlgItem(hwnd, kIdPath), file);
+  if (level_) {
+    level_->setEnabled(!info || info->maxLevel > 0);
   }
 }
 
-std::wstring g_password;
+void DlgCompress::browse() {
+  const std::wstring initial = defaultArchivePath(sources_, formatIndex_);
+  const std::wstring picked = AiUI::platform()->pickSaveFile(
+      window()->handle(), L"选择压缩文件名", util::DirName(initial), util::BaseName(initial),
+      extFor(formatIndex_),
+      {L"ZIP 压缩文件", L"*.zip", L"7Z 压缩文件", L"*.7z", L"TAR.GZ 压缩文件", L"*.tar.gz",
+       L"TAR.BZ2 压缩文件", L"*.tar.bz2", L"TAR.XZ 压缩文件", L"*.tar.xz", L"GZIP 文件", L"*.gz",
+       L"BZIP2 文件", L"*.bz2", L"XZ 文件", L"*.xz", L"TAR 归档", L"*.tar", L"WIM 映像", L"*.wim",
+       L"所有文件", L"*.*"});
+  if (!picked.empty() && path_) path_->setText(picked);
+}
 
-void OnPassword(HWND hwnd) {
-  std::wstring pwd = g_password;
-  if (PromptText(hwnd, L"设置密码", L"密码（留空表示不加密）：", pwd, true)) {
-    g_password = pwd;
+void DlgCompress::editPassword() {
+  std::wstring pwd = password_;
+  if (PromptText(window()->handle(), L"设置密码", L"密码（留空表示不加密）：", pwd, true)) {
+    password_ = pwd;
   }
 }
 
-// 读取界面状态。真正的来源是三个互斥单选；第三个单选选中的格式看下拉框
-void ReadState(HWND hwnd, DlgState& st) {
-  if (::SendMessageW(::GetDlgItem(hwnd, kIdFormatZip), BM_GETCHECK, 0, 0) == BST_CHECKED) {
-    st.formatIndex = 0;
-  } else if (::SendMessageW(::GetDlgItem(hwnd, kIdFormat7z), BM_GETCHECK, 0, 0) == BST_CHECKED) {
-    st.formatIndex = 1;
-  } else {
-    const int sel =
-        static_cast<int>(::SendMessageW(::GetDlgItem(hwnd, kIdFormatCombo), CB_GETCURSEL, 0, 0));
-    st.formatIndex = 2 + (sel < 0 ? 0 : sel);
-  }
-  const int levelSel =
-      static_cast<int>(::SendMessageW(::GetDlgItem(hwnd, kIdLevel), CB_GETCURSEL, 0, 0));
-  st.levelIndex = (levelSel >= 0 && levelSel < kLevelCount) ? levelSel : 3;
-  st.solid = ::SendMessageW(::GetDlgItem(hwnd, kIdOptSolid), BM_GETCHECK, 0, 0) == BST_CHECKED;
+void DlgCompress::saveAsDefault() {
+  g_app.settings.compressFormat = nameFor(selectedFormat());
+  g_app.settings.compressLevel = kLevelValues[selectedLevel()];
+  g_app.settings.solid = optSolid_ && optSolid_->isChecked();
+  util::SaveSettings(g_app.settings);
+
+  AiUI::MessageBoxParams params;
+  params.title = L"AIZip";
+  params.message = L"已保存为默认设置。";
+  params.icon = AiUI::MessageBoxIcon::kInfo;
+  AiUI::platform()->showMessageBox(window()->handle(), params);
 }
 
-void OnOk(HWND hwnd, DlgState& st) {
-  wchar_t pathBuf[MAX_PATH * 2];
-  ::GetWindowTextW(::GetDlgItem(hwnd, kIdPath), pathBuf, MAX_PATH * 2);
-  std::wstring outPath = pathBuf;
+bool DlgCompress::onAccept() {
+  std::wstring outPath = path_ ? path_->text() : std::wstring();
   if (outPath.empty()) {
-    ::MessageBoxW(hwnd, L"请填写压缩文件名。", L"AIZip", MB_OK | MB_ICONINFORMATION);
-    return;
+    AiUI::MessageBoxParams params;
+    params.title = L"AIZip";
+    params.message = L"请填写压缩文件名。";
+    params.icon = AiUI::MessageBoxIcon::kInfo;
+    AiUI::platform()->showMessageBox(window()->handle(), params);
+    return false;
   }
+
   outPath = util::AbsolutePath(outPath);
   const std::wstring dir = util::DirName(outPath);
   if (!dir.empty() && !util::EnsureDirectory(dir)) {
-    ::MessageBoxW(hwnd, L"无法创建目标目录。", L"AIZip", MB_OK | MB_ICONERROR);
-    return;
+    AiUI::MessageBoxParams params;
+    params.title = L"AIZip";
+    params.message = L"无法创建目标目录。";
+    params.icon = AiUI::MessageBoxIcon::kError;
+    AiUI::platform()->showMessageBox(window()->handle(), params);
+    return false;
   }
+
   if (util::PathExists(outPath)) {
-    if (::MessageBoxW(hwnd, L"文件已存在，是否覆盖？", L"AIZip",
-                      MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) {
-      return;
+    AiUI::MessageBoxParams params;
+    params.title = L"AIZip";
+    params.message = L"文件已存在，是否覆盖？";
+    params.icon = AiUI::MessageBoxIcon::kWarning;
+    params.buttons = AiUI::MessageBoxButtons::kYesNo;
+    if (AiUI::platform()->showMessageBox(window()->handle(), params) !=
+        AiUI::MessageBoxResult::kYes) {
+      return false;
     }
   }
 
-  ReadState(hwnd, st);
-  const bool testAfter =
-      ::SendMessageW(::GetDlgItem(hwnd, kIdOptTest), BM_GETCHECK, 0, 0) == BST_CHECKED;
-  const bool deleteAfter =
-      ::SendMessageW(::GetDlgItem(hwnd, kIdOptDelete), BM_GETCHECK, 0, 0) == BST_CHECKED;
-  const bool separate =
-      ::SendMessageW(::GetDlgItem(hwnd, kIdOptSeparate), BM_GETCHECK, 0, 0) == BST_CHECKED;
-
-  g_app.settings.compressFormat = NameFor(st.formatIndex);
-  g_app.settings.compressLevel = kLevelValues[st.levelIndex];
-  g_app.settings.solid = st.solid;
-
-  arc::CompressOptions opts;
-  opts.level = kLevelValues[st.levelIndex];
-  opts.solid = st.solid;
-  opts.password = g_password;
-  opts.formatName = NameFor(st.formatIndex);
-
-  // TAR/WIM 只有存储档，内核不认 x 参数
-  const z7::FormatInfo& fi = z7::Formats()[st.formatIndex];
-  if (fi.maxLevel == 0) opts.level = 0;
-
-  // 分离模式：每个源各打一个包
-  std::vector<std::pair<std::wstring, std::vector<std::wstring>>> jobs;
-  if (separate) {
-    for (const auto& src : st.sources) {
-      const std::wstring base = util::IsDirectory(src) ? util::BaseName(src) : util::FileStem(src);
-      jobs.emplace_back(util::JoinPath(dir, base + ExtFor(st.formatIndex)),
-                        std::vector<std::wstring>{src});
-    }
-  } else {
-    jobs.emplace_back(outPath, st.sources);
-  }
+  const int formatIndex = selectedFormat();
+  const int levelIndex = selectedLevel();
+  const bool separate = optSeparate_ && optSeparate_->isChecked();
+  const z7::FormatInfo& info = z7::Formats()[formatIndex];
 
   // GZIP/BZIP2/XZ 只收单文件：分离模式天然满足，合并模式多文件/目录要提前拦下
-  if (!separate && fi.singleFile) {
+  if (!separate && info.singleFile) {
     std::vector<util::SourceItem> probe;
-    util::CollectSources(st.sources, probe);
+    util::CollectSources(sources_, probe);
     if (probe.size() != 1) {
-      ::MessageBoxW(hwnd,
-                    (std::wstring(L"“") + fi.name +
-                     L"”格式一次只能压缩一个文件。\n\n"
-                     L"要打包多个文件或整个文件夹，请改用「TAR." +
-                     (::IsEqualGUID(fi.clsId, z7::kClsidGZip) ? std::wstring(L"GZ")
-                                                              : (::IsEqualGUID(fi.clsId, z7::kClsidBZip2)
-                                                                     ? std::wstring(L"BZ2")
-                                                                     : std::wstring(L"XZ"))) +
-                     L"」，或勾选「压缩每个选中项到单独的压缩文件」。")
-                        .c_str(),
-                    L"AIZip", MB_OK | MB_ICONINFORMATION);
-      return;
+      AiUI::MessageBoxParams params;
+      params.title = L"AIZip";
+      params.message = std::wstring(L"「") + info.name +
+                       L"」格式一次只能压缩一个文件。\n\n"
+                       L"要打包多个文件或整个文件夹，请改用 TAR 组合格式，"
+                       L"或勾选「压缩每个选中项到单独的压缩文件」。";
+      params.icon = AiUI::MessageBoxIcon::kInfo;
+      AiUI::platform()->showMessageBox(window()->handle(), params);
+      return false;
     }
   }
 
-  // 先记下父窗口：下面要销毁对话框，进度框不能再拿它当 owner
-  HWND owner = ::GetParent(hwnd);
-  ::DestroyWindow(hwnd);
+  g_app.settings.compressFormat = nameFor(formatIndex);
+  g_app.settings.compressLevel = kLevelValues[levelIndex];
+  g_app.settings.solid = optSolid_ && optSolid_->isChecked();
 
-  std::wstring err;
+  arc::CompressOptions options;
+  options.level = kLevelValues[levelIndex];
+  options.solid = optSolid_ && optSolid_->isChecked();
+  options.password = password_;
+  options.formatName = nameFor(formatIndex);
+  // TAR/WIM 只有存储档，内核不认 x 参数
+  if (info.maxLevel == 0) options.level = 0;
+
+  // 分离模式：每个源各打一个包
+  task_.jobs.clear();
+  if (separate) {
+    for (const auto& src : sources_) {
+      const std::wstring base = util::IsDirectory(src) ? util::BaseName(src) : util::FileStem(src);
+      task_.jobs.emplace_back(util::JoinPath(dir, base + extFor(formatIndex)),
+                              std::vector<std::wstring>{src});
+    }
+  } else {
+    task_.jobs.emplace_back(outPath, sources_);
+  }
+
+  task_.options = options;
+  task_.sources = sources_;
+  task_.outPath = outPath;
+  task_.deleteAfter = optDelete_ && optDelete_->isChecked();
+  task_.testAfter = optTest_ && optTest_->isChecked();
+  hasTask_ = true;
+  return true;
+}
+
+// 压缩任务：对话框已经关闭，owner 退回主窗口
+void runCompressTask(AiUI::NativeHandle owner, const CompressTask& task) {
+  std::wstring error;
   const bool ok = ShowProgressDialog(owner, L"正在压缩", [&](const arc::ProgressFn& prog) {
-    for (auto& job : jobs) {
-      arc::CompressOptions o = opts;
-      o.archivePath = job.first;
-      if (!arc::Compress(job.second, o, prog, err)) return false;
+    for (const auto& job : task.jobs) {
+      arc::CompressOptions options = task.options;
+      options.archivePath = job.first;
+      if (!arc::Compress(job.second, options, prog, error)) return false;
     }
     return true;
   });
 
   if (!ok) {
-    if (!err.empty()) {
-      ::MessageBoxW(nullptr, (L"压缩失败：\n" + err).c_str(), L"AIZip", MB_OK | MB_ICONERROR);
+    if (!error.empty()) {
+      AiUI::MessageBoxParams params;
+      params.title = L"AIZip";
+      params.message = L"压缩失败：\n" + error;
+      params.icon = AiUI::MessageBoxIcon::kError;
+      AiUI::platform()->showMessageBox(owner, params);
     }
     return;
   }
 
-  // 压缩后删除源文件
-  if (deleteAfter) {
-    for (const auto& src : st.sources) {
+  // 压缩后删除源文件；目录走回收站，保持与资源管理器一致
+  if (task.deleteAfter) {
+    for (const auto& src : task.sources) {
       if (util::IsDirectory(src)) {
-        std::wstring dbl = src;
-        dbl.push_back(L'\0');
-        dbl.push_back(L'\0');
-        SHFILEOPSTRUCTW op{};
-        op.wFunc = FO_DELETE;
-        op.pFrom = dbl.c_str();
-        op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI;
-        ::SHFileOperationW(&op);
+        AiUI::platform()->moveToTrash(src);
       } else {
-        ::DeleteFileW(src.c_str());
+        AiUI::platform()->deleteFile(src);
       }
     }
   }
 
-  if (testAfter) {
-    // 简单校验：重新打开并枚举
+  if (task.testAfter) {
     arc::Archive check;
-    const auto r = check.Open(outPath);
-    if (!r.ok) {
-      ::MessageBoxW(nullptr, L"压缩包测试失败。", L"AIZip", MB_OK | MB_ICONWARNING);
+    const auto result = check.Open(task.outPath);
+    if (!result.ok) {
+      AiUI::MessageBoxParams params;
+      params.title = L"AIZip";
+      params.message = L"压缩包测试失败。";
+      params.icon = AiUI::MessageBoxIcon::kWarning;
+      AiUI::platform()->showMessageBox(owner, params);
     }
   }
-}
-
-LRESULT CALLBACK Proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-  switch (msg) {
-    case WM_CREATE: {
-      g_state = static_cast<DlgState*>(reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams);
-      CreateControls(hwnd);
-      ::SetWindowTextW(::GetDlgItem(hwnd, kIdPath), DefaultArchivePath(*g_state).c_str());
-
-      // 恢复上次格式：前两项走单选，其余走下拉
-      int fmt = g_state->formatIndex;
-      if (fmt < 0 || fmt >= z7::FormatCount()) fmt = 0;
-      SetFormatSelection(hwnd, fmt);
-      {
-        const z7::FormatInfo& fi = z7::Formats()[fmt];
-        ::EnableWindow(::GetDlgItem(hwnd, kIdOptSolid), fi.solidCapable);
-        ::EnableWindow(::GetDlgItem(hwnd, kIdLevel), fi.maxLevel > 0);
-      }
-
-      const int lv = (g_state->levelIndex >= 0 && g_state->levelIndex < kLevelCount)
-                         ? g_state->levelIndex
-                         : 3;
-      ::SendMessageW(::GetDlgItem(hwnd, kIdLevel), CB_SETCURSEL, lv, 0);
-      return 0;
-    }
-
-    case WM_PAINT: {
-      PAINTSTRUCT ps;
-      ::BeginPaint(hwnd, &ps);
-      PaintDialogBackground(hwnd);
-      ::EndPaint(hwnd, &ps);
-      return 0;
-    }
-
-    case WM_ERASEBKGND:
-      return 1;
-
-    case WM_CTLCOLORBTN:
-    case WM_CTLCOLORSTATIC: {
-      HBRUSH b = DialogCtlBrush(msg, reinterpret_cast<HWND>(lParam));
-      if (!b) break;  // 普通按钮交给 DefWindowProc
-      ::SetBkColor(reinterpret_cast<HDC>(wParam), kDialogBg);
-      return reinterpret_cast<LRESULT>(b);
-    }
-
-    case WM_COMMAND: {
-      const int id = LOWORD(wParam);
-      if (!g_state) break;
-      switch (id) {
-        case kIdBrowse:
-          OnBrowse(hwnd, *g_state);
-          return 0;
-        case kIdPassword:
-          OnPassword(hwnd);
-          return 0;
-        case kIdComment:
-          ::MessageBoxW(hwnd, L"压缩包注释暂未支持。", L"AIZip", MB_OK | MB_ICONINFORMATION);
-          return 0;
-        case kIdOk:
-          OnOk(hwnd, *g_state);
-          return 0;
-        case kIdCancel:
-          ::DestroyWindow(hwnd);
-          return 0;
-        case kIdFormatZip:
-        case kIdFormat7z:
-        case kIdFormatOther: {
-          // 三个互斥单选，第三个选中时用下拉框里的当前项
-          if (id == kIdFormatZip) {
-            g_state->formatIndex = 0;
-          } else if (id == kIdFormat7z) {
-            g_state->formatIndex = 1;
-          } else {
-            const int sel = static_cast<int>(
-                ::SendMessageW(::GetDlgItem(hwnd, kIdFormatCombo), CB_GETCURSEL, 0, 0));
-            g_state->formatIndex = 2 + (sel < 0 ? 0 : sel);
-          }
-          SetFormatSelection(hwnd, g_state->formatIndex);
-          SyncFormatUi(hwnd, g_state->formatIndex);
-          return 0;
-        }
-        case kIdFormatCombo:
-          if (HIWORD(wParam) == CBN_SELCHANGE) {
-            const int sel = static_cast<int>(
-                ::SendMessageW(::GetDlgItem(hwnd, kIdFormatCombo), CB_GETCURSEL, 0, 0));
-            if (sel >= 0) {
-              g_state->formatIndex = 2 + sel;
-              SetFormatSelection(hwnd, g_state->formatIndex);
-              SyncFormatUi(hwnd, g_state->formatIndex);
-            }
-          }
-          return 0;
-        case kIdDefault:
-          ReadState(hwnd, *g_state);
-          g_app.settings.compressFormat = NameFor(g_state->formatIndex);
-          g_app.settings.compressLevel = kLevelValues[g_state->levelIndex];
-          g_app.settings.solid = g_state->solid;
-          util::SaveSettings(g_app.settings);
-          ::MessageBoxW(hwnd, L"已保存为默认设置。", L"AIZip", MB_OK | MB_ICONINFORMATION);
-          return 0;
-        default:
-          break;
-      }
-      break;
-    }
-
-    case WM_CLOSE:
-      ::DestroyWindow(hwnd);
-      return 0;
-
-    case WM_DESTROY:
-      g_state = nullptr;
-      return 0;
-
-    default:
-      break;
-  }
-  return ::DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
 }  // namespace
 
-void ShowCompressDialog(HWND owner, const std::vector<std::wstring>& sourcesIn) {
-  static bool registered = false;
-  if (!registered) {
-    registered = RegisterWindowClass(kClass, Proc, g_app.instance, CS_HREDRAW | CS_VREDRAW,
-                                     reinterpret_cast<HBRUSH>(::GetStockObject(WHITE_BRUSH)));
-  }
-
-  DlgState st;
-  st.sources = sourcesIn;
-  // 没有浏览窗口，来源必须由调用方给出
-  if (st.sources.empty()) {
-    ::MessageBoxW(owner, L"没有可压缩的内容。", L"AIZip", MB_OK | MB_ICONINFORMATION);
+void ShowCompressDialog(AiUI::NativeHandle owner, const std::vector<std::wstring>& sources) {
+  if (sources.empty()) {
+    AiUI::MessageBoxParams params;
+    params.title = L"AIZip";
+    params.message = L"没有可压缩的内容。";
+    params.icon = AiUI::MessageBoxIcon::kInfo;
+    AiUI::platform()->showMessageBox(owner, params);
     return;
   }
-  // 从设置里恢复格式名，按名查索引（顺序变了也不会串）
-  st.formatIndex = z7::FormatIndexByName(g_app.settings.compressFormat.c_str());
-  if (st.formatIndex < 0) st.formatIndex = 0;
 
-  // 把 settings 的 x 值反查成下拉索引
-  st.levelIndex = 3;
-  for (int i = 0; i < kLevelCount; ++i) {
-    if (kLevelValues[i] == g_app.settings.compressLevel) {
-      st.levelIndex = i;
-      break;
-    }
-  }
-  st.solid = g_app.settings.solid;
-
-  const int w = g_app.px(456);
-  const int h = g_app.px(384);
-  const RECT dr = DialogRect(owner, w, h);
-
-  HWND dlg = ::CreateWindowExW(WS_EX_DLGMODALFRAME, kClass, L"压缩文件",
-                               WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE, dr.left, dr.top, w,
-                               h, owner, nullptr, g_app.instance, &st);
-  if (!dlg) return;
-
-  ::SetFocus(dlg);
-  RunModalDialog(dlg, owner);
+  DlgCompress dialog(sources);
+  const bool accepted = dialog.runModal(owner, 620, 480);
+  if (accepted && dialog.hasTask()) runCompressTask(owner, dialog.task());
 }
 
 }  // namespace ui

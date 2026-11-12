@@ -1,14 +1,11 @@
-﻿// 应用侧配色：对话框里原生控件的背景色需要单独一份
+﻿// 应用侧配色：对话框底色与 AiUI 主题保持一致
 #pragma once
 
-#include <windows.h>
+#include "AiUI/theme.h"
 
 namespace ui {
 
-// 对话框底色：分量单独给出，供 GDI 刷子与 GDI+ 绘制共用
-constexpr BYTE kDialogR = 240;
-constexpr BYTE kDialogG = 247;
-constexpr BYTE kDialogB = 252;
-constexpr COLORREF kDialogBg = RGB(kDialogR, kDialogG, kDialogB);
+// 对话框底色：比主界面的工具条色略浅，弹窗与主窗口有层次
+constexpr AiUI::Color kDialogBg = AiUI::kColorDialogBg;
 
 }  // namespace ui
