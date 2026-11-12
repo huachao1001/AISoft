@@ -188,7 +188,8 @@ Size GroupBox::onMeasure(const Size& available) {
   const int pad = 12 * d / 96;
   const int titleHeight = titleHeight_ * d / 96;
 
-  const Size inner{(std::max)(0, available.width - pad * 2), (std::max)(0, available.height - pad)};
+  const Size inner{(std::max)(0, available.width - pad * 2),
+                   (std::max)(0, available.height - titleHeight / 2 - pad * 2)};
   int contentHeight = 0;
   int contentWidth = 0;
   for (View* child : children_) {
@@ -197,24 +198,27 @@ Size GroupBox::onMeasure(const Size& available) {
     contentHeight = (std::max)(contentHeight, size.height);
     contentWidth = (std::max)(contentWidth, size.width);
   }
-  return Size{contentWidth + pad * 2, contentHeight + titleHeight + pad};
+  return Size{contentWidth + pad * 2, contentHeight + titleHeight / 2 + pad * 2};
 }
 
 void GroupBox::onPaint(Painter& painter, const Rect& rect) {
   const int d = dpi();
   const int titleHeight = titleHeight_ * d / 96;
 
-  // 边框从标题中线开始，标题压在缺口上；颜色跟着所在容器的底色走
-  const Rect frame{rect.left, rect.top + titleHeight / 2, rect.right, rect.bottom};
-  painter.strokeRoundRect(frame, edgeOn(resolvedBackground(), 15), 6 * d / 96);
+  // 边框顶边就是标题的中线：文字压在缺口上，必须两者严格同心
+  const int lineY = rect.top + titleHeight / 2;
+  const Rect frame{rect.left, lineY, rect.right, rect.bottom};
+  painter.strokeRoundRect(frame, theme().controlBorder, 6 * d / 96);
 
   if (title_.empty()) return;
 
   const int padX = 6 * d / 96;
   const int textWidth = platform()->measureText(title_, fonts.ui);
   const int textHeight = fonts.ui.pixelHeight();
-  const Rect textRect{rect.left + 10 * d / 96, rect.top, rect.left + 10 * d / 96 + textWidth,
-                      rect.top + textHeight};
+  // 以边框线为垂直中心摆放文字；按 rect.top 定位会整体偏上半个标题高
+  const int textTop = lineY - textHeight / 2;
+  const Rect textRect{rect.left + 10 * d / 96, textTop, rect.left + 10 * d / 96 + textWidth,
+                      textTop + textHeight};
   // 先铺底色再写字，盖掉边框那一段
   painter.fillRect(textRect.inset(-padX, 0, -padX, 0), resolvedBackground());
   painter.drawText(textRect, title_, theme().textHead, fonts.ui, TextAlign::kLeft);
@@ -226,7 +230,9 @@ void GroupBox::onLayout(const Rect& frame) {
   const int d = dpi();
   const int pad = 12 * d / 96;
   const int titleHeight = titleHeight_ * d / 96;
-  const Rect inner = clientRect().inset(pad, titleHeight, pad, pad);
+  // 上边距按半高算：边框线压在标题中线，再留 pad 才是内容起点，
+  // 按整高会让内容和标题之间空出一大块
+  const Rect inner = clientRect().inset(pad, titleHeight / 2 + pad, pad, pad);
   arrangeChildren(inner);
 }
 
@@ -289,7 +295,7 @@ void ComboBox::onPaint(Painter& painter, const Rect& rect) {
   const Theme& t = theme();
 
   const Color background = spec_.background != kNoColor ? spec_.background : t.pane;
-  const Color border = spec_.border != kNoColor ? spec_.border : edgeOn(background, 17);
+  const Color border = spec_.border != kNoColor ? spec_.border : t.controlBorder;
   const Color focusBorder = spec_.focusBorder != kNoColor ? spec_.focusBorder : t.inputFocus;
   const Color ink = spec_.ink != kNoColor ? spec_.ink : t.text;
   const Color arrowColor = spec_.arrow != kNoColor ? spec_.arrow : t.textMuted;

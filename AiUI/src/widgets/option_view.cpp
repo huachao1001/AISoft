@@ -27,16 +27,16 @@ void OptionView::onPaint(Painter& painter, const Rect& rect) {
   const int d = dpi();
   const Theme& t = theme();
 
-  const Color ink = spec_.ink != kNoColor ? spec_.ink
-                                          : (isEnabled() ? t.text : t.textFaint);
+  const Color ink =
+      spec_.ink != kNoColor ? spec_.ink : (isEnabled() ? t.text : t.textFaint);
   const Color boxBg = spec_.boxBackground != kNoColor ? spec_.boxBackground : t.pane;
   const Color hoverBg = spec_.hoverBackground != kNoColor ? spec_.hoverBackground : t.hover;
-  const Color accent =
-      isEnabled() ? (spec_.accent != kNoColor ? spec_.accent : t.inputFocus) : edgeOn(boxBg, 8);
-  // 禁用态描边也要跟着底色走，只是更淡：写死浅灰在深色主题上会变成亮线
-  const Color border = !isEnabled()            ? edgeOn(boxBg, 8)
-                        : spec_.boxBorder != kNoColor ? spec_.boxBorder
-                                                      : edgeOn(boxBg, 22);
+  // 强调色只用于选中态；未选中的圈/框用主题的统一描边，
+  // 这样它和输入框、下拉框是同一支灰，不会一个蓝一个灰
+  const Color accent = spec_.accent != kNoColor ? spec_.accent : t.inputFocus;
+  const Color border = spec_.boxBorder != kNoColor  ? spec_.boxBorder
+                       : !isEnabled()               ? edgeOn(boxBg, 8)
+                                                    : t.controlBorder;
   const Color checkInk = spec_.checkInk != kNoColor ? spec_.checkInk : t.pane;
 
   const Rect box = boxRect(rect);
@@ -53,7 +53,8 @@ void OptionView::onPaint(Painter& painter, const Rect& rect) {
     } else if (hot_) {
       painter.fillRoundRect(box, hoverBg, outerRadius);
     }
-    painter.strokeRoundRect(box, accent, outerRadius, ring);
+    // 未选中的圈用统一描边灰，选中的圈用强调色
+    painter.strokeRoundRect(box, spec_.checked ? accent : border, outerRadius, ring);
 
     if (spec_.checked) {
       // 内缩到约半径的一半再填实心，与外圈之间留出一圈空隙
