@@ -41,6 +41,23 @@ void buildRoundPath(GraphicsPath& path, const Rect& rc, int radius) {
   path.CloseFigure();
 }
 
+// 圆角路径（浮点）：描边要落在像素中心，整数矩形表达不了半个像素
+void buildRoundPathF(GraphicsPath& path, const Gdiplus::RectF& rc, float radius) {
+  const float w = rc.Width;
+  const float h = rc.Height;
+  if (radius <= 0.0f || w <= 0.0f || h <= 0.0f) {
+    path.AddRectangle(rc);
+    return;
+  }
+  const float clamped = (std::min)(radius, (std::min)(w, h) * 0.5f);
+  const float d = clamped * 2.0f;
+  path.AddArc(rc.X, rc.Y, d, d, 180.0f, 90.0f);
+  path.AddArc(rc.X + w - d, rc.Y, d, d, 270.0f, 90.0f);
+  path.AddArc(rc.X + w - d, rc.Y + h - d, d, d, 0.0f, 90.0f);
+  path.AddArc(rc.X, rc.Y + h - d, d, d, 90.0f, 90.0f);
+  path.CloseFigure();
+}
+
 Gdiplus::Font* asFont(const Font& font) {
   return static_cast<Gdiplus::Font*>(font.handle());
 }
@@ -65,11 +82,18 @@ class GdiplusBackend : public PaintBackend {
 
   void strokeRoundRect(const Rect& rc, Color color, int radius, int lineWidth) override {
     if (!g_ || rc.isEmpty()) return;
-    const int inset = (std::max)(0, lineWidth / 2);
-    const Rect inner = rc.deflated(inset, inset);
-    if (inner.isEmpty()) return;
+    // 描边以路径为中心线向两侧各展开半个线宽。路径压在整数边界上时，
+    // 1px 描边正好被劈到相邻两行像素、各占一半覆盖率，直边就被摊成浅灰；
+    // 圆弧的覆盖率随弧度变化，反而接近实色，于是圆角看着比直边深。
+    // 把路径向内收半个线宽、落在像素中心，整条描边才会是同一档实色。
+    const float half = static_cast<float>(lineWidth) * 0.5f;
+    const Gdiplus::RectF inner(static_cast<Gdiplus::REAL>(rc.left) + half,
+                               static_cast<Gdiplus::REAL>(rc.top) + half,
+                               static_cast<Gdiplus::REAL>(rc.width()) - half * 2.0f,
+                               static_cast<Gdiplus::REAL>(rc.height()) - half * 2.0f);
+    if (inner.Width <= 0.0f || inner.Height <= 0.0f) return;
     GraphicsPath path;
-    buildRoundPath(path, inner, (std::max)(0, radius - inset));
+    buildRoundPathF(path, inner, static_cast<float>(radius) - half);
     Pen pen(toGdiplus(color), static_cast<REAL>(lineWidth));
     g_->DrawPath(&pen, &path);
   }
