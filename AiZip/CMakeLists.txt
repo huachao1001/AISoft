@@ -32,6 +32,7 @@ add_executable(AiZip WIN32
   src/app/single_instance.cpp
   src/archive/archive.cpp
   src/archive/sevenzip_loader.cpp
+  src/archive/volumes.cpp
   src/ui/ui_main.cpp
   src/ui/main_activity.cpp
   src/ui/file_list_model.cpp
@@ -96,6 +97,7 @@ add_executable(test_arc
   tools/test_arc.cpp
   src/archive/archive.cpp
   src/archive/sevenzip_loader.cpp
+  src/archive/volumes.cpp
   src/common/util.cpp
 )
 target_include_directories(test_arc PRIVATE

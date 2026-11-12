@@ -2,6 +2,7 @@
 
 #include "sevenzip_loader.h"
 #include "util.h"
+#include "volumes.h"
 #include "AiUI/platform.h"
 
 #include <atomic>
@@ -713,15 +714,37 @@ OpenResult Archive::Open(const std::wstring& filePath, const std::wstring& passw
   OpenResult r;
   Close();
 
-  auto fileStream = AiUI::platform()->openFileStream(filePath, false);
-  if (!fileStream) {
-    r.error = L"无法打开文件";
-    return r;
-  }
-
   auto* pwd = new PasswordSource(password, nullptr);
-  auto* inStream = new FileInStream(std::move(fileStream));
   auto* cb = new OpenCallback(pwd);
+
+  // 分卷包（xxx.001）要把各卷拼成一条连续流再交给内核；
+  // 卷路径不连续时只认已存在的连续段，缺卷会在解压时报校验错。
+  z7::IInStream* inStream = nullptr;
+  const std::vector<std::wstring> volumePaths = CollectVolumes(filePath);
+  if (volumePaths.size() > 1) {
+    std::vector<std::unique_ptr<AiUI::FileStream>> streams;
+    streams.reserve(volumePaths.size());
+    for (const std::wstring& path : volumePaths) {
+      auto stream = AiUI::platform()->openFileStream(path, false);
+      if (!stream) {
+        cb->Release();
+        delete pwd;
+        r.error = L"无法打开分卷文件";
+        return r;
+      }
+      streams.push_back(std::move(stream));
+    }
+    inStream = static_cast<z7::IInStream*>(new MultiVolumeInStream(std::move(streams)));
+  } else {
+    auto fileStream = AiUI::platform()->openFileStream(filePath, false);
+    if (!fileStream) {
+      cb->Release();
+      delete pwd;
+      r.error = L"无法打开文件";
+      return r;
+    }
+    inStream = static_cast<z7::IInStream*>(new FileInStream(std::move(fileStream)));
+  }
 
   const std::wstring ext = util::FileExtension(filePath);
   // 按扩展名猜的 handler 打头，其余 handler 依次兜底
@@ -730,7 +753,12 @@ OpenResult Archive::Open(const std::wstring& filePath, const std::wstring& passw
     if (!::IsEqualGUID(g, candidates[0])) candidates.push_back(g);
   }
 
-  const uint64_t size = AiUI::platform()->fileSize(filePath);
+  // 分卷的总长由拼流自己算，不能只看首卷大小
+  uint64_t size = AiUI::platform()->fileSize(filePath);
+  if (volumePaths.size() > 1) {
+    size = 0;
+    for (const std::wstring& path : volumePaths) size += AiUI::platform()->fileSize(path);
+  }
   const uint64_t maxCheck = size > 0 ? size : (1ull << 23);
 
   z7::IInArchive* opened = nullptr;
@@ -739,7 +767,7 @@ OpenResult Archive::Open(const std::wstring& filePath, const std::wstring& passw
     inStream->Seek(0, STREAM_SEEK_SET, nullptr);
     z7::IInArchive* a = z7::CreateInArchive(cls);
     if (!a) continue;
-    if (a->Open(static_cast<z7::IInStream*>(inStream), &maxCheck, cb) == S_OK) {
+    if (a->Open(inStream, &maxCheck, cb) == S_OK) {
       opened = a;
       break;
     }
@@ -855,7 +883,7 @@ bool Archive::IsArchiveFile(const std::wstring& path) {
 // 单次压缩：按 clsId 生成一个容器，来源已是最终待打包列表
 static bool CompressOnce(const std::vector<util::SourceItem>& items, const GUID& cls,
                          const std::wstring& outPath, int level, bool solid,
-                         const std::wstring& password,
+                         const std::wstring& password, uint64_t volumeSize,
                          const ProgressFn& progress, std::wstring& error) {
   z7::IOutArchive* out = z7::CreateOutArchive(cls);
   if (!out) {
@@ -908,39 +936,66 @@ static bool CompressOnce(const std::vector<util::SourceItem>& items, const GUID&
     sp->SetProperties(names.data(), valStore.data(), static_cast<uint32_t>(nameStore.size()));
   }
 
-  auto fileStream = AiUI::platform()->openFileStream(outPath, true);
-  if (!fileStream) {
-    for (auto& pv : valStore) ::PropVariantClear(&pv);
-    if (sp) sp->Release();
-    out->Release();
-    error = L"无法创建压缩包文件";
-    return false;
+  // 分卷时把同一条输出流摊到多个文件；不分卷仍走单文件，行为不变
+  SplitOutStream* split = nullptr;
+  z7::ISequentialOutStream* outStream = nullptr;
+  if (volumeSize > 0) {
+    // 上次可能是不分卷的同名包：主名文件留着会让打开时读到旧内容
+    AiUI::platform()->deleteFile(outPath);
+    // 旧卷可能比新卷多，先全清，否则尾部旧卷会被拼进新包
+    RemoveVolumes(outPath);
+    split = new SplitOutStream(outPath, volumeSize);
+    // 两个引用：一个交给自己持有到函数末尾，一个交给 7-Zip
+    split->AddRef();
+    outStream = static_cast<z7::ISequentialOutStream*>(split);
+  } else {
+    // 上次分卷留下的 .001 起始卷要清掉，否则读取端会拼进旧数据
+    RemoveVolumes(outPath);
+    auto fileStream = AiUI::platform()->openFileStream(outPath, true);
+    if (!fileStream) {
+      for (auto& pv : valStore) ::PropVariantClear(&pv);
+      if (sp) sp->Release();
+      out->Release();
+      error = L"无法创建压缩包文件";
+      return false;
+    }
+    outStream = static_cast<z7::ISequentialOutStream*>(new FileOutStream(std::move(fileStream)));
   }
-  auto* outStream = new FileOutStream(std::move(fileStream));
 
   auto* pwd = new PasswordSource(password, nullptr);
   auto* cb = new UpdateCallback(items, progress, pwd);
   cb->AddRef();
 
-  const HRESULT hr = out->UpdateItems(static_cast<z7::ISequentialOutStream*>(outStream),
-                                      static_cast<uint32_t>(items.size()), cb);
+  const HRESULT hr = out->UpdateItems(outStream, static_cast<uint32_t>(items.size()), cb);
 
   const int errors = cb->ErrorCount();
   const bool canceled = cb->Canceled();
   cb->Release();
   delete pwd;
   outStream->Release();
+  // 卷数必须在 Release 之前取：引用归零会销毁对象
+  const int volumes = split ? split->volumeCount() : 0;
+  if (split) split->Release();
   if (sp) sp->Release();
   out->Release();
   for (auto& pv : valStore) ::PropVariantClear(&pv);
 
+  // 失败时清理已写出的内容：分卷要删全部卷，单文件只删一个
+  auto discard = [&] {
+    if (split) {
+      for (int i = 1; i <= volumes; ++i) AiUI::platform()->deleteFile(VolumePath(outPath, i));
+    } else {
+      AiUI::platform()->deleteFile(outPath);
+    }
+  };
+
   if (canceled) {
-    AiUI::platform()->deleteFile(outPath);
+    discard();
     error = L"操作已取消";
     return false;
   }
   if (hr != S_OK || errors > 0) {
-    AiUI::platform()->deleteFile(outPath);
+    discard();
     error = L"压缩失败";
     return false;
   }
@@ -950,7 +1005,7 @@ static bool CompressOnce(const std::vector<util::SourceItem>& items, const GUID&
 // 把一组来源包成 tar，落在临时文件里，供 TAR.GZ 之类的两阶段压缩使用
 static bool MakeTarStaging(const std::vector<util::SourceItem>& items, const std::wstring& tarPath,
                            std::wstring& error) {
-  return CompressOnce(items, z7::kClsidTar, tarPath, 0, false, L"", nullptr, error);
+  return CompressOnce(items, z7::kClsidTar, tarPath, 0, false, L"", 0, nullptr, error);
 }
 
 bool Compress(const std::vector<std::wstring>& sources, const CompressOptions& opts,
@@ -990,8 +1045,8 @@ bool Compress(const std::vector<std::wstring>& sources, const CompressOptions& o
       it.size = AiUI::platform()->fileSize(tarPath);
       it.modifiedMillis = AiUI::platform()->modifiedTime(tarPath);
       one.push_back(it);
-      ok = CompressOnce(one, cls, opts.archivePath, opts.level, false, opts.password, progress,
-                        error);
+      ok = CompressOnce(one, cls, opts.archivePath, opts.level, false, opts.password,
+                        opts.volumeSize, progress, error);
     }
     AiUI::platform()->deleteFile(tarPath);
     return ok;
@@ -1007,8 +1062,8 @@ bool Compress(const std::vector<std::wstring>& sources, const CompressOptions& o
   }
 
   const int level = (fi && fi->maxLevel == 0) ? 0 : opts.level;
-  return CompressOnce(items, cls, opts.archivePath, level, opts.solid, opts.password, progress,
-                      error);
+  return CompressOnce(items, cls, opts.archivePath, level, opts.solid, opts.password,
+                      opts.volumeSize, progress, error);
 }
 
 }  // namespace arc

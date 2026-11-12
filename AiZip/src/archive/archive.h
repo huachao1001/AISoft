@@ -3,6 +3,7 @@
 
 #include "sevenzip.h"
 
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <vector>
@@ -53,6 +54,9 @@ struct CompressOptions {
   int level = 5;         // 0=存储 1=最快 3=快速 5=标准 7=最大 9=极限
   bool solid = true;     // 仅 7z
   std::wstring formatName;  // 压缩格式显示名（如 L"TAR.GZ"），空=按扩展名推断
+  // 分卷大小（字节）；0 表示不分卷。分卷时输出为 xxx.001、xxx.002……
+  // 7-Zip 内核本身不切卷，切分由外壳的输出流完成。
+  uint64_t volumeSize = 0;
 };
 
 // 打开压缩包，保持句柄供枚举与解压
