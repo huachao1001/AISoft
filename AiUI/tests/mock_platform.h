@@ -216,6 +216,11 @@ class FakePlatform : public AiUI::Platform {
   AiUI::Font createFont(const wchar_t* family, float pointSize, bool bold, int dpi) override;
   void destroyFont(void* handle) override { (void)handle; }
   int measureText(const std::wstring& text, const AiUI::Font& font) override;
+  // 模拟真实后端：字形边界是精确的等宽推进
+  std::vector<int> glyphBounds(const std::wstring& text, const AiUI::Font& font) override;
+  // 模拟真实后端的排版留白：多算的量随文本变长累积，
+  // 谁把它用在光标定位上，长文本的插入点就会被推远
+  int advanceText(const std::wstring& text, const AiUI::Font& font) override;
   AiUI::Image loadImage(const std::wstring& path) override {
     (void)path;
     return AiUI::Image();

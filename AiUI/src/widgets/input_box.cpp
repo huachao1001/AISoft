@@ -82,13 +82,12 @@ const std::vector<int>& InputBox::caretOffsets() const {
 
   const std::vector<int> bounds = platform()->glyphBounds(display, font);
   if (bounds.size() == static_cast<size_t>(n) * 2) {
-    // 字符之间的空隙取「本字右缘到下一字左缘」，光标落在空隙里就压不到字
+    // 每个插入点都取所在字符的布局右缘，中间与末尾同一套坐标。
+    // 末尾不能再退回 advanceText：那是逐前缀反推留白的旧算法，误差随
+    // 文本变长累积，会让末字之后的空隙越拉越大。
     for (int i = 0; i < n; ++i) {
       offsets_[static_cast<size_t>(i) + 1] = bounds[static_cast<size_t>(i) * 2 + 1];
     }
-    // 末字之后没有后续字符，用整串推进补上最后一段
-    offsets_[static_cast<size_t>(n)] =
-        (std::max)(offsets_[static_cast<size_t>(n)], platform()->advanceText(display, font));
   } else {
     // 平台不支持字符边界时退回逐前缀推进
     for (int i = 1; i <= n; ++i) {

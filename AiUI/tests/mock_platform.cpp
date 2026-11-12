@@ -146,6 +146,24 @@ int FakePlatform::measureText(const std::wstring& text, const AiUI::Font& font) 
   return static_cast<int>(text.size()) * charWidth_;
 }
 
+std::vector<int> FakePlatform::glyphBounds(const std::wstring& text, const AiUI::Font& font) {
+  (void)font;
+  std::vector<int> out(text.size() * 2, 0);
+  for (size_t i = 0; i < text.size(); ++i) {
+    out[i * 2] = static_cast<int>(i) * charWidth_;
+    // 留出 1px 字形侧边距，光标落在侧边距里才不会压到墨迹
+    out[i * 2 + 1] = static_cast<int>(i + 1) * charWidth() - 1;
+  }
+  return out;
+}
+
+int FakePlatform::advanceText(const std::wstring& text, const AiUI::Font& font) {
+  (void)font;
+  // 排版留白随文本变长非线性累积，模拟真实后端用 (loose-tight)/2 反推的偏差
+  const int n = static_cast<int>(text.size());
+  return n * charWidth_ + n * n / 4;
+}
+
 // ── ScopedFakePlatform ──
 
 ScopedFakePlatform::ScopedFakePlatform() { AiUI::setPlatformForTesting(&fake_); }
