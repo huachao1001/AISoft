@@ -162,6 +162,8 @@ class ComboBox : public View, public ViewRoot::Overlay {
 
   // 展开状态；宿主要主动收起时调 closePopup()
   bool isPopupOpen() const { return popupOpen_; }
+  // 当前高亮的行；-1 表示没有（供测试与宿主观察悬停状态）
+  int hotRow() const { return hotRow_; }
   void closePopup();
 
   // ── ViewRoot::Overlay ──

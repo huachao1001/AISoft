@@ -51,19 +51,37 @@ int InputBox::textLeft() const {
          (spec_.hasLeadIcon ? (spec_.leadIconSize + spec_.leadIconGap) * d / 96 : 0);
 }
 
+// 文本可视区的右边界（物理像素）。滚动量、裁剪、绘制宽度都以它为界，
+// 不能各处各减一次边距——差几像素就会出现「滚动量够了但末字仍被切」。
+int InputBox::textRight() const {
+  const int d = dpi();
+  const Rect rc = clientRect();
+  return rc.right - spec_.padX * d / 96;
+}
+
+// 插入点竖线宽度（物理像素）。
+// 固定 1px，不随 DPI 放大：GDI+ 的字符单元首尾相接，相邻字形之间的空隙
+// 常常只有 1~2 物理像素；2px 的竖线会把空隙填满、与相邻笔画粘成一根粗黑条，
+// 看上去就像压在字上。系统自身的光标宽度同样是固定 1px。
+int InputBox::caretBarWidth() const {
+  (void)spec_.caretWidth;
+  return 1;
+}
+
 Rect InputBox::textRect() const {
   const Rect rc = clientRect();
   const int d = dpi();
   const int lineHeight = (std::max)(16 * d / 96, fonts.ui.pixelHeight());
   const int top = rc.top + (rc.height() - lineHeight) / 2;
-  // 右侧留 2px，光标贴边时不被圆角裁掉
-  return Rect{textLeft() - scrollX_, top, rc.right - spec_.padX * d / 96 - 2 * d / 96,
-              top + lineHeight};
+  // 右边界与 ensureCaretVisible 共用 textRight()：可视区只有一个来源，
+  // 否则滚动量和裁剪范围会各算一套，末字刚好卡在两者之间被切掉。
+  return Rect{textLeft() - scrollX_, top, textRight(), top + lineHeight};
 }
 
 // 每个插入点的横向偏移（相对文本起点，物理像素）。长度 = 字符数 + 1。
-// 由「每字符精确宽度」累加得出：整串一次排版拿到字符边界，把字间距的
-// 累积误差一次算清，之后每次重绘与点击命中都直接查表。
+// 坐标来源只有一个：后端按「整串一次排版」给出的字符单元边界。绘制
+// （drawTextRun）、占位宽度（advanceText）、插入点（本函数）三者共用
+// 同一套排版，才能保证光标落在字形之间而不是压字或错位。
 const std::vector<int>& InputBox::caretOffsets() const {
   const std::wstring display = displayText();
   const Font& font = fonts.ui;
@@ -79,19 +97,22 @@ const std::vector<int>& InputBox::caretOffsets() const {
   offsetsText_ = display;
   offsetsDpi_ = dpi();
   offsetsFont_ = font.handle();
+  if (n == 0) return offsets_;
+
+  // 排版推进量：既是绘制矩形的宽度依据，也是回退路径下末位插入点的位置
+  const int total = platform()->advanceText(display, font);
 
   const std::vector<int> bounds = platform()->glyphBounds(display, font);
-  // 后端返回的边界要单调递增且总长合理：落后端的实现（如 GDI+ 超过
-  // 32 个范围就整串退化）会给出离谱的坐标，此时不能直接采用，
-  // 否则末位会被当成几百万像素，光标把文本整段推出可视区。
+  // 后端给的边界要能当插入点用：单调不减、不超出整串推进量。
+  // 落后端的实现会返回离谱坐标（整串退化成一个巨大矩形），
+  // 那样插入点会把文本整段推出可视区，必须退回逐前缀测量。
   bool usable = bounds.size() == static_cast<size_t>(n) * 2;
   if (usable) {
-    const int total = platform()->advanceText(display, font);
     int prev = 0;
     for (size_t i = 0; i < bounds.size(); i += 2) {
       const int left = bounds[i];
       const int right = bounds[i + 1];
-      if (right < left || left < prev - 1 || right > total * 2 + 64) {
+      if (right < left || left < prev - 1 || right > total + 2) {
         usable = false;
         break;
       }
@@ -100,9 +121,9 @@ const std::vector<int>& InputBox::caretOffsets() const {
   }
 
   if (usable) {
-    // 每个插入点都取所在字符的布局右缘，中间与末尾同一套坐标。
-    // 末尾不能再退回 advanceText：那是逐前缀反推留白的旧算法，误差随
-    // 文本变长累积，会让末字之后的空隙越拉越大。
+    // 第 i 个插入点 = 第 i 个字符单元的右缘。首字的左缘就是排版原点，
+    // 正常为 0；若后端给了正值（自带左留白）也要跟着走，否则整段偏左。
+    offsets_[0] = (std::max)(0, bounds[0]);
     for (int i = 0; i < n; ++i) {
       offsets_[static_cast<size_t>(i) + 1] = bounds[static_cast<size_t>(i) * 2 + 1];
     }
@@ -111,6 +132,14 @@ const std::vector<int>& InputBox::caretOffsets() const {
     for (int i = 1; i <= n; ++i) {
       offsets_[static_cast<size_t>(i)] =
           platform()->advanceText(display.substr(0, static_cast<size_t>(i)), font);
+    }
+  }
+
+  // 插入点必须单调不减：字形可能略微重叠（负 bearing），若右缘比前一个
+  // 插入点还小，光标会往回跳。夹平后视觉上始终向右推进。
+  for (int i = 1; i <= n; ++i) {
+    if (offsets_[static_cast<size_t>(i)] < offsets_[static_cast<size_t>(i) - 1]) {
+      offsets_[static_cast<size_t>(i)] = offsets_[static_cast<size_t>(i) - 1];
     }
   }
   return offsets_;
@@ -156,18 +185,29 @@ void InputBox::ensureCaretVisible() {
   // 没挂载时没有真实宽度，等布局完成后再校正
   const Rect rc = clientRect();
   if (rc.isEmpty()) return;
-  const int d = dpi();
-  const int available = rc.right - spec_.padX * d / 96 - 2 * d / 96 - textLeft();
-  if (available <= 0) return;
+  // 可用宽度与 textRect() 同一口径：绘制、裁剪、滚动不能各算一套，
+  // 否则末字会刚好落在两种边界之间被切掉。
+  const int avail = textRight() - textLeft();
+  if (avail <= 0) return;
 
   const int caretWidth = caretOffsets()[static_cast<size_t>(std::clamp(caret_, 0, static_cast<int>(text_.size())))];
+  // 光标本体也占宽度：滚动量要把它的宽度算进去，否则插入点会贴着右边界、
+  // 只露一半，看起来像末尾被裁
+  const int caretBar = caretBarWidth();
+  const int limit = (std::max)(0, avail - caretBar);
 
   if (caretWidth - scrollX_ < 0) {
     scrollX_ = caretWidth;
-  } else if (caretWidth - scrollX_ > available) {
-    scrollX_ = caretWidth - available;
+  } else if (caretWidth - scrollX_ > limit) {
+    scrollX_ = caretWidth - limit;
   }
-  scrollX_ = (std::max)(0, scrollX_);
+
+  // 滚动量不能超过内容宽度：文本删短后若沿用旧值，整行会被推到左边界之外，
+  // 看起来就像输入框空了。上限取「内容宽 - 可视宽」，内容放得下时恒为 0。
+  // 内容宽用排版推进量，与绘制矩形的宽度同一口径。
+  const std::wstring shown = displayText();
+  const int contentWidth = platform()->advanceText(shown, fonts.ui);
+  scrollX_ = std::clamp(scrollX_, 0, (std::max)(0, contentWidth - avail));
 }
 
 void InputBox::resetBlink() {
@@ -297,8 +337,7 @@ void InputBox::onPaint(Painter& painter, const Rect& rect) {
   }
 
   // 文本裁剪到输入区，滚动时不会溢出圆角
-  painter.clipRect(Rect{rect.left + spec_.padX * d / 96, rect.top,
-                        rect.right - spec_.padX * d / 96, rect.bottom});
+  painter.clipRect(Rect{rect.left + spec_.padX * d / 96, rect.top, textRight(), rect.bottom});
 
   if (text_.empty()) {
     // 占位提示与光标可以并存：空输入框也要能看见插入点
@@ -309,12 +348,23 @@ void InputBox::onPaint(Painter& painter, const Rect& rect) {
       const int x2 = xForPosition(selectionHigh());
       painter.fillRect(Rect{x1, textArea.top, x2, textArea.bottom}, selBg);
     }
-    painter.drawText(textArea, displayText(), textColor, fonts.ui, TextAlign::kLeft);
+    // 用 drawTextRun 绘制：它与 caretOffsets / advanceText 共用同一套排版，
+    // 排版原点就是 textArea.left，字符单元边界就是插入点位置。
+    // 普通 drawText 会额外补 em/6 留白，光标与字形就会差几个像素。
+    // 矩形宽度取「推进量 + 1」：左对齐时各字形位置只由累计推进决定，右边
+    // 多给 1px 不会移动任何字形，却能保证落在整数边界上的末字不被排掉。
+    // 溢出部分由上面的 clipRect 负责拦。
+    const std::wstring shown = displayText();
+    const int textWidth = platform()->advanceText(shown, fonts.ui);
+    const Rect drawRect{textArea.left, textArea.top, textArea.left + textWidth + 1,
+                        textArea.bottom};
+    painter.drawTextRun(drawRect, shown, textColor, fonts.ui);
   }
 
   if (focused_ && caretVisible_) {
-    // 按 DPI 四舍五入到物理像素：整数除法会让 150% 下的 1 设计像素退化成 1px
-    const int caretW = (std::max)(1, (spec_.caretWidth * d + 48) / 96);
+    // 1px 竖线 + 普通填充：实测 fillRect 在整数坐标下就是单列实色，
+    // 不需要额外的抗锯齿开关。粗细只由 caretBarWidth 决定。
+    const int caretW = caretBarWidth();
     const int x = xForPosition(caret_);
     painter.fillRect(Rect{x, textArea.top, x + caretW, textArea.bottom}, caretColor);
   }
@@ -469,6 +519,17 @@ void InputBox::onWindowActivated(bool active) {
 void InputBox::onTimer() {
   if (!focused_) return;
   caretVisible_ = !caretVisible_;
+  invalidate();
+}
+
+// 布局完成才知道真实可用宽度。setText / setCue 通常在 onCreate 里先于布局调用，
+// 那时 clientRect 为空，ensureCaretVisible 直接返回，滚动量一直停在 0，
+// 长文本就从开头绘制、尾部被裁掉（看着像末尾字符消失）。
+void InputBox::onLayout(const Rect& frame) {
+  (void)frame;
+  ensureCaretVisible();
+  // 尺寸变了插入点画在哪儿也要跟着变
+  if (focused_) updateCaretIme();
   invalidate();
 }
 

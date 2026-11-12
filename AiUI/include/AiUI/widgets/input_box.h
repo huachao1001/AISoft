@@ -72,10 +72,16 @@ class InputBox : public View {
   // 窗口整体失活时收起插入点，逻辑焦点保留
   void onWindowActivated(bool active) override;
   void onTimer() override;
+  // 拿到真实宽度后重新校正滚动：setText 常在布局前调用，那时 clientRect 为空
+  void onLayout(const Rect& frame) override;
 
  private:
   Rect textRect() const;
   int textLeft() const;
+  // 文本可视区右边界：裁剪、绘制宽度、滚动量共用
+  int textRight() const;
+  // 插入点宽度（物理像素），固定 1px
+  int caretBarWidth() const;
   // 每个插入点的横向偏移，按「每字符精确宽度」累加并缓存
   const std::vector<int>& caretOffsets() const;
   // 前 pos 个字符的显示形式：密码模式下统一替换为掩码字符

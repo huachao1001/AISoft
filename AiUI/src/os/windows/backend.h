@@ -58,6 +58,14 @@ class CanvasCache {
 Font makeFont(const wchar_t* family, float pointSize, bool bold, int dpi);
 void releaseFont(void* handle);
 
+// 编辑控件的排版格式：单行、不折行、不裁边、保留尾随空格。
+// 必须在 GenericTypographic 基底上构建：GDI+ 的默认 StringFormat 会在左右
+// 各补 em/6 的排版留白，使「布局原点」不等于「墨迹起点」，光标另算就会错位。
+// 调用方式：
+//   Gdiplus::StringFormat fmt(Gdiplus::StringFormat::GenericTypographic());
+//   applyRunFormat(fmt);
+void applyRunFormat(Gdiplus::StringFormat& fmt);
+
 // ── 图标 ──
 void drawIconGlyph(Gdiplus::Graphics* g, IconId id, const Rect& rc, Color color);
 void releaseIconCaches();

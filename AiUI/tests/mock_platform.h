@@ -17,6 +17,15 @@ using AiUI::Rect;
 using AiUI::Size;
 
 // 一次填充记录，rect 已叠加过当时的平移量
+// 记录调用：输入框的绘制矩形决定尾部字形会不会被 DrawString 吞掉，
+// 测试需要断言它给足了宽度
+struct TextCall {
+  Rect rect;
+  std::wstring text;
+  // true 表示走 drawTextRun（按排版坐标画）：光标定位必须与它同源
+  bool run = false;
+};
+
 struct FillCall {
   Rect rect;
   Color color;
@@ -36,6 +45,9 @@ class RecordingBackend : public AiUI::PaintBackend {
   void drawGradientRoundRect(const Rect& rc, Color top, Color bottom, int radius) override;
   void drawText(const Rect& rc, const std::wstring& text, Color color, const AiUI::Font& font,
                 AiUI::TextAlign align) override;
+  // 输入框改用 drawTextRun 绘制：测试要能区分「按排版坐标画」与普通绘制
+  void drawTextRun(const Rect& rc, const std::wstring& text, Color color,
+                   const AiUI::Font& font) override;
   int measureText(const std::wstring& text, int from, int length, const AiUI::Font& font) override;
   int textHeight(const AiUI::Font& font) override;
   void drawIcon(AiUI::IconId id, const Rect& rc, Color color) override;
@@ -49,7 +61,11 @@ class RecordingBackend : public AiUI::PaintBackend {
   void restore() override;
 
   const std::vector<FillCall>& fills() const { return fills_; }
-  void clear() { fills_.clear(); }
+  const std::vector<TextCall>& texts() const { return texts_; }
+  void clear() {
+    fills_.clear();
+    texts_.clear();
+  }
   int translateX() const { return tx_; }
   int translateY() const { return ty_; }
   // 当前裁剪区，空表示不限
@@ -66,6 +82,7 @@ class RecordingBackend : public AiUI::PaintBackend {
   };
 
   std::vector<FillCall> fills_;
+  std::vector<TextCall> texts_;
   std::vector<State> stack_;
   int tx_ = 0;
   int ty_ = 0;
@@ -152,6 +169,7 @@ class FakeWindow : public AiUI::PlatformWindow {
 
   // 最近一次提交的绘制结果（画布销毁后仍可查）
   const std::vector<FillCall>& lastFills() const { return lastFills_; }
+  const std::vector<TextCall>& lastTexts() const { return lastTexts_; }
   const Rect& lastArea() const { return lastArea_; }
   int lastCommits() const { return lastCommits_; }
   int translateXAfterDraw() const { return lastTranslateX_; }
@@ -182,6 +200,7 @@ class FakeWindow : public AiUI::PlatformWindow {
   // 最近一次提交的快照，避免画布销毁后指针悬空
   RecordingBackend backend_;
   std::vector<FillCall> lastFills_;
+  std::vector<TextCall> lastTexts_;
   Rect lastArea_{};
   int lastCommits_ = 0;
   int lastTranslateX_ = 0;

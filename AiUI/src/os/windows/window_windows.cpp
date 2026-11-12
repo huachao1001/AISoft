@@ -887,6 +887,8 @@ class WindowsPlatform : public Platform {
     return static_cast<int>(bounds.Width + 0.5f) + 4;
   }
 
+  // 编辑控件的占位宽度：与 drawTextRun / glyphBounds 同一套排版。
+  // 这是「排版推进量」，也就是插入点可以到达的最右位置。
   int advanceText(const std::wstring& text, const Font& font) override {
     if (text.empty() || !font.isValid()) return 0;
     auto* g = measureGraphics();
@@ -894,30 +896,17 @@ class WindowsPlatform : public Platform {
     if (!g || !f) return 0;
     const INT n = static_cast<INT>(text.size());
 
-    // 绘制走默认格式，GDI+ 会在左右各补 em/6 的排版留白，墨迹并不从布局左缘起笔。
-    // 插入点必须落在同一坐标系里：少算留白会压住末字，多算又离得太远。
-    Gdiplus::StringFormat drawFormat;
-    drawFormat.SetAlignment(Gdiplus::StringAlignmentNear);
-    drawFormat.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap |
-                              Gdiplus::StringFormatFlagsNoClip |
-                              Gdiplus::StringFormatFlagsMeasureTrailingSpaces);
+    Gdiplus::StringFormat fmt(Gdiplus::StringFormat::GenericTypographic());
+    applyRunFormat(fmt);
     Gdiplus::RectF box(0, 0, static_cast<Gdiplus::REAL>(n + 1) * 4096.0f, 4096.0f);
-    Gdiplus::RectF loose;
-    g->MeasureString(text.c_str(), n, f, box, &drawFormat, &loose);
-
-    // 排版格式无留白，宽度即纯字形推进
-    Gdiplus::StringFormat tight(Gdiplus::StringFormat::GenericTypographic());
-    Gdiplus::RectF narrow;
-    g->MeasureString(text.c_str(), n, f, box, &tight, &narrow);
-
-    // 两种格式只差两侧留白，取差值一半就是左侧那一份
-    const float inset = (loose.Width > narrow.Width) ? (loose.Width - narrow.Width) * 0.5f : 0.0f;
-    return static_cast<int>(inset + narrow.Width + 0.5f);
+    Gdiplus::RectF bounds;
+    if (g->MeasureString(text.c_str(), n, f, box, &fmt, &bounds) != Gdiplus::Ok) return 0;
+    // 向上取整：宁可多给半像素，也不让末字落在矩形外被整个丢掉
+    return static_cast<int>(std::ceil(bounds.Width - 0.001f));
   }
 
-  // 整串一次排版，向 GDI+ 要每字符的布局范围。光标与绘制必须共用这一套
-  // 坐标：逐个前缀去量（advanceText）会把每段各自的排版留白累加进来，
-  // 十几个字符就能偏出几像素，文本越长插入点离末字越远。
+  // 整串一次排版，向 GDI+ 要每字符的布局范围。与 drawTextRun / advanceText
+  // 共用 applyRunFormat：排版原点、字符单元、占位宽度三者同源，插入点才对得上。
   std::vector<int> glyphBounds(const std::wstring& text, const Font& font) override {
     const int n = static_cast<int>(text.size());
     if (n <= 0) return {};
@@ -925,29 +914,26 @@ class WindowsPlatform : public Platform {
     auto* f = static_cast<Gdiplus::Font*>(font.handle());
     if (!g || !f) return {};
 
-    Gdiplus::StringFormat fmt;
-    fmt.SetAlignment(Gdiplus::StringAlignmentNear);
-    fmt.SetLineAlignment(Gdiplus::StringAlignmentCenter);
-    fmt.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap | Gdiplus::StringFormatFlagsNoClip |
-                       Gdiplus::StringFormatFlagsMeasureTrailingSpaces);
-
-    // GDI+ 一次最多接受 32 个可测范围，超出的整串会退化成一个大矩形。
-    // 分段测，段起点用前一段的排布宽度推进，误差只落在段边界上。
+    // GDI+ 一次最多接受 32 个可测范围。超了就分批，但每次都传**整串**、
+    // 用绝对下标取范围——排版只做一次，各批坐标天然同源。
+    // 不能每批只传子串：那样每段都会重新计算左侧留白，批与批之间就漂了。
     constexpr int kMaxRanges = 32;
     std::vector<int> out(static_cast<size_t>(n) * 2, 0);
-    Gdiplus::REAL originX = 0.0f;
     std::vector<Gdiplus::CharacterRange> ranges(kMaxRanges);
     std::vector<Gdiplus::Region> regions(kMaxRanges);
+    // 矩形给足宽高，免得排版折行或裁掉后面的字符
+    const Gdiplus::RectF box(0, 0, static_cast<Gdiplus::REAL>(n + 1) * 4096.0f, 4096.0f);
 
     for (int start = 0; start < n; start += kMaxRanges) {
       const int count = (std::min)(kMaxRanges, n - start);
-      for (int i = 0; i < count; ++i) ranges[static_cast<size_t>(i)] = Gdiplus::CharacterRange(i, 1);
+      Gdiplus::StringFormat fmt(Gdiplus::StringFormat::GenericTypographic());
+      applyRunFormat(fmt);
+      for (int i = 0; i < count; ++i) {
+        ranges[static_cast<size_t>(i)] = Gdiplus::CharacterRange(start + i, 1);
+      }
       fmt.SetMeasurableCharacterRanges(count, ranges.data());
-
-      // 矩形给足宽高，免得排版折行或裁掉后面的字符
-      const Gdiplus::RectF box(0, 0, static_cast<Gdiplus::REAL>(count + 1) * 4096.0f, 4096.0f);
-      if (g->MeasureCharacterRanges(text.c_str() + start, count, f, box, &fmt, count,
-                                    regions.data()) != Gdiplus::Ok) {
+      if (g->MeasureCharacterRanges(text.c_str(), n, f, box, &fmt, count, regions.data()) !=
+          Gdiplus::Ok) {
         return {};
       }
 
@@ -956,15 +942,8 @@ class WindowsPlatform : public Platform {
         // GetBounds 要显式传目标矩形，单参数版本不存在
         if (regions[static_cast<size_t>(i)].GetBounds(&bounds, g) != Gdiplus::Ok) return {};
         const size_t at = static_cast<size_t>(start + i) * 2;
-        out[at] = static_cast<int>(std::lround(originX + bounds.GetLeft()));
-        out[at + 1] = static_cast<int>(std::lround(originX + bounds.GetRight()));
-      }
-
-      // 段的推进量就是本段末字符的布局右缘；最后一段之后不再需要
-      if (start + count < n) {
-        Gdiplus::RectF tail;
-        if (regions[static_cast<size_t>(count) - 1].GetBounds(&tail, g) != Gdiplus::Ok) return {};
-        originX += tail.GetRight();
+        out[at] = static_cast<int>(std::lround(bounds.GetLeft()));
+        out[at + 1] = static_cast<int>(std::lround(bounds.GetRight()));
       }
     }
     return out;

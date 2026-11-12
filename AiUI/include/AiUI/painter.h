@@ -46,6 +46,15 @@ class PaintBackend {
   // 文本绘制：rc 为行框，单行垂直居中
   virtual void drawText(const Rect& rc, const std::wstring& text, Color color, const Font& font,
                         TextAlign align) = 0;
+  // 文本运行绘制：供需要逐字符定位的控件（输入框、编辑器）使用。
+  // 必须与 Platform::glyphBounds / advanceText 用同一套排版，三者坐标才同源：
+  // 排版原点就是 rc.left，字符单元边界就是插入点位置。
+  // 后端未单独实现时退回普通绘制，普通绘制的留白会让插入点错位，
+  // 所以有编辑功能的平台必须覆盖它。
+  virtual void drawTextRun(const Rect& rc, const std::wstring& text, Color color,
+                           const Font& font) {
+    drawText(rc, text, color, font, TextAlign::kLeft);
+  }
   virtual int measureText(const std::wstring& text, int from, int length, const Font& font) = 0;
   virtual int textHeight(const Font& font) = 0;
 
@@ -133,6 +142,13 @@ class Painter {
     return backend_.measureText(text, 0, static_cast<int>(text.size()), font);
   }
   int textHeight(const Font& font) { return backend_.textHeight(font); }
+
+  // 按排版坐标绘制文本：原点即 rc.left，不加左右留白。
+  // 光标/选区定位必须与它配合，否则会整体偏移半个留白。
+  void drawTextRun(const Rect& rc, const std::wstring& text, Color color, const Font& font) {
+    if (text.empty() || rc.isEmpty()) return;
+    backend_.drawTextRun(rc, text, color, font);
+  }
 
   // ── 图标与图片 ──
   void drawIcon(IconId id, const Rect& rc, Color color) { backend_.drawIcon(id, rc, color); }

@@ -34,11 +34,18 @@ void RecordingBackend::drawGradientRoundRect(const Rect& rc, Color top, Color bo
 
 void RecordingBackend::drawText(const Rect& rc, const std::wstring& text, Color color,
                                 const AiUI::Font& font, AiUI::TextAlign align) {
-  (void)rc;
-  (void)text;
   (void)color;
   (void)font;
   (void)align;
+  texts_.push_back(TextCall{map(rc), text});
+}
+
+void RecordingBackend::drawTextRun(const Rect& rc, const std::wstring& text, Color color,
+                                   const AiUI::Font& font) {
+  (void)color;
+  (void)font;
+  // 同一条记录通道：既有测试按 text 查找，新增的 run 标记用于区分绘制方式
+  texts_.push_back(TextCall{map(rc), text, true});
 }
 
 int RecordingBackend::measureText(const std::wstring& text, int from, int length,
@@ -108,6 +115,7 @@ std::unique_ptr<AiUI::Canvas> FakeWindow::createCanvas(const Rect& area) {
 
 void FakeWindow::recordCommit(const RecordingBackend& backend, const Rect& area, int commits) {
   lastFills_ = backend.fills();
+  lastTexts_ = backend.texts();
   lastArea_ = area;
   lastCommits_ = commits;
   lastTranslateX_ = backend.translateX();
@@ -165,18 +173,20 @@ std::vector<int> FakePlatform::glyphBounds(const std::wstring& text, const AiUI:
     return out;
   }
   for (size_t i = 0; i < text.size(); ++i) {
+    // 与真实 GDI+ 一致：字符单元首尾严格相接（实测接缝恒为 0）。
+    // 不要人为留侧边距——那会让「点击命中」与「光标绘制」错开半个字，
+    // 也是真实界面里光标贴字的错误模型来源。
     out[i * 2] = static_cast<int>(i) * charWidth_;
-    // 留出 1px 字形侧边距，光标落在侧边距里才不会压到墨迹
-    out[i * 2 + 1] = static_cast<int>(i + 1) * charWidth() - 1;
+    out[i * 2 + 1] = static_cast<int>(i + 1) * charWidth_;
   }
   return out;
 }
 
 int FakePlatform::advanceText(const std::wstring& text, const AiUI::Font& font) {
   (void)font;
-  // 排版留白随文本变长非线性累积，模拟真实后端用 (loose-tight)/2 反推的偏差
-  const int n = static_cast<int>(text.size());
-  return n * charWidth_ + n * n / 4;
+  // 与 glyphBounds 同源：真实后端现在用同一套排版量「占位宽度」和「字符单元」，
+  // 两者必须一致，否则末位插入点会脱离字形。
+  return static_cast<int>(text.size()) * charWidth_;
 }
 
 // ── ScopedFakePlatform ──

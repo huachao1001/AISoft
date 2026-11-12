@@ -440,6 +440,17 @@ bool ComboBox::onOverlayMouseDown(const Point& windowPoint) {
 }
 
 bool ComboBox::onOverlayMouseMove(const Point& windowPoint) {
+  // 只接管浮层范围内的鼠标：列表展开时鼠标仍可能移到标题栏按钮上，
+  // 这里无条件返回 true 会让那些区域收不到悬停，关闭按钮就永远不变红。
+  // 范围外交回 ViewRoot 走正常命中，悬停与光标照常工作。
+  if (!popupWindowRect().contains(windowPoint)) {
+    if (hotRow_ != -1) {
+      hotRow_ = -1;
+      if (root()) root()->invalidateRect(overlayBounds());
+    }
+    return false;
+  }
+
   const int row = popupRowAt(windowPoint);
   if (row != hotRow_) {
     hotRow_ = row;

@@ -716,6 +716,93 @@ AIUI_TEST(input_box_falls_back_when_glyph_bounds_are_broken) {
   AIUI_CHECK(caretRight <= box->bounds().right);
 }
 
+// DrawString 按传入矩形排版，矩形比整串窄就会把尾部字形（如 ".gz"）吞掉。
+// 可视范围另有 clipRect 负责，所以绘制矩形必须按整串推进给足。
+AIUI_TEST(input_box_draw_rect_fits_whole_text) {
+  TestEnv env;
+  auto root = std::make_unique<LinearLayout>(Orientation::kVertical);
+  auto* box = new InputBox();
+  root->addView(box, LayoutParams{}.withSize(LayoutParams::kMatchParent, 34));
+  AIUI_CHECK(root->create(nullptr, Rect{0, 0, 120, 34}));
+  root->root()->requestFocus(box);
+
+  // 文本明显宽于控件：靠滚动显示尾部，绘制矩形仍要够宽
+  const std::wstring text = L"F:\\AISoft\\build_tmp\\a-rather-long-file-name.tar.gz";
+  box->setText(text);
+  root->root()->onExpose(Rect{0, 0, 120, 34});
+
+  // 用平台自己的度量口径作为下限：宽度给不够时 DrawString 会吞掉尾部字形
+  const AiUI::Font font = env.fake.platform().createFont(L"Microsoft YaHei UI", 10.0f, false, 96);
+  const int textWidth = env.fake.platform().advanceText(text, font);
+
+  bool found = false;
+  for (const TextCall& call : env.fake.platform().lastWindow()->lastTexts()) {
+    if (call.text != text) continue;
+    found = true;
+    // 必须走 drawTextRun：普通 drawText 会补 em/6 留白，光标就与字形错位
+    AIUI_CHECK(call.run);
+    AIUI_CHECK(call.rect.width() >= textWidth);
+  }
+  AIUI_CHECK(found);
+}
+
+// 长文本删短后滚动量必须归零，否则文本整体停在左侧之外，输入框看起来像空的。
+// 这是「切换格式后后缀消失」的另一种成因：scrollX_ 只增不减。
+AIUI_TEST(input_box_scroll_resets_when_text_shrinks) {
+  TestEnv env;
+  auto root = std::make_unique<LinearLayout>(Orientation::kVertical);
+  auto* box = new InputBox();
+  root->addView(box, LayoutParams{}.withSize(LayoutParams::kMatchParent, 34));
+  AIUI_CHECK(root->create(nullptr, Rect{0, 0, 200, 300}));
+  root->root()->requestFocus(box);
+
+  const std::wstring longText = L"C:\\Temp\\a_very_long_file_name_for_scroll_test.tar.bz2";
+  box->setText(longText);
+  root->root()->onExpose(Rect{0, 0, 200, 300});
+
+  // 换成放得下的短文本：滚过的那段必须收回
+  const std::wstring shortText = L"ab.zip";
+  box->setText(shortText);
+  root->root()->onExpose(Rect{0, 0, 200, 300});
+
+  int textLeft = -1;
+  for (const TextCall& call : env.fake.platform().lastWindow()->lastTexts()) {
+    if (call.text == shortText) textLeft = call.rect.left;
+  }
+  AIUI_CHECK(textLeft >= 0);
+  // 文本左边界必须落在输入框内侧（未发生滚动）
+  AIUI_CHECK(textLeft > 0);
+  AIUI_CHECK(textLeft < box->bounds().center().x);
+}
+
+// setText 常在布局之前调用（onCreate 里设置初始值），那时 clientRect 为空，
+// ensureCaretVisible 会直接返回。宽度变化后若不重新校正，scrollX_ 停在旧值，
+// 长文本从开头绘制、尾部被裁掉，看着就像末尾几个字消失了。
+AIUI_TEST(input_box_scrolls_when_width_shrinks) {
+  TestEnv env;
+  auto root = std::make_unique<LinearLayout>(Orientation::kVertical);
+  auto* box = new InputBox();
+  root->addView(box, LayoutParams{}.withSize(LayoutParams::kMatchParent, 34));
+
+  // 宽窗口下放入长文本：整串放得下，滚动量为 0
+  const std::wstring text = L"F:\\AISoft\\build_tmp\\a-rather-long-file-name.tar.gz";
+  box->setText(text);
+  AIUI_CHECK(root->create(nullptr, Rect{0, 0, 600, 200}));
+  root->root()->requestFocus(box);
+
+  // 收窄到放不下整串：必须由 onLayout 重新校正滚动，
+  // 否则光标留在原处跑到输入框外
+  box->setBounds(Rect{0, 0, 120, 34});
+  root->root()->onExpose(Rect{0, 0, 600, 200});
+
+  int caretRight = -1;
+  for (const FillCall& fill : env.fake.platform().lastWindow()->lastFills()) {
+    if (fill.rect.width() <= 2 && fill.rect.height() > 10) caretRight = fill.rect.right;
+  }
+  AIUI_CHECK(caretRight > 0);
+  AIUI_CHECK(caretRight <= box->bounds().right);
+}
+
 AIUI_TEST(input_box_draws_caret_when_empty) {
   TestEnv env;
   auto root = std::make_unique<LinearLayout>(Orientation::kVertical);
@@ -734,6 +821,152 @@ AIUI_TEST(input_box_draws_caret_when_empty) {
   }
   AIUI_CHECK(caret);
 }
+
+// 插入点必须与绘制同源：文本绘制的左边界（drawTextRun 的 rect.left）
+// 就是插入点 0 的原点，两者差一个像素都会让光标整体压字或离字太远。
+// 这条同时钉住「绘制必须走 drawTextRun 而不是会补留白的 drawText」。
+AIUI_TEST(input_box_caret_aligned_with_text_origin) {
+  TestEnv env;
+  auto root = std::make_unique<LinearLayout>(Orientation::kVertical);
+  auto* box = new InputBox();
+  root->addView(box, LayoutParams{}.withSize(LayoutParams::kMatchParent, 34));
+  AIUI_CHECK(root->create(nullptr, Rect{0, 0, 400, 300}));
+  root->root()->requestFocus(box);
+
+  const std::wstring text = L"C:\\T\\a_really_long_file_name_for_testing.gz";
+  box->setText(text);
+  root->root()->onExpose(Rect{0, 0, 400, 300});
+
+  FakeWindow* window = env.fake.platform().lastWindow();
+
+  // 文本绘制的排版原点
+  int textLeft = -1;
+  for (const TextCall& call : window->lastTexts()) {
+    if (call.text != text) continue;
+    AIUI_CHECK(call.run);
+    textLeft = call.rect.left;
+  }
+  AIUI_CHECK(textLeft > 0);
+
+  // 光标移到开头：插入点必须落在排版原点上（光标条左缘 == 文本左缘）
+  AIUI_CHECK(box->dispatchKeyDown(Key::kHome, Modifiers{}));
+  root->root()->onExpose(Rect{0, 0, 400, 300});
+  int caretLeft = -1;
+  for (const FillCall& fill : window->lastFills()) {
+    if (fill.rect.width() <= 2 && fill.rect.height() > 10) caretLeft = fill.rect.left;
+  }
+  AIUI_CHECK(caretLeft == textLeft);
+}
+
+// 文本长度任意变化后，插入点都必须落在「文本绘制范围」之内。
+// 这是输入框最基本的能力：光标永远可见、永远不落后于字形。
+AIUI_TEST(input_box_caret_never_leaves_text_run) {
+  TestEnv env;
+  auto root = std::make_unique<LinearLayout>(Orientation::kVertical);
+  auto* box = new InputBox();
+  root->addView(box, LayoutParams{}.withSize(LayoutParams::kMatchParent, 34));
+  AIUI_CHECK(root->create(nullptr, Rect{0, 0, 400, 300}));
+  root->root()->requestFocus(box);
+
+  const std::vector<std::wstring> samples = {
+      L"a",
+      L"ab",
+      L"a_really_long_file_name_for_testing.gz",
+      L"C:\\Users\\chaohua\\AppData\\Local\\Temp\\opencode\\lt\\a_really_long_name.tar.bz2",
+  };
+  for (const std::wstring& text : samples) {
+    box->setText(text);
+    root->root()->onExpose(Rect{0, 0, 400, 300});
+    FakeWindow* window = env.fake.platform().lastWindow();
+
+    int textRight = -1;
+    for (const TextCall& call : window->lastTexts()) {
+      if (call.text != text) continue;
+      textRight = call.rect.right;
+    }
+    AIUI_CHECK(textRight > 0);
+
+    // 末尾插入点：光标必须在文本绘制范围之内，且不越出控件
+    AIUI_CHECK(box->dispatchKeyDown(Key::kEnd, Modifiers{}));
+    root->root()->onExpose(Rect{0, 0, 400, 300});
+    int caretRight = -1;
+    for (const FillCall& fill : window->lastFills()) {
+      if (fill.rect.width() <= 2 && fill.rect.height() > 10) caretRight = fill.rect.right;
+    }
+    AIUI_CHECK(caretRight > 0);
+    AIUI_CHECK(caretRight <= box->bounds().right);
+    AIUI_CHECK(caretRight <= textRight);
+  }
+}
+
+// 点击命中与光标位置必须互为逆运算：点在第 i 个字上，光标就落在第 i 个插入点；
+// 再把光标画出来，必须落在点击处附近。两条路径若各用一套度量，输入框就会出现
+// 「点这里、光标跳到别处」——用户感觉是输入框不可靠。
+AIUI_TEST(input_box_click_and_caret_are_inverse) {
+  TestEnv env;
+  auto root = std::make_unique<LinearLayout>(Orientation::kVertical);
+  auto* box = new InputBox();
+  root->addView(box, LayoutParams{}.withSize(LayoutParams::kMatchParent, 34));
+  AIUI_CHECK(root->create(nullptr, Rect{0, 0, 400, 300}));
+  root->root()->requestFocus(box);
+
+  const std::wstring text = L"a_really_long_file_name_for_testing.gz";
+  box->setText(text);
+  root->root()->onExpose(Rect{0, 0, 400, 300});
+
+  const int textLeft = 11;  // InputSpec::padX 默认值（96 DPI 下不缩放）
+  const int charWidth = env.fake.platform().charWidth();
+
+  // 逐个字符位置点一次，光标必须回到同一下标：命中与绘制共用偏移表。
+  // 点在字符右侧 3/4 处：与左右两个插入点距离不等，命中结果唯一。
+  const int n = static_cast<int>(text.size());
+  for (int i = 0; i < n; ++i) {
+    const int clickX = textLeft + i * charWidth + charWidth * 3 / 4;
+    AIUI_CHECK(box->dispatchMouseDown(mouseAt(clickX, box->bounds().center().y, MouseButton::kLeft)));
+    box->dispatchMouseUp(mouseAt(clickX, box->bounds().center().y, MouseButton::kLeft));
+    root->root()->onExpose(Rect{0, 0, 400, 300});
+
+    int caretRight = -1;
+    for (const FillCall& fill : env.fake.platform().lastWindow()->lastFills()) {
+      if (fill.rect.width() <= 2 && fill.rect.height() > 10) caretRight = fill.rect.right;
+    }
+    // 点在第 i 个字符右半侧，光标落在该字符右缘。
+    // 光标条宽 1px，所以 rect.right = 插入点坐标 + 1。
+    AIUI_CHECK(caretRight == textLeft + (i + 1) * charWidth + 1);
+  }
+
+  // 点在文本之后（右侧留白里）：光标必须吸附到末位，而不是越界
+  AIUI_CHECK(box->dispatchMouseDown(
+      mouseAt(textLeft + (n + 5) * charWidth, box->bounds().center().y, MouseButton::kLeft)));
+  box->dispatchMouseUp(
+      mouseAt(textLeft + (n + 5) * charWidth, box->bounds().center().y, MouseButton::kLeft));
+  root->root()->onExpose(Rect{0, 0, 400, 300});
+  int endCaret = -1;
+  for (const FillCall& fill : env.fake.platform().lastWindow()->lastFills()) {
+    if (fill.rect.width() <= 2 && fill.rect.height() > 10) endCaret = fill.rect.right;
+  }
+  AIUI_CHECK(endCaret == textLeft + n * charWidth + 1);
+}
+
+// 光标本体必须恒为 1 物理像素：GDI+ 的字符单元首尾相接，字间空隙常常只有
+// 1~2 像素，2px 的竖线会把空隙填满、和相邻笔画粘成一根粗条，看着就像压字。
+AIUI_TEST(input_box_caret_bar_is_hairline) {
+  TestEnv env;
+  auto root = std::make_unique<LinearLayout>(Orientation::kVertical);
+  auto* box = new InputBox();
+  root->addView(box, LayoutParams{}.withSize(LayoutParams::kMatchParent, 34));
+  AIUI_CHECK(root->create(nullptr, Rect{0, 0, 400, 300}));
+  root->root()->requestFocus(box);
+
+  box->setText(L"abcdef");
+  root->root()->onExpose(Rect{0, 0, 400, 300});
+
+  // 文本行高 > 10 而宽度为 1 的填充只有光标杆；背景/边框/选区都更宽
+  int caretWidth = -1;
+  for (const FillCall& fill : env.fake.platform().lastWindow()->lastFills()) {
+    if (fill.rect.width() == 1 && fill.rect.height() > 10) caretWidth = fill.rect.width();
+  }
+  AIUI_CHECK(caretWidth == 1);}
 
 // ───────────────────────── 失焦与背景 ─────────────────────────
 
@@ -1196,6 +1429,32 @@ AIUI_TEST(combo_popup_stays_inside_client_area) {
   const Rect popup = combo->overlayBounds();
   AIUI_CHECK(popup.top >= client.top);
   AIUI_CHECK(popup.bottom <= client.bottom);
+}
+
+// 浮层只该接管自己范围内的鼠标。列表展开时鼠标移到标题栏按钮上，
+// 若浮层无条件消费 move，那些区域就永远收不到悬停，关闭按钮不会变红。
+AIUI_TEST(combo_popup_does_not_swallow_hover_outside) {
+  TestEnv env;
+  auto root = std::make_unique<LinearLayout>(Orientation::kVertical);
+  auto* combo = new ComboBox();
+  combo->setItems({L"一", L"二", L"三"});
+  root->addView(combo, LayoutParams{}.withSize(180, 30));
+  AIUI_CHECK(root->create(nullptr, Rect{0, 0, 400, 300}));
+
+  ViewRoot* viewRoot = root->root();
+  viewRoot->onMouseDown(mouseAt(20, 15, MouseButton::kLeft));
+  AIUI_CHECK(combo->isPopupOpen());
+
+  const Point outside{350, 250};
+  AIUI_CHECK(!combo->overlayBounds().contains(outside));
+  // 范围外必须放行，ViewRoot 才能把悬停交给下面的控件
+  AIUI_CHECK(!combo->onOverlayMouseMove(outside));
+  // 范围外移动不该在列表里留下高亮行
+  AIUI_CHECK(combo->hotRow() == -1);
+
+  // 范围内仍由浮层接管
+  const Rect popup = combo->overlayBounds();
+  AIUI_CHECK(combo->onOverlayMouseMove(Point{popup.left + 10, popup.top + 5}));
 }
 
 // ───────────────────────── 事件冒泡 ─────────────────────────

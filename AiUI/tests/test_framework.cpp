@@ -33,6 +33,9 @@ std::string narrow(const std::wstring& text) {
 int main() {
   using namespace aiui_test;
 
+  // 无缓冲：崩溃时已跑过的用例不会随缓冲区一起丢失
+  std::setvbuf(stdout, nullptr, _IONBF, 0);
+
   int failed = 0;
   int total = 0;
   for (const TestCase& test : registry()) {

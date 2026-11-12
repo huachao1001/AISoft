@@ -62,6 +62,23 @@ Gdiplus::Font* asFont(const Font& font) {
   return static_cast<Gdiplus::Font*>(font.handle());
 }
 
+}  // namespace
+
+// 编辑控件的排版格式：单行、不折行、不裁边、保留尾随空格。
+// 必须先以 GenericTypographic 为基底再调用（无排版留白），否则 GDI+ 默认
+// 会在左右各补 em/6，使布局原点与墨迹起点不一致，光标就整体偏移。
+void applyRunFormat(Gdiplus::StringFormat& fmt) {
+  fmt.SetFormatFlags(static_cast<StringFormatFlags>(
+      StringFormatFlagsNoWrap | StringFormatFlagsNoClip | StringFormatFlagsNoFitBlackBox |
+      StringFormatFlagsMeasureTrailingSpaces));
+  fmt.SetAlignment(StringAlignmentNear);
+  fmt.SetLineAlignment(StringAlignmentCenter);
+  fmt.SetTrimming(StringTrimmingNone);
+  fmt.SetHotkeyPrefix(HotkeyPrefixNone);
+}
+
+namespace {
+
 class GdiplusBackend : public PaintBackend {
  public:
   explicit GdiplusBackend(Graphics* g) : g_(g) {}
@@ -131,6 +148,26 @@ class GdiplusBackend : public PaintBackend {
 
     SolidBrush brush(toGdiplus(color));
     g_->SetTextRenderingHint(TextRenderingHintClearTypeGridFit);
+    g_->DrawString(text.c_str(), static_cast<INT>(text.size()), f,
+                   RectF(static_cast<REAL>(rc.left), static_cast<REAL>(rc.top),
+                         static_cast<REAL>(rc.width()), static_cast<REAL>(rc.height())),
+                   &fmt, &brush);
+  }
+
+  // 与 glyphBounds / advanceText 用同一套排版格式：排版原点即 rc.left，
+  // 字符单元边界即插入点。普通 drawText 会额外补 em/6 留白，光标需另算，
+  // 两套坐标一旦混用就整体错位。
+  void drawTextRun(const Rect& rc, const std::wstring& text, Color color,
+                   const Font& font) override {
+    Gdiplus::Font* f = asFont(font);
+    if (!g_ || !f || text.empty() || rc.isEmpty()) return;
+
+    StringFormat fmt(StringFormat::GenericTypographic());
+    applyRunFormat(fmt);
+    SolidBrush brush(toGdiplus(color));
+    g_->SetTextRenderingHint(TextRenderingHintClearTypeGridFit);
+    // 矩形给足宽度：DrawString 按传入矩形排版，窄了尾部字形直接不画。
+    // 可视范围由调用方的 clip 控制，这里放宽不会溢出控件。
     g_->DrawString(text.c_str(), static_cast<INT>(text.size()), f,
                    RectF(static_cast<REAL>(rc.left), static_cast<REAL>(rc.top),
                          static_cast<REAL>(rc.width()), static_cast<REAL>(rc.height())),

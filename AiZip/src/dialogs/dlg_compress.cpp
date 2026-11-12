@@ -132,7 +132,7 @@ void DlgCompress::onCreate() {
   setTitle(L"压缩文件");
   // 高度按「格式下拉展开」留足：那个列表有 8 项，展开约 360px，
   // 太矮会直接顶出窗口。再高则在列表与按钮之间留大片空白。
-  setMinSize(520, 430);
+  setMinSize(520, 300);
 
   // ── 初始状态：从设置恢复格式、档位、固实 ──
   int format = z7::FormatIndexByName(g_app.settings.compressFormat.c_str());
@@ -445,7 +445,7 @@ void ShowCompressDialog(AiUI::NativeHandle owner, const std::vector<std::wstring
   }
 
   DlgCompress dialog(sources);
-  const bool accepted = dialog.runModal(owner, 520, 430);
+  const bool accepted = dialog.runModal(owner, 520, 300);
   if (accepted && dialog.hasTask()) runCompressTask(owner, dialog.task());
 }
 
