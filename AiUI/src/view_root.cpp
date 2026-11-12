@@ -1,6 +1,8 @@
 // ViewRoot 实现：唯一窗口、按更新区重绘、事件坐标转换、焦点与捕获
 #include "AiUI/view_root.h"
 
+#include "AiUI/events/event_dispatcher.h"
+
 #include "AiUI/theme.h"
 #include "AiUI/view_group.h"
 
@@ -410,7 +412,11 @@ void ViewRoot::onMouseDown(const MouseEvent& e) {
   }
 
   pressed_ = target;
-  target->dispatchMouseDown(localEvent(target, e));
+  // 捕获 → 目标 → 冒泡：容器能在捕获阶段拦下，控件消费后不再外传
+  EventDispatcher dispatcher(pathFromRoot(target), e);
+  dispatcher.dispatchMouseDown();
+  // 按下被容器拦下时，后续 up/move 要回到容器而不是原来的叶子
+  if (View* handler = dispatcher.handler()) pressed_ = handler;
 }
 
 bool ViewRoot::isDescendantOf(const View* view, const View* ancestor) const {
@@ -423,7 +429,11 @@ bool ViewRoot::isDescendantOf(const View* view, const View* ancestor) const {
 void ViewRoot::onMouseUp(const MouseEvent& e) {
   // 抬起必须回到按下的那个视图：即使没开捕获，拖出控件外松手也能正确结束
   View* target = capture_ ? capture_ : (pressed_ ? pressed_ : hitTest(e.position));
-  if (target) target->dispatchMouseUp(localEvent(target, e));
+  if (target) {
+    // 抬起也用同一套冒泡：容器要能收到 up 才会复位拖动状态
+    EventDispatcher dispatcher(pathFromRoot(target), e);
+    dispatcher.dispatchMouseUp();
+  }
 
   pressed_ = nullptr;
   if (capture_) {
@@ -448,7 +458,8 @@ void ViewRoot::onMouseMove(const MouseEvent& e) {
   View* target = hitTest(e.position);
   setHovered(target, &e);
   if (target) {
-    target->dispatchMouseMove(localEvent(target, e));
+    EventDispatcher dispatcher(pathFromRoot(target), e);
+    dispatcher.dispatchMouseMove();
     window_->setCursorShape(target->cursorShape());
   } else if (window_) {
     window_->setCursorShape(CursorShape::kArrow);
@@ -465,20 +476,23 @@ void ViewRoot::onMouseLeave() {
 void ViewRoot::onMouseWheel(const MouseEvent& e) {
   View* target = hitTest(e.position);
   if (!target) return;
-  // 命中的视图不消费就向上冒泡，让外层滚动容器接手
-  for (View* view = target; view; view = view->parent()) {
-    if (view->dispatchMouseWheel(localEvent(view, e))) return;
-  }
+  // 滚轮同样走冒泡：命中视图不消费就交给外层滚动容器
+  EventDispatcher dispatcher(pathFromRoot(target), e);
+  dispatcher.dispatchMouseWheel();
 }
 
 void ViewRoot::onDoubleClick(const MouseEvent& e) {
-  if (View* target = hitTest(e.position)) target->dispatchDoubleClick(localEvent(target, e));
+  if (View* target = hitTest(e.position)) {
+    EventDispatcher dispatcher(pathFromRoot(target), e);
+    dispatcher.dispatchDoubleClick();
+  }
 }
 
 void ViewRoot::onContextMenu(const MouseEvent& e) {
   // 空白处命中的是容器自身，所以空列表区同样能弹菜单
   if (View* target = hitTest(e.position)) {
-    target->dispatchContextMenu(localEvent(target, e));
+    EventDispatcher dispatcher(pathFromRoot(target), e);
+    dispatcher.dispatchContextMenu();
   }
 }
 

@@ -290,6 +290,23 @@ void View::dispatchMouseUp(const MouseEvent& e) {
   if (onMouseUpFn_) onMouseUpFn_(e);
 }
 
+// ── 捕获阶段：容器在子视图之前拿到事件，返回 true 表示拦下 ──
+
+bool View::dispatchInterceptMouseDown(const MouseEvent& e) {
+  if (!enabled_) return false;
+  return onInterceptMouseDown(e);
+}
+
+bool View::dispatchInterceptMouseMove(const MouseEvent& e) {
+  if (!enabled_) return false;
+  return onInterceptMouseMove(e);
+}
+
+bool View::dispatchInterceptMouseUp(const MouseEvent& e) {
+  if (!enabled_) return false;
+  return onInterceptMouseUp(e);
+}
+
 void View::dispatchMouseMove(const MouseEvent& e) {
   onMouseMove(e);
   if (onMouseMoveFn_) onMouseMoveFn_(e);

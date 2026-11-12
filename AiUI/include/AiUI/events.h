@@ -13,11 +13,36 @@ struct Modifiers {
   bool alt = false;
 };
 
+// 一次事件在视图树里的传播状态。由分发器创建，事件对象持指针。
+// 控件处理完后调用 stopPropagation()，外层容器就不会再收到该事件——
+// 与 Android 的「消费即不再上报」一致。
+struct EventState {
+  bool handled = false;
+  bool stopped = false;
+
+  void markHandled() { handled = true; }
+  void stop() {
+    handled = true;
+    stopped = true;
+  }
+};
+
 struct MouseEvent {
-  Point position;  // 控件客户区坐标
+  Point position;  // 当前接收视图的局部坐标
   MouseButton button = MouseButton::kNone;
   int wheelDelta = 0;  // 一格为 120
   Modifiers modifiers;
+  // 分发器注入；控件据此中断冒泡。不属于用户构造的事件，默认空。
+  EventState* propagation = nullptr;
+
+  // 消费事件并阻止继续向外层冒泡
+  void stopPropagation() const {
+    if (propagation) propagation->stop();
+  }
+  // 只标记已处理，仍允许继续冒泡
+  void markHandled() const {
+    if (propagation) propagation->markHandled();
+  }
 };
 
 // 鼠标指针形状

@@ -1021,3 +1021,131 @@ AIUI_TEST(combo_popup_closes_when_clicking_outside) {
   AIUI_CHECK(!combo->isPopupOpen());
   AIUI_CHECK_EQ(combo->selectedIndex(), 1);
 }
+
+// ───────────────────────── 事件冒泡 ─────────────────────────
+
+namespace {
+
+// 记录自己收到了哪些阶段的探针容器
+class ProbeGroup : public ViewGroup {
+ public:
+  std::vector<std::wstring> log;
+  bool interceptDown = false;
+  bool consumeDown = false;
+
+ protected:
+  bool onInterceptMouseDown(const MouseEvent&) override {
+    log.push_back(L"capture");
+    return interceptDown;
+  }
+  bool onMouseDown(const MouseEvent&) override {
+    log.push_back(L"down");
+    return consumeDown;
+  }
+  void onMouseUp(const MouseEvent&) override { log.push_back(L"up"); }
+};
+
+// 记录收到的探针叶子
+class ProbeLeaf : public View {
+ public:
+  std::vector<std::wstring> log;
+  bool consumeDown = false;
+  bool stopUp = false;
+
+ protected:
+  bool onMouseDown(const MouseEvent& e) override {
+    log.push_back(L"down");
+    if (consumeDown) {
+      e.stopPropagation();
+      return true;
+    }
+    return false;
+  }
+  void onMouseUp(const MouseEvent& e) override {
+    log.push_back(L"up");
+    // 抬起的 stopPropagation 会让外层收不到
+    if (stopUp) e.stopPropagation();
+  }
+};
+
+}  // namespace
+
+AIUI_TEST(mouse_down_bubbles_from_target_up_to_root) {
+  TestEnv env;
+  auto root = std::make_unique<ProbeGroup>();
+  auto* leaf = new ProbeLeaf();
+  root->addView(leaf, LayoutParams{}.withSize(400, 300));
+  AIUI_CHECK(root->create(nullptr, Rect{0, 0, 400, 300}));
+
+  // 叶子不消费：事件要继续冒泡到父容器
+  root->root()->onMouseDown(mouseAt(20, 20, MouseButton::kLeft));
+  AIUI_CHECK_EQ(leaf->log.size(), static_cast<size_t>(1));
+  AIUI_CHECK_EQ(root->log.size(), static_cast<size_t>(2));
+  // 顺序是先捕获、再目标
+  AIUI_CHECK(root->log[0] == L"capture");
+  AIUI_CHECK(root->log[1] == L"down");
+}
+
+AIUI_TEST(stop_propagation_in_target_blocks_bubble) {
+  TestEnv env;
+  auto root = std::make_unique<ProbeGroup>();
+  auto* leaf = new ProbeLeaf();
+  leaf->consumeDown = true;
+  root->addView(leaf, LayoutParams{}.withSize(400, 300));
+  AIUI_CHECK(root->create(nullptr, Rect{0, 0, 400, 300}));
+
+  root->root()->onMouseDown(mouseAt(20, 20, MouseButton::kLeft));
+  // 叶子消费后父容器只收到捕获，不再收到 down
+  AIUI_CHECK_EQ(leaf->log.size(), static_cast<size_t>(1));
+  AIUI_CHECK_EQ(root->log.size(), static_cast<size_t>(1));
+  AIUI_CHECK(root->log[0] == L"capture");
+}
+
+AIUI_TEST(container_can_intercept_mouse_down_in_capture_phase) {
+  TestEnv env;
+  auto root = std::make_unique<ProbeGroup>();
+  root->interceptDown = true;
+  auto* leaf = new ProbeLeaf();
+  root->addView(leaf, LayoutParams{}.withSize(400, 300));
+  AIUI_CHECK(root->create(nullptr, Rect{0, 0, 400, 300}));
+
+  root->root()->onMouseDown(mouseAt(20, 20, MouseButton::kLeft));
+  // 容器在捕获阶段拦下：叶子完全没收到
+  AIUI_CHECK(leaf->log.empty());
+  AIUI_CHECK_EQ(root->log.size(), static_cast<size_t>(2));
+  AIUI_CHECK(root->log[0] == L"capture");
+  AIUI_CHECK(root->log[1] == L"down");
+}
+
+AIUI_TEST(mouse_up_bubbles_and_can_be_stopped) {
+  TestEnv env;
+  auto root = std::make_unique<ProbeGroup>();
+  auto* leaf = new ProbeLeaf();
+  root->addView(leaf, LayoutParams{}.withSize(400, 300));
+  AIUI_CHECK(root->create(nullptr, Rect{0, 0, 400, 300}));
+
+  ViewRoot* viewRoot = root->root();
+  viewRoot->onMouseDown(mouseAt(20, 20, MouseButton::kLeft));
+  viewRoot->onMouseUp(mouseAt(20, 20, MouseButton::kLeft));
+  AIUI_CHECK_EQ(leaf->log.size(), static_cast<size_t>(2));
+  // 叶子没阻止，父容器应当收到 up
+  AIUI_CHECK_EQ(root->log.size(), static_cast<size_t>(3));
+  AIUI_CHECK(root->log[2] == L"up");
+}
+
+AIUI_TEST(mouse_up_stays_with_intercepting_container) {
+  TestEnv env;
+  auto root = std::make_unique<ProbeGroup>();
+  root->interceptDown = true;
+  auto* leaf = new ProbeLeaf();
+  root->addView(leaf, LayoutParams{}.withSize(400, 300));
+  AIUI_CHECK(root->create(nullptr, Rect{0, 0, 400, 300}));
+
+  ViewRoot* viewRoot = root->root();
+  viewRoot->onMouseDown(mouseAt(20, 20, MouseButton::kLeft));
+  // 按下被容器拦下后，抬起也必须回到容器：否则拖动状态无法复位
+  viewRoot->onMouseUp(mouseAt(20, 20, MouseButton::kLeft));
+  AIUI_CHECK(leaf->log.empty());
+  AIUI_CHECK_EQ(root->log.size(), static_cast<size_t>(3));
+  AIUI_CHECK(root->log[2] == L"up");
+}

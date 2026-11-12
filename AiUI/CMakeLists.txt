@@ -28,6 +28,8 @@ set(AIUI_SOURCES
   src/layout_inflater.cpp
   src/theme_registry.cpp
   src/font.cpp
+
+  src/events/event_dispatcher.cpp
   # 布局
   src/layouts/frame_layout.cpp
   src/layouts/linear_layout.cpp

@@ -215,6 +215,8 @@ class View {
   // ── 父容器与 ViewRoot 调用入口，业务代码不要直接用 ──
   // 绘制自身；painter 已平移到本视图局部坐标，dirty 也是局部坐标
   virtual void draw(Painter& painter, const Rect& dirty);
+  // 事件分发入口：目标阶段与冒泡阶段都走这些方法。
+  // 返回 true 表示已消费，分发器据此停止向外层冒泡。
   virtual bool dispatchMouseDown(const MouseEvent& e);
   virtual void dispatchMouseUp(const MouseEvent& e);
   virtual void dispatchMouseMove(const MouseEvent& e);
@@ -222,6 +224,10 @@ class View {
   virtual bool dispatchMouseWheel(const MouseEvent& e);
   virtual void dispatchContextMenu(const MouseEvent& e);
   virtual void dispatchDoubleClick(const MouseEvent& e);
+  // 捕获阶段入口：从根往目标下沉时调用。返回 true 表示拦下，不再下发。
+  bool dispatchInterceptMouseDown(const MouseEvent& e);
+  bool dispatchInterceptMouseMove(const MouseEvent& e);
+  bool dispatchInterceptMouseUp(const MouseEvent& e);
   virtual bool dispatchKeyDown(const Key& key, const Modifiers& mods);
   virtual bool dispatchChar(wchar_t ch);
   virtual void dispatchFocusChanged(bool focused);
@@ -267,6 +273,11 @@ class View {
   virtual bool onMouseWheel(const MouseEvent&) { return false; }
   virtual void onContextMenu(const MouseEvent&) {}
   virtual void onDoubleClick(const MouseEvent&) {}
+  // 捕获阶段钩子：容器可在子视图之前拦下事件（返回 true 即拦下）。
+  // 默认不拦，只在需要"滚动容器优先于子控件"这类语义时覆盖。
+  virtual bool onInterceptMouseDown(const MouseEvent&) { return false; }
+  virtual bool onInterceptMouseMove(const MouseEvent&) { return false; }
+  virtual bool onInterceptMouseUp(const MouseEvent&) { return false; }
   virtual bool onKeyDown(const Key&, const Modifiers&) { return false; }
   virtual bool onChar(wchar_t) { return false; }
   virtual void onFocusChanged(bool) {}
