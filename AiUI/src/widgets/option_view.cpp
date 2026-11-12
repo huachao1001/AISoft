@@ -25,13 +25,19 @@ void OptionView::setChecked(bool checked, bool notify) {
 
 void OptionView::onPaint(Painter& painter, const Rect& rect) {
   const int d = dpi();
+  const Theme& t = theme();
+
   const Color ink = spec_.ink != kNoColor ? spec_.ink
-                                          : (isEnabled() ? kColorText : kColorTextFaint);
+                                          : (isEnabled() ? t.text : t.textFaint);
+  const Color boxBg = spec_.boxBackground != kNoColor ? spec_.boxBackground : t.pane;
+  const Color hoverBg = spec_.hoverBackground != kNoColor ? spec_.hoverBackground : t.hover;
+  const Color accent =
+      isEnabled() ? (spec_.accent != kNoColor ? spec_.accent : t.inputFocus) : edgeOn(boxBg, 8);
   // 禁用态描边也要跟着底色走，只是更淡：写死浅灰在深色主题上会变成亮线
-  const Color border = !isEnabled()            ? edgeOn(spec_.boxBackground, 8)
+  const Color border = !isEnabled()            ? edgeOn(boxBg, 8)
                         : spec_.boxBorder != kNoColor ? spec_.boxBorder
-                                                      : edgeOn(spec_.boxBackground, 22);
-  const Color accent = isEnabled() ? spec_.accent : edgeOn(spec_.boxBackground, 8);
+                                                      : edgeOn(boxBg, 22);
+  const Color checkInk = spec_.checkInk != kNoColor ? spec_.checkInk : t.pane;
 
   const Rect box = boxRect(rect);
   const int radius = spec_.radius * d / 96;
@@ -44,17 +50,15 @@ void OptionView::onPaint(Painter& painter, const Rect& rect) {
       painter.fillRoundRect(inner, accent, inner.height() / 2);
     } else {
       // 未选中时挖白心，避免外圈看起来像实的
-      painter.fillRoundRect(inner, hot_ ? kColorHover : spec_.boxBackground,
-                            inner.height() / 2);
+      painter.fillRoundRect(inner, hot_ ? hoverBg : boxBg, inner.height() / 2);
     }
   } else {
-    painter.fillRoundRect(box, spec_.checked ? accent : (hot_ ? kColorHover : spec_.boxBackground),
-                          radius);
+    painter.fillRoundRect(box, spec_.checked ? accent : (hot_ ? hoverBg : boxBg), radius);
     if (!spec_.checked) painter.strokeRoundRect(box, border, radius);
     if (spec_.checked) {
       const Rect mark = box.inset(box.width() / 5, box.height() / 5, box.width() / 5,
                                   box.height() / 5);
-      painter.drawIcon(IconId::kCheck, mark, kColorPane);
+      painter.drawIcon(IconId::kCheck, mark, checkInk);
     }
   }
 

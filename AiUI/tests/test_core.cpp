@@ -36,6 +36,10 @@ class FixedView : public View {
  public:
   FixedView(int w, int h) : size_{w, h} {}
 
+  // 把 protected 的取色接口暴露给测试
+  Color bg() const { return backgroundColor(); }
+  Color resolved() const { return resolvedBackground(); }
+
  protected:
   Size onMeasure(const Size& available) override {
     (void)available;
@@ -701,6 +705,61 @@ AIUI_TEST(blend_color_endpoints_and_middle) {
   // 50% 应是中灰
   const Color mid = blendColor(white, black, 0.5f);
   AIUI_CHECK_EQ(static_cast<int>(colorRed(mid)), 128);
+}
+
+// ───────────────────────── 主题 ─────────────────────────
+
+// 主题沿父链继承：根上设一次，后代不用各自设置
+AIUI_TEST(theme_inherits_down_the_view_tree) {
+  TestEnv env;
+  auto root = std::make_unique<LinearLayout>(Orientation::kVertical);
+  auto* mid = new LinearLayout(Orientation::kVertical);
+  auto* leaf = new FixedView(10, 10);
+  mid->addView(leaf, LayoutParams{});
+  root->addView(mid, LayoutParams{});
+
+  // 没设主题时落到默认浅色
+  AIUI_CHECK(leaf->theme().body == defaultTheme().body);
+
+  root->setTheme(&kDarkTheme);
+  AIUI_CHECK(leaf->theme().body == kDarkTheme.body);
+  AIUI_CHECK(mid->theme().body == kDarkTheme.body);
+
+  // 子树可以单独覆盖，不影响兄弟节点
+  auto* sibling = new FixedView(10, 10);
+  root->addView(sibling, LayoutParams{});
+  mid->setTheme(&kLightTheme);
+  AIUI_CHECK(leaf->theme().body == kLightTheme.body);
+  AIUI_CHECK(sibling->theme().body == kDarkTheme.body);
+
+  // 传 nullptr 恢复继承
+  mid->setTheme(nullptr);
+  AIUI_CHECK(leaf->theme().body == kDarkTheme.body);
+}
+
+// 按主题角色铺底：换主题后底色自动跟着变，宿主不用重新下发
+AIUI_TEST(background_role_follows_theme_switch) {
+  TestEnv env;
+  auto root = std::make_unique<LinearLayout>(Orientation::kVertical);
+  auto* panel = new FixedView(10, 10);
+  panel->setBackgroundRole(&Theme::dialogBg);
+  root->addView(panel, LayoutParams{});
+
+  root->setTheme(&kLightTheme);
+  AIUI_CHECK(panel->bg() == kLightTheme.dialogBg);
+  AIUI_CHECK(panel->resolved() == kLightTheme.dialogBg);
+
+  root->setTheme(&kDarkTheme);
+  AIUI_CHECK(panel->bg() == kDarkTheme.dialogBg);
+  // 深色与浅色必须真的不同，否则这条测试等于没测
+  AIUI_CHECK(kDarkTheme.dialogBg != kLightTheme.dialogBg);
+
+  // 显式设色会取消角色，避免两套来源互相覆盖
+  const Color fixed = makeColor(0x12, 0x34, 0x56);
+  panel->setBackgroundColor(fixed);
+  AIUI_CHECK(panel->bg() == fixed);
+  root->setTheme(&kLightTheme);
+  AIUI_CHECK(panel->bg() == fixed);
 }
 
 

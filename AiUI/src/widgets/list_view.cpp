@@ -1,4 +1,4 @@
-﻿// ListView 实现：表头、行绘制、选择、滚动、列宽拖动、排序指示
+// ListView 实现：表头、行绘制、选择、滚动、列宽拖动、排序指示
 #include "AiUI/widgets/list_view.h"
 
 #include "AiUI/font.h"
@@ -56,6 +56,11 @@ void ListView::setStyle(const ListStyle& style) {
   style_ = style;
   layoutColumns();
   invalidate();
+}
+
+// 底色可能来自 style 或主题；给父容器与滚动条统一口径
+Color ListView::backgroundColor() const {
+  return style_.background != kNoColor ? style_.background : theme().pane;
 }
 
 void ListView::setColumns(std::vector<ListColumn> columns) {
@@ -350,8 +355,9 @@ void ListView::ensureRowVisible(int row) {
 
 void ListView::paintHeader(Painter& painter, const Rect& rect) {
   const int d = dpi();
+  const Theme& t = theme();
   const Rect headRect{0, 0, rect.right, headHeight()};
-  painter.fillRect(headRect, style_.headBg);
+  painter.fillRect(headRect, style_.headBg != kNoColor ? style_.headBg : t.headerBg);
 
   for (int col = 0; col < static_cast<int>(columns_.size()); ++col) {
     const int left = cellLeft(col);
@@ -366,8 +372,8 @@ void ListView::paintHeader(Painter& painter, const Rect& rect) {
     const TextAlign align =
         columns_[static_cast<size_t>(col)].align == ListAlign::kRight ? TextAlign::kRight
                                                                      : TextAlign::kLeft;
-    painter.drawText(textRect, columns_[static_cast<size_t>(col)].title, style_.headText,
-                     fonts.ui, align);
+    painter.drawText(textRect, columns_[static_cast<size_t>(col)].title,
+                     style_.headText != kNoColor ? style_.headText : t.textHead, fonts.ui, align);
 
     // 排序箭头只在当前排序列显示
     if (col == sortColumn_) {
@@ -377,19 +383,27 @@ void ListView::paintHeader(Painter& painter, const Rect& rect) {
       const Rect arrowRect{centerX - size / 2, centerY - size / 2, centerX + size / 2,
                            centerY + size / 2};
       painter.drawIcon(sortAscending_ ? IconId::kChevronUp : IconId::kChevronDown, arrowRect,
-                       kColorTextMuted);
+                       style_.sortArrow != kNoColor ? style_.sortArrow : t.textMuted);
     }
   }
 
-  painter.drawHLine(0, rect.right, headHeight() - 1, style_.headLine);
+  painter.drawHLine(0, rect.right, headHeight() - 1,
+                    style_.headLine != kNoColor ? style_.headLine : t.lineHead);
 }
 
 void ListView::paintRow(Painter& painter, const ListRow& data, int row, const Rect& rowRect) {
   const int d = dpi();
+  const Theme& t = theme();
+  const Color background = style_.background != kNoColor ? style_.background : t.pane;
+  const Color textColor = style_.text != kNoColor ? style_.text : t.text;
+  const Color dimText = style_.headText != kNoColor ? style_.headText : t.textHead;
   const bool selected =
       (row < static_cast<int>(selected_.size())) && selected_[static_cast<size_t>(row)];
   const bool hot = (row == hot_) && !selected;
-  painter.fillRect(rowRect, selected ? style_.selBg : (hot ? style_.hoverBg : style_.background));
+  const Color rowBg = selected ? (style_.selBg != kNoColor ? style_.selBg : t.selBg)
+                              : (hot ? (style_.hoverBg != kNoColor ? style_.hoverBg : t.rowHover)
+                                     : background);
+  painter.fillRect(rowRect, rowBg);
 
   for (int col = 0; col < static_cast<int>(columns_.size()); ++col) {
     const int left = cellLeft(col);
@@ -409,7 +423,7 @@ void ListView::paintRow(Painter& painter, const ListRow& data, int row, const Re
         painter.drawImage(data.icon.image, iconRect);
       } else {
         const IconId glyph = data.icon.glyph == IconId::kNone ? IconId::kFile : data.icon.glyph;
-        const Color color = data.icon.color != kNoColor ? data.icon.color : style_.text;
+        const Color color = data.icon.color != kNoColor ? data.icon.color : textColor;
         painter.drawIcon(glyph, iconRect, color);
       }
       textRect.left = iconRect.right + style_.iconGap * d / 96;
@@ -419,8 +433,8 @@ void ListView::paintRow(Painter& painter, const ListRow& data, int row, const Re
     const ListCell& cell = data.cells[static_cast<size_t>(col)];
     if (cell.text.empty()) continue;
 
-    const Color color =
-        cell.textColor != kNoColor ? cell.textColor : (data.dimmed ? style_.headText : style_.text);
+    const Color color = cell.textColor != kNoColor ? cell.textColor
+                                                  : (data.dimmed ? dimText : textColor);
     if (columns_[static_cast<size_t>(col)].align == ListAlign::kRight) {
       painter.drawText(textRect, cell.text, color, fonts.ui, TextAlign::kRight);
     } else {
@@ -428,7 +442,8 @@ void ListView::paintRow(Painter& painter, const ListRow& data, int row, const Re
     }
   }
 
-  painter.drawHLine(rowRect.left, rowRect.right, rowRect.bottom - 1, style_.rowLine);
+  painter.drawHLine(rowRect.left, rowRect.right, rowRect.bottom - 1,
+                    style_.rowLine != kNoColor ? style_.rowLine : t.lineSoft);
 }
 
 void ListView::onPaint(Painter& painter, const Rect& rect) {

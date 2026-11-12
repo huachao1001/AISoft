@@ -1,4 +1,4 @@
-﻿// TreeView 实现
+// TreeView 实现
 #include "AiUI/widgets/tree_view.h"
 
 #include "AiUI/font.h"
@@ -174,9 +174,23 @@ void TreeView::onScrollChanged() {
   invalidate();
 }
 
+Color TreeView::backgroundColor() const {
+  return style_.background != kNoColor ? style_.background : theme().pane;
+}
+
 void TreeView::onPaint(Painter& painter, const Rect& rect) {
   const int d = dpi();
   const int height = rowHeight();
+  const Theme& t = theme();
+
+  // 颜色统一在绘制入口解析一次：style 未指定时落到主题
+  const Color selBg = style_.selBg != kNoColor ? style_.selBg : t.selBg;
+  const Color hoverBg = style_.hoverBg != kNoColor ? style_.hoverBg : t.hover;
+  const Color textColor = style_.text != kNoColor ? style_.text : t.text;
+  const Color textActive = style_.textActive != kNoColor ? style_.textActive : t.activeInk;
+  const Color iconColor = style_.iconColor != kNoColor ? style_.iconColor : t.iconMuted;
+  const Color iconActive = style_.iconActive != kNoColor ? style_.iconActive : t.link;
+  const Color divider = style_.divider != kNoColor ? style_.divider : t.line;
 
   // 只画与脏区相交的行
   const int first = (std::max)(0, scrollOffset() / height);
@@ -199,9 +213,9 @@ void TreeView::onPaint(Painter& painter, const Rect& rect) {
     pill.top += style_.pillInsetY * d / 96;
     pill.bottom -= style_.pillInsetY * d / 96;
     if (active) {
-      painter.fillRoundRect(pill, style_.selBg, style_.pillRadius * d / 96);
+      painter.fillRoundRect(pill, selBg, style_.pillRadius * d / 96);
     } else if (hot) {
-      painter.fillRoundRect(pill, style_.hoverBg, style_.pillRadius * d / 96);
+      painter.fillRoundRect(pill, hoverBg, style_.pillRadius * d / 96);
     }
 
     // 只平移图标与文字：药丸始终铺满可视宽度，横向滚动不会把它推走
@@ -210,7 +224,7 @@ void TreeView::onPaint(Painter& painter, const Rect& rect) {
     const int iconSize = style_.iconSize * d / 96;
     const Rect iconRect{x, rr.center().y - iconSize / 2, x + iconSize,
                         rr.center().y + iconSize / 2};
-    painter.drawIcon(node->icon, iconRect, active ? style_.iconActive : style_.iconColor);
+    painter.drawIcon(node->icon, iconRect, active ? iconActive : iconColor);
     x = iconRect.right + style_.iconGap * d / 96;
 
     // 右边界按内容坐标算：横向滚动时文字不会被压窄
@@ -219,15 +233,15 @@ void TreeView::onPaint(Painter& painter, const Rect& rect) {
     const Rect textRect{x, rr.top, (std::max)(x + 1, contentRight), rr.bottom};
     // 有横向溢出时不省略：靠滚动看全，省略号会让人误以为内容就这么多
     if (isScrollableX()) {
-      painter.drawText(textRect, node->label, active ? style_.textActive : style_.text, fonts.ui,
+      painter.drawText(textRect, node->label, active ? textActive : textColor, fonts.ui,
                        TextAlign::kLeft);
     } else {
-      painter.drawTextEllipsis(textRect, node->label, active ? style_.textActive : style_.text,
+      painter.drawTextEllipsis(textRect, node->label, active ? textActive : textColor,
                                fonts.ui);
     }
   }
 
-  painter.drawVLine(rect.top, rect.bottom, rect.right - 1, style_.divider);
+  painter.drawVLine(rect.top, rect.bottom, rect.right - 1, divider);
 }
 
 bool TreeView::onMouseDown(const MouseEvent& e) {

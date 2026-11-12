@@ -11,6 +11,8 @@ namespace AiUI {
 
 struct TextStyle {
   Color color = kColorText;
+  // 非空时文字色取自当前主题的相关字段，优先于 color
+  Color Theme::*colorRole = nullptr;
   TextAlign align = TextAlign::kLeft;
   bool ellipsis = true;  // 超宽时显示省略号
   bool bold = false;

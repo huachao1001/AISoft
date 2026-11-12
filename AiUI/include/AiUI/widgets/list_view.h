@@ -110,14 +110,16 @@ struct ListStyle {
   int padX = 16;
   int iconSize = 18;
   int iconGap = 8;
-  Color background = kColorPane;
-  Color headBg = kColorHeaderBg;
-  Color headLine = kColorLineHead;
-  Color rowLine = kColorLineSoft;
-  Color text = kColorText;
-  Color headText = kColorTextHead;
-  Color selBg = kColorSelBg;
-  Color hoverBg = kColorRowHover;
+  // 颜色：kNoColor 表示跟随主题
+  Color background = kNoColor;
+  Color headBg = kNoColor;
+  Color headLine = kNoColor;
+  Color rowLine = kNoColor;
+  Color text = kNoColor;
+  Color headText = kNoColor;
+  Color selBg = kNoColor;
+  Color hoverBg = kNoColor;
+  Color sortArrow = kNoColor;
 };
 
 // 事件回调：只管交互通知，不再由调用方提供渲染数据
@@ -189,7 +191,7 @@ class ListView : public ScrollView {
   bool onKeyDown(const Key& key, const Modifiers& mods) override;
   void onScrollChanged() override;
   void onLayout(const Rect& frame) override;
-  Color backgroundColor() const override { return style_.background; }
+  Color backgroundColor() const override;
   // 一格滚三行
   int wheelStep() const override { return style_.rowHeight * 3; }
 

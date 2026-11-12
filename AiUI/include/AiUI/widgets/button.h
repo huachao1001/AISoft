@@ -42,6 +42,9 @@ struct ButtonSpec {
   Color hoverBackground = kNoColor;
   Color downBackground = kNoColor;
   Color hoverInk = kNoColor;
+  // 禁用态；kNoColor 表示按主题派生
+  Color disabledBackground = kNoColor;
+  Color disabledInk = kNoColor;
   // 悬停时的鼠标形状；标题栏按钮用箭头才与系统一致
   CursorShape cursor = CursorShape::kHand;
 };

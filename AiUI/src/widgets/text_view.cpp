@@ -36,12 +36,14 @@ void TextView::onPaint(Painter& painter, const Rect& rect) {
       rect.inset(style_.paddingLeft * d / 96, style_.paddingTop * d / 96,
                  style_.paddingRight * d / 96, style_.paddingBottom * d / 96);
   const Font& font = style_.smallFont ? fonts.uiSmall : (style_.bold ? fonts.uiBold : fonts.ui);
+  // 主题角色优先：换主题后文字自动改色，宿主不用重新下发样式
+  const Color color = style_.colorRole ? theme().*(style_.colorRole) : style_.color;
 
   if (style_.ellipsis && style_.align == TextAlign::kLeft) {
-    painter.drawTextEllipsis(inner, text_, style_.color, font);
+    painter.drawTextEllipsis(inner, text_, color, font);
     return;
   }
-  painter.drawText(inner, text_, style_.color, font, style_.align);
+  painter.drawText(inner, text_, color, font, style_.align);
 }
 
 Size TextView::onMeasure(const Size& available) {

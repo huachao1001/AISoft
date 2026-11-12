@@ -39,14 +39,15 @@ struct TreeStyle {
   int pillInsetX = 6;
   int pillInsetY = 2;
   int pillRadius = 5;
-  Color background = kColorPane;
-  Color hoverBg = kColorHover;
-  Color selBg = kColorSelBg;
-  Color text = kColorText;
-  Color textActive = kColorActiveInk;
-  Color iconColor = makeColor(0x6b, 0x72, 0x80);
-  Color iconActive = kColorLink;
-  Color divider = kColorLine;
+  // 颜色：kNoColor 表示跟随主题
+  Color background = kNoColor;
+  Color hoverBg = kNoColor;
+  Color selBg = kNoColor;
+  Color text = kNoColor;
+  Color textActive = kNoColor;
+  Color iconColor = kNoColor;
+  Color iconActive = kNoColor;
+  Color divider = kNoColor;
 };
 
 using TreeChildrenLoader = std::function<std::vector<std::unique_ptr<TreeNode>>(TreeNode*)>;
@@ -83,7 +84,7 @@ class TreeView : public ScrollView {
   void onMouseMove(const MouseEvent& e) override;
   void onMouseLeave() override;
   void onScrollChanged() override;
-  Color backgroundColor() const override { return style_.background; }
+  Color backgroundColor() const override;
   // 一格滚三行，与列表手感一致
   int wheelStep() const override { return style_.rowHeight * 3; }
 

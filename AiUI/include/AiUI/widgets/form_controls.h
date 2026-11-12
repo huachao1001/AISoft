@@ -70,8 +70,9 @@ class RadioGroup : public ViewGroup {
 struct ProgressSpec {
   int height = 10;
   int radius = 5;
-  Color track = kColorLineSoft;
-  Color fill = kColorLink;
+  // kNoColor 表示跟随主题
+  Color track = kNoColor;
+  Color fill = kNoColor;
 };
 
 class ProgressBar : public View {
@@ -121,11 +122,13 @@ struct ComboSpec {
   int height = 30;
   int radius = 6;
   int padX = 10;
-  Color background = kColorPane;
-  // kNoColor 表示按 background 自动派生，换底色不用重配边框
+  // 颜色：kNoColor 表示跟随主题
+  Color background = kNoColor;
   Color border = kNoColor;
-  Color ink = kColorText;
-  Color arrow = kColorTextMuted;
+  Color focusBorder = kNoColor;
+  Color ink = kNoColor;
+  Color arrow = kNoColor;
+  Color disabledInk = kNoColor;
 };
 
 class ComboBox : public View {

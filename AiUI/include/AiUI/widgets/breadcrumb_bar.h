@@ -38,15 +38,16 @@ struct BreadcrumbStyle {
   int searchWidth = 270;
   int searchHeight = 34;
   int editHeight = 32;
-  Color background = kColorPane;
-  Color text = kColorLink;
-  Color textCurrent = makeColor(0x11, 0x11, 0x11);
-  Color backInk = kColorInk;
-  Color backInkDisabled = kColorTextFaint;
-  Color hoverBg = kColorLinkHover;
-  Color currentBg = kColorCurrentBg;
-  Color separator = makeColor(0x9c, 0xa3, 0xaf);
-  Color line = kColorLine;
+  // 颜色：kNoColor 表示跟随主题
+  Color background = kNoColor;
+  Color text = kNoColor;
+  Color textCurrent = kNoColor;
+  Color backInk = kNoColor;
+  Color backInkDisabled = kNoColor;
+  Color hoverBg = kNoColor;
+  Color currentBg = kNoColor;
+  Color separator = kNoColor;
+  Color line = kNoColor;
 };
 
 struct BreadcrumbCallbacks {
@@ -88,7 +89,7 @@ class BreadcrumbBar : public ViewGroup {
   void onMouseMove(const MouseEvent& e) override;
   void onMouseLeave() override;
   void arrangeChildren(const Rect& content) override;
-  Color backgroundColor() const override { return style_.background; }
+  Color backgroundColor() const override;
 
  private:
   struct Node {

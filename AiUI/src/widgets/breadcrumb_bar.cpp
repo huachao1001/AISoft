@@ -155,32 +155,45 @@ int BreadcrumbBar::hitNode(Point pt) const {
 // ───────────────────────── 绘制 ─────────────────────────
 
 void BreadcrumbBar::onPaint(Painter& painter, const Rect& rect) {
-  painter.fillRect(rect, style_.background);
+  const Theme& t = theme();
+  // 颜色统一解析一次：style 未指定时落到主题
+  const Color background = style_.background != kNoColor ? style_.background : t.pane;
+  const Color linkText = style_.text != kNoColor ? style_.text : t.link;
+  const Color currentText = style_.textCurrent != kNoColor ? style_.textCurrent : t.currentInk;
+  const Color backInk = style_.backInk != kNoColor ? style_.backInk : t.ink;
+  const Color backInkDisabled =
+      style_.backInkDisabled != kNoColor ? style_.backInkDisabled : t.textFaint;
+  const Color hoverBg = style_.hoverBg != kNoColor ? style_.hoverBg : t.hover;
+  const Color currentBg = style_.currentBg != kNoColor ? style_.currentBg : t.currentBg;
+  const Color separator = style_.separator != kNoColor ? style_.separator : t.separator;
+  const Color lineColor = style_.line != kNoColor ? style_.line : t.line;
+
+  painter.fillRect(rect, background);
 
   if (editing_ && edit_) {
-    painter.drawHLine(rect.left, rect.right, rect.bottom - 1, style_.line);
+    painter.drawHLine(rect.left, rect.right, rect.bottom - 1, lineColor);
     return;
   }
 
   const Rect back = backRect();
-  if (backHot_) painter.fillRoundRect(back, kColorHover, px(6));
+  if (backHot_) painter.fillRoundRect(back, hoverBg, px(6));
 
   const int bs = px(18);
   painter.drawIcon(IconId::kArrowBack,
                    Rect{back.left + (back.width() - bs) / 2, back.top + (back.height() - bs) / 2,
                         back.left + (back.width() + bs) / 2,
                         back.top + (back.height() + bs) / 2},
-                   backEnabled_ ? style_.backInk : style_.backInkDisabled);
+                   backEnabled_ ? backInk : backInkDisabled);
 
   for (size_t i = 0; i < nodes_.size(); ++i) {
     const Node& node = nodes_[i];
     if (node.rect.isEmpty() || node.rect.right > rect.right) break;
 
-    const Color ink = node.data.current ? style_.textCurrent : style_.text;
+    const Color ink = node.data.current ? currentText : linkText;
     if (node.data.current) {
-      painter.fillRoundRect(node.rect, style_.currentBg, px(style_.radius));
+      painter.fillRoundRect(node.rect, currentBg, px(style_.radius));
     } else if (hot_ == static_cast<int>(i)) {
-      painter.fillRoundRect(node.rect, style_.hoverBg, px(style_.radius));
+      painter.fillRoundRect(node.rect, hoverBg, px(style_.radius));
     }
 
     int textLeft = node.rect.left + px(style_.nodePadX);
@@ -188,7 +201,7 @@ void BreadcrumbBar::onPaint(Painter& painter, const Rect& rect) {
       const int is = px(style_.iconSize);
       const int y = node.rect.top + (node.rect.height() - is) / 2;
       painter.drawIcon(IconId::kHome, Rect{textLeft, y, textLeft + is, y + is},
-                       node.data.current ? kColorInk : style_.text);
+                       node.data.current ? backInk : linkText);
       textLeft += is + px(style_.iconGap);
     }
     painter.drawText(
@@ -207,14 +220,18 @@ void BreadcrumbBar::onPaint(Painter& painter, const Rect& rect) {
                             sep.top + (sep.height() - cs) / 2,
                             sep.left + (sep.width() + cs) / 2,
                             sep.top + (sep.height() + cs) / 2},
-                       style_.separator);
+                       separator);
     }
   }
 
-  painter.drawHLine(rect.left, rect.right, rect.bottom - 1, style_.line);
+  painter.drawHLine(rect.left, rect.right, rect.bottom - 1, lineColor);
 }
 
 // ───────────────────────── 交互 ─────────────────────────
+
+Color BreadcrumbBar::backgroundColor() const {
+  return style_.background != kNoColor ? style_.background : theme().pane;
+}
 
 void BreadcrumbBar::onMouseMove(const MouseEvent& e) {
   const int hit = hitNode(e.position);

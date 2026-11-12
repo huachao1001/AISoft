@@ -20,11 +20,13 @@ struct OptionSpec {
   int boxSize = 16;
   int gap = 8;
   int radius = 4;
+  // 颜色：kNoColor 表示跟随主题
   Color ink = kNoColor;
-  Color boxBackground = kColorPane;
-  // kNoColor 表示按 boxBackground 自动派生
+  Color boxBackground = kNoColor;
   Color boxBorder = kNoColor;
-  Color accent = kColorInputFocus;
+  Color accent = kNoColor;
+  Color hoverBackground = kNoColor;
+  Color checkInk = kNoColor;
 };
 
 // 选项行的公共基类：绘制盒子与文字，点击切换选中

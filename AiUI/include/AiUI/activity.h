@@ -43,6 +43,20 @@ class Activity {
   Activity(const Activity&) = delete;
   Activity& operator=(const Activity&) = delete;
 
+  // ── 主题 ──
+  // 全局默认主题：所有 Activity 创建时都从这里取。
+  // nullptr 表示浅色。适合在启动时按用户设置调用一次。
+  static void setDefaultTheme(const Theme* theme);
+  static const Theme* defaultThemePtr();
+
+  // 本界面单独指定主题（覆盖全局默认）。传给 Window 的是指针，
+  // 所以对象生命周期要覆盖窗口——通常用 kDarkTheme 或 ThemeRegistry 里的对象。
+  void setTheme(const Theme* theme);
+  const Theme* appTheme() const { return theme_; }
+  // 便捷入口：在浅色/深色之间切换；创建前调用会存下来，创建后立即生效
+  void setDarkMode(bool dark);
+  bool isDarkMode() const { return darkMode_; }
+
   // ── 生命周期（子类覆盖）──
   // 布局对应的 XML 文件名（不含扩展名）。返回空表示用 createView() 自建。
   virtual const wchar_t* layoutName() const { return nullptr; }
@@ -102,6 +116,9 @@ class Activity {
   void buildContent();
 
   std::unique_ptr<Window> window_;
+  // 本界面的主题；nullptr 表示跟随全局默认
+  const Theme* theme_ = nullptr;
+  bool darkMode_ = false;
   std::wstring title_;
   WindowStyle style_;
   int minWidth_ = 0;

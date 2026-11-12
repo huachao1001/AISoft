@@ -255,18 +255,27 @@ Size InputBox::onMeasure(const Size& available) {
 void InputBox::onPaint(Painter& painter, const Rect& rect) {
   const int d = dpi();
   const int radius = spec_.radius * d / 96;
+  const Theme& t = theme();
 
-  painter.fillRoundRect(rect, kColorInputBg, radius);
-  // 描边由自身底色派生：浅底得到淡灰、深底得到淡白，
-  // 换主题不用再手写一套边框色
-  painter.strokeRoundRect(rect, focused_ ? kColorInputFocus : edgeOn(kColorInputBg, 17), radius);
+  // 未显式指定时跟随主题；底色变了描边也跟着派生
+  const Color background = spec_.background != kNoColor ? spec_.background : t.inputBg;
+  const Color border = spec_.border != kNoColor ? spec_.border : edgeOn(background, 17);
+  const Color focusBorder = spec_.focusBorder != kNoColor ? spec_.focusBorder : t.inputFocus;
+  const Color textColor = spec_.text != kNoColor ? spec_.text : t.text;
+  const Color cueColor = spec_.cueColor != kNoColor ? spec_.cueColor : t.textFaint;
+  const Color iconColor = spec_.leadIconColor != kNoColor ? spec_.leadIconColor : t.textFaint;
+  const Color selBg = spec_.selBg != kNoColor ? spec_.selBg : t.selBg;
+  const Color caretColor = spec_.caret != kNoColor ? spec_.caret : t.text;
+
+  painter.fillRoundRect(rect, background, radius);
+  painter.strokeRoundRect(rect, focused_ ? focusBorder : border, radius);
 
   const Rect textArea = textRect();
   if (spec_.hasLeadIcon) {
     const int size = spec_.leadIconSize * d / 96;
     const Rect iconRect{rect.left + spec_.padX * d / 96, rect.center().y - size / 2,
                         rect.left + spec_.padX * d / 96 + size, rect.center().y + size / 2};
-    painter.drawIcon(spec_.leadIcon, iconRect, kColorTextFaint);
+    painter.drawIcon(spec_.leadIcon, iconRect, iconColor);
   }
 
   // 文本裁剪到输入区，滚动时不会溢出圆角
@@ -275,21 +284,21 @@ void InputBox::onPaint(Painter& painter, const Rect& rect) {
 
   if (text_.empty()) {
     // 占位提示与光标可以并存：空输入框也要能看见插入点
-    painter.drawTextEllipsis(textArea, spec_.cue, kColorTextFaint, fonts.ui);
+    painter.drawTextEllipsis(textArea, spec_.cue, cueColor, fonts.ui);
   } else {
     if (hasSelection()) {
       const int x1 = xForPosition(selectionLow());
       const int x2 = xForPosition(selectionHigh());
-      painter.fillRect(Rect{x1, textArea.top, x2, textArea.bottom}, kColorSelBg);
+      painter.fillRect(Rect{x1, textArea.top, x2, textArea.bottom}, selBg);
     }
-    painter.drawText(textArea, displayText(), kColorText, fonts.ui, TextAlign::kLeft);
+    painter.drawText(textArea, displayText(), textColor, fonts.ui, TextAlign::kLeft);
   }
 
   if (focused_ && caretVisible_) {
     // 按 DPI 四舍五入到物理像素：整数除法会让 150% 下的 1 设计像素退化成 1px
     const int caretW = (std::max)(1, (spec_.caretWidth * d + 48) / 96);
     const int x = xForPosition(caret_);
-    painter.fillRect(Rect{x, textArea.top, x + caretW, textArea.bottom}, kColorText);
+    painter.fillRect(Rect{x, textArea.top, x + caretW, textArea.bottom}, caretColor);
   }
 }
 

@@ -13,6 +13,7 @@
 #include "AiUI/id.h"
 #include "AiUI/painter.h"
 #include "AiUI/platform.h"
+#include "AiUI/theme.h"
 #include "AiUI/types.h"
 
 #include <functional>
@@ -176,11 +177,22 @@ class View {
   // 标记需要重新测量与摆放
   void requestLayout();
 
+  // ── 主题 ──
+  // 设置本子树使用的调色板。主题沿父链继承，所以在根视图上设一次就
+  // 覆盖整棵树；子视图也可以单独设，做局部换色。传 nullptr 恢复继承。
+  void setTheme(const Theme* theme);
+  const Theme* ownTheme() const { return theme_; }
+  // 当前生效的主题：自身设定优先，否则向上找，最后落到浅色主题
+  const Theme& theme() const;
+
   // ── 外观与状态 ──
   void show(bool visible = true);
   bool isVisible() const { return visible_; }
   // 显式底色；传 kNoColor 表示不铺底，让父容器透上来
   void setBackgroundColor(Color color);
+  // 按主题字段铺底：传 &Theme::dialogBg 之类的成员指针，
+  // 换主题时自动重取，不必在宿主里跟着改。传 nullptr 取消。
+  void setBackgroundRole(Color Theme::*role);
   // 拖窗区域：开启后在该视图上按住即可拖动整个窗口，与系统标题栏手感一致。
   // 双击时切换最大化（系统标题栏的默认行为）。
   void setDragWindow(bool enabled) { dragWindow_ = enabled; }
@@ -303,6 +315,8 @@ class View {
   // 递归挂载/卸载子树
   void attachTree();
   void detachTree();
+  // 换主题后递归重绘
+  static void invalidateSubtree(View* view);
 
   ViewRoot* root_ = nullptr;
   std::unique_ptr<ViewRoot> ownedRoot_;
@@ -313,12 +327,16 @@ class View {
   Size measured_{};
   int id_ = 0;
   Color explicitBackground_ = kNoColor;
+  // 非空时底色取自当前主题的该字段，优先于 explicitBackground_
+  Color Theme::*backgroundRole_ = nullptr;
   bool created_ = false;
   bool visible_ = true;
   bool enabled_ = true;
   bool focusable_ = false;
   bool dragWindow_ = false;
   CursorShape cursorShape_ = CursorShape::kArrow;
+  // nullptr 表示跟随父链，不自己持有主题
+  const Theme* theme_ = nullptr;
 
   Handler onClick_;
   MouseHandler onMouseDownFn_;

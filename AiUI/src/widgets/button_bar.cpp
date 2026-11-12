@@ -84,10 +84,11 @@ void ButtonBar::arrangeChildren(const Rect& content) {
 }
 
 void ButtonBar::onPaint(Painter& painter, const Rect& rect) {
+  const Color lineColor = theme().line;
   for (const Rect& line : groupLines_) {
-    painter.drawVLine(line.top, line.bottom, line.left, kColorLine);
+    painter.drawVLine(line.top, line.bottom, line.left, lineColor);
   }
-  painter.drawHLine(rect.left, rect.right, rect.bottom - 1, kColorLine);
+  painter.drawHLine(rect.left, rect.right, rect.bottom - 1, lineColor);
 }
 
 }  // namespace AiUI

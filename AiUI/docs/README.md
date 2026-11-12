@@ -69,6 +69,10 @@ XML 里的 `id` 在构建期经 `AiUI::makeId` 折成 32 位整数（FNV-1a）�
 - [FrameLayout](layouts/frame_layout.md) —— 绝对坐标叠放
 - [LinearLayout](layouts/linear_layout.md) —— 线性排列 + weight 分配
 
+### 主题
+
+- [主题与配色](theme.md) —— 运行时换肤、`themes.xml`、XML 里引用主题色
+
 ### 组件
 
 | 组件 | 用途 |

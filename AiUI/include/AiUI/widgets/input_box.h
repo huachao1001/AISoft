@@ -25,6 +25,16 @@ struct InputSpec {
   int caretWidth = 1;
   // 密码模式：显示为圆点，但仍可选中与复制
   bool password = false;
+
+  // ── 颜色：kNoColor 表示跟随主题 ──
+  Color background = kNoColor;
+  Color border = kNoColor;
+  Color focusBorder = kNoColor;
+  Color text = kNoColor;
+  Color cueColor = kNoColor;
+  Color leadIconColor = kNoColor;
+  Color selBg = kNoColor;
+  Color caret = kNoColor;
 };
 
 class InputBox : public View {

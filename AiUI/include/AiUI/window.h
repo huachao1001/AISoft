@@ -20,7 +20,7 @@
 
 namespace AiUI {
 
-// 窗口整体配色
+// 窗口整体配色。background 为 kNoColor 时跟随 Theme。
 struct WindowTheme {
   Color background = kNoColor;
   TitleBarStyle titleBar;
@@ -37,7 +37,15 @@ class Window {
   // ── 外观 ──
   void setTitle(const std::wstring& title);
   const std::wstring& title() const { return title_; }
+  // 旧接口：只覆盖窗口底色与标题栏样式
   void setTheme(const WindowTheme& theme);
+  // 系统主题：作用于标题栏与整棵内容树。传入的 Theme 由调用方持有，
+  // 生命周期要覆盖窗口——通常用 kLightTheme / kDarkTheme 或自定义的静态对象。
+  void setAppTheme(const Theme* theme);
+  const Theme* appTheme() const { return appTheme_; }
+  // 便捷入口：在浅色/深色之间切换
+  void setDarkMode(bool dark);
+  bool isDarkMode() const { return darkMode_; }
   void setStyle(const WindowStyle& style);
   // 最小尺寸（96 DPI 设计值）
   void setMinSize(int width, int height);
@@ -100,6 +108,9 @@ class Window {
 
   std::wstring title_;
   WindowTheme theme_;
+  // 系统主题；nullptr 表示用默认浅色
+  const Theme* appTheme_ = nullptr;
+  bool darkMode_ = false;
   WindowStyle style_;
   int minWidth_ = 0;
   int minHeight_ = 0;

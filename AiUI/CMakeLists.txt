@@ -26,6 +26,7 @@ set(AIUI_SOURCES
   src/window.cpp
   src/activity.cpp
   src/layout_inflater.cpp
+  src/theme_registry.cpp
   src/font.cpp
   # 布局
   src/layouts/frame_layout.cpp

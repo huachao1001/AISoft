@@ -193,8 +193,15 @@ void View::setEnabled(bool enabled) {
 }
 
 void View::setBackgroundColor(Color color) {
-  if (explicitBackground_ == color) return;
+  if (explicitBackground_ == color && !backgroundRole_) return;
   explicitBackground_ = color;
+  backgroundRole_ = nullptr;
+  invalidate();
+}
+
+void View::setBackgroundRole(Color Theme::*role) {
+  if (backgroundRole_ == role) return;
+  backgroundRole_ = role;
   invalidate();
 }
 
@@ -230,15 +237,43 @@ void View::draw(Painter& painter, const Rect& dirty) {
   painter.restore();
 }
 
+// ───────────────────────── 主题 ─────────────────────────
+
+void View::invalidateSubtree(View* view) {
+  if (!view) return;
+  view->invalidate();
+  for (View* child : view->children_) {
+    invalidateSubtree(child);
+  }
+}
+
+void View::setTheme(const Theme* theme) {
+  if (theme_ == theme) return;
+  theme_ = theme;
+  // 换配色只影响绘制，不涉及尺寸
+  invalidateSubtree(this);
+}
+
+const Theme& View::theme() const {
+  for (const View* v = this; v; v = v->parent_) {
+    if (v->theme_) return *v->theme_;
+  }
+  return defaultTheme();
+}
+
 Color View::resolvedBackground() const {
   for (const View* v = this; v; v = v->parent_) {
     const Color color = v->backgroundColor();
     if (color != kNoColor) return color;
   }
-  return kColorBody;
+  return theme().body;
 }
 
-Color View::backgroundColor() const { return explicitBackground_; }
+Color View::backgroundColor() const {
+  // 主题角色优先：换主题后不必让宿主重新下发颜色
+  if (backgroundRole_) return theme().*backgroundRole_;
+  return explicitBackground_;
+}
 
 // ───────────────────────── 事件 ─────────────────────────
 

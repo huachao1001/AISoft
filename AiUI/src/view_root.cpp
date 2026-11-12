@@ -130,7 +130,9 @@ void ViewRoot::onExpose(const Rect& update) {
   painter.clipRect(target);
 
   // 兜底铺底：内容留白或根视图未覆盖到的部分
-  painter.fillRect(target, background_ == kNoColor ? kColorBody : background_);
+  const Color fallback =
+      content_ ? content_->theme().body : defaultTheme().body;
+  painter.fillRect(target, background_ == kNoColor ? fallback : background_);
 
   // draw 的 dirty 用窗口坐标，各层自己换算到局部
   content_->draw(painter, target);
@@ -463,7 +465,9 @@ bool ViewRoot::onChar(wchar_t ch) {
 void ViewRoot::setBackgroundColor(Color color) {
   background_ = color;
   // 同步给平台窗口：窗口变大时系统先铺它，避免新增区域露出黑底
-  if (window_) window_->setBackgroundColor(color == kNoColor ? kColorBody : color);
+  if (window_) {
+    window_->setBackgroundColor(color == kNoColor ? defaultTheme().body : color);
+  }
   invalidate();
 }
 

@@ -37,7 +37,7 @@ class ButtonBar : public ViewGroup {
   void onPaint(Painter& painter, const Rect& rect) override;
   Size onMeasure(const Size& available) override;
   void arrangeChildren(const Rect& content) override;
-  Color backgroundColor() const override { return kColorTool; }
+  Color backgroundColor() const override { return theme().tool; }
 
  private:
   std::vector<ButtonBarItem> items_;

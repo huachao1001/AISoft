@@ -163,12 +163,16 @@ Size ProgressBar::onMeasure(const Size& available) {
 void ProgressBar::onPaint(Painter& painter, const Rect& rect) {
   const int d = dpi();
   const int radius = spec_.radius * d / 96;
-  painter.fillRoundRect(rect, spec_.track, radius);
+  const Theme& t = theme();
+  const Color track = spec_.track != kNoColor ? spec_.track : t.lineSoft;
+  const Color fill = spec_.fill != kNoColor ? spec_.fill : t.link;
+
+  painter.fillRoundRect(rect, track, radius);
 
   const int fillWidth = static_cast<int>(rect.width() * progress_);
   if (fillWidth <= 0) return;
-  const Rect fill{rect.left, rect.top, rect.left + fillWidth, rect.bottom};
-  painter.fillRoundRect(fill, spec_.fill, radius);
+  const Rect region{rect.left, rect.top, rect.left + fillWidth, rect.bottom};
+  painter.fillRoundRect(region, fill, radius);
 }
 
 // ───────────────────────── GroupBox ─────────────────────────
@@ -213,7 +217,7 @@ void GroupBox::onPaint(Painter& painter, const Rect& rect) {
                       rect.top + textHeight};
   // 先铺底色再写字，盖掉边框那一段
   painter.fillRect(textRect.inset(-padX, 0, -padX, 0), resolvedBackground());
-  painter.drawText(textRect, title_, kColorTextHead, fonts.ui, TextAlign::kLeft);
+  painter.drawText(textRect, title_, theme().textHead, fonts.ui, TextAlign::kLeft);
 }
 
 void GroupBox::onLayout(const Rect& frame) {
@@ -275,22 +279,27 @@ Size ComboBox::onMeasure(const Size& available) {
 void ComboBox::onPaint(Painter& painter, const Rect& rect) {
   const int d = dpi();
   const int radius = spec_.radius * d / 96;
+  const Theme& t = theme();
 
-  painter.fillRoundRect(rect, spec_.background, radius);
-  // 展开时高亮边框，给用户"正开着"的反馈；未指定边框色时按背景自动派生
-  const Color border =
-      spec_.border != kNoColor ? spec_.border : edgeOn(spec_.background, 17);
-  painter.strokeRoundRect(rect, focused_ ? kColorInputFocus : border, radius);
+  const Color background = spec_.background != kNoColor ? spec_.background : t.pane;
+  const Color border = spec_.border != kNoColor ? spec_.border : edgeOn(background, 17);
+  const Color focusBorder = spec_.focusBorder != kNoColor ? spec_.focusBorder : t.inputFocus;
+  const Color ink = spec_.ink != kNoColor ? spec_.ink : t.text;
+  const Color arrowColor = spec_.arrow != kNoColor ? spec_.arrow : t.textMuted;
+  const Color disabledInk = spec_.disabledInk != kNoColor ? spec_.disabledInk : t.textFaint;
+
+  painter.fillRoundRect(rect, background, radius);
+  // 展开时高亮边框，给用户"正开着"的反馈
+  painter.strokeRoundRect(rect, focused_ ? focusBorder : border, radius);
 
   const int padX = spec_.padX * d / 96;
   const int arrowSize = 12 * d / 96;
   const Rect arrowRect{rect.right - padX - arrowSize, rect.top + (rect.height() - arrowSize) / 2,
                        rect.right - padX, rect.top + (rect.height() + arrowSize) / 2};
-  painter.drawIcon(IconId::kChevronDown, arrowRect, spec_.arrow);
+  painter.drawIcon(IconId::kChevronDown, arrowRect, arrowColor);
 
   const Rect textRect{rect.left + padX, rect.top, arrowRect.left - padX / 2, rect.bottom};
-  painter.drawTextEllipsis(textRect, selectedText(), isEnabled() ? spec_.ink : kColorTextFaint,
-                           fonts.ui);
+  painter.drawTextEllipsis(textRect, selectedText(), isEnabled() ? ink : disabledInk, fonts.ui);
 }
 
 bool ComboBox::onMouseDown(const MouseEvent& e) {

@@ -70,19 +70,19 @@ struct TitleBarDefaults {
 // 当前平台的默认度量
 const TitleBarDefaults& titleBarDefaults();
 
-// 标题栏配色
+// 标题栏配色。kNoColor 表示跟随 Theme。
 struct TitleBarStyle {
-  Color background = makeColor(0xff, 0xff, 0xff);
-  Color activeBackground = makeColor(0xff, 0xff, 0xff);
-  Color text = makeColor(0x1a, 0x1a, 0x1a);
-  Color inactiveText = makeColor(0x99, 0x99, 0x99);
+  Color background = kNoColor;
+  Color activeBackground = kNoColor;
+  Color text = kNoColor;
+  Color inactiveText = kNoColor;
   // 系统按钮：悬停底、按下底、关闭按钮的红色底与白色图标
-  Color buttonHover = makeColor(0xe8, 0xe8, 0xe8);
-  Color buttonDown = makeColor(0xd8, 0xd8, 0xd8);
-  Color closeHover = makeColor(0xe8, 0x11, 0x23);
-  Color closeDown = makeColor(0xc5, 0x0e, 0x1d);
-  Color closeInk = makeColor(0xff, 0xff, 0xff);
-  Color line = makeColor(0xe5, 0xe5, 0xe5);
+  Color buttonHover = kNoColor;
+  Color buttonDown = kNoColor;
+  Color closeHover = kNoColor;
+  Color closeDown = kNoColor;
+  Color closeInk = kNoColor;
+  Color line = kNoColor;
   // 底部分隔线高度；0 表示不画
   int lineThickness = 1;
 };

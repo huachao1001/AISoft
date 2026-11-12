@@ -5,11 +5,38 @@
 
 namespace AiUI {
 
+namespace {
+
+// 全局默认主题。用函数内静态量避免静态初始化顺序问题。
+const Theme*& defaultThemeSlot() {
+  static const Theme* theme = &kLightTheme;
+  return theme;
+}
+
+}  // namespace
+
 Activity::Activity() = default;
 
 Activity::~Activity() {
   // 窗口对象析构会连带销毁整棵视图树
   window_.reset();
+}
+
+void Activity::setDefaultTheme(const Theme* theme) {
+  // nullptr 归一成浅色，免得下游到处判空
+  defaultThemeSlot() = theme ? theme : &kLightTheme;
+}
+
+const Theme* Activity::defaultThemePtr() { return defaultThemeSlot(); }
+
+void Activity::setTheme(const Theme* theme) {
+  theme_ = theme;
+  if (window_) window_->setAppTheme(theme ? theme : defaultThemeSlot());
+}
+
+void Activity::setDarkMode(bool dark) {
+  darkMode_ = dark;
+  setTheme(dark ? &kDarkTheme : &kLightTheme);
 }
 
 void Activity::setTitle(const std::wstring& title) {
@@ -47,6 +74,9 @@ bool Activity::create(NativeHandle owner) {
   if (created_) return isOpen();
 
   window_ = std::make_unique<Window>();
+
+  // 主题要在内容建好前挂上，否则第一帧会用浅色画
+  window_->setAppTheme(theme_ ? theme_ : defaultThemeSlot());
 
   // Window 目前只建顶层窗口；标题栏与边框由它自绘
   WindowStyle style = style_;

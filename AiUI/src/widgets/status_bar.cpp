@@ -24,9 +24,15 @@ Size StatusBar::onMeasure(const Size& available) {
 
 void StatusBar::onPaint(Painter& painter, const Rect& rect) {
   const int d = dpi();
+  const Theme& t = theme();
   const int padX = style_.padX * d / 96;
   const int centerY = rect.center().y;
   int x = rect.left + padX;
+
+  const Color textColor = style_.text != kNoColor ? style_.text : t.textMuted;
+  const Color divider = style_.divider != kNoColor ? style_.divider : t.line;
+  const Color tagBg = style_.tagBg != kNoColor ? style_.tagBg : t.tagBg;
+  const Color tagInk = style_.tagInk != kNoColor ? style_.tagInk : t.tagInk;
 
   // 右侧统计先量宽，左侧被挤时用它做边界
   const int rightWidth = painter.measureText(fields_.right, fonts.uiSmall);
@@ -36,7 +42,7 @@ void StatusBar::onPaint(Painter& painter, const Rect& rect) {
   if (fields_.showHome) {
     const int size = style_.homeIconSize * d / 96;
     const Rect iconRect{x, centerY - size / 2, x + size, centerY + size / 2};
-    painter.drawIcon(IconId::kHome, iconRect, kColorTagInk);
+    painter.drawIcon(IconId::kHome, iconRect, tagInk);
     x = iconRect.right + 8 * d / 96;
   }
 
@@ -46,7 +52,7 @@ void StatusBar::onPaint(Painter& painter, const Rect& rect) {
     shown.erase(shown.begin());
   }
   const Rect textRect{x, rect.top, limit, rect.bottom};
-  painter.drawTextEllipsis(textRect, shown, style_.text, fonts.uiSmall);
+  painter.drawTextEllipsis(textRect, shown, textColor, fonts.uiSmall);
   x += painter.measureText(shown, fonts.uiSmall);
   x = (std::min)(x, limit);
 
@@ -57,22 +63,26 @@ void StatusBar::onPaint(Painter& painter, const Rect& rect) {
     const Rect tagRect{x + 8 * d / 96, centerY - tagHeight / 2,
                        x + 8 * d / 96 + tagWidth, centerY + tagHeight / 2};
     if (tagRect.right < limit) {
-      painter.fillRoundRect(tagRect, kColorTagBg, style_.tagRadius * d / 96);
-      painter.drawText(tagRect, fields_.tag, kColorTagInk, fonts.uiSmall, TextAlign::kCenter);
+      painter.fillRoundRect(tagRect, tagBg, style_.tagRadius * d / 96);
+      painter.drawText(tagRect, fields_.tag, tagInk, fonts.uiSmall, TextAlign::kCenter);
       x = tagRect.right + 8 * d / 96;
     }
   }
 
   if (!fields_.size.empty() && x < limit) {
     const Rect sizeRect{x, rect.top, limit, rect.bottom};
-    painter.drawText(sizeRect, fields_.size, style_.text, fonts.uiSmall, TextAlign::kLeft);
+    painter.drawText(sizeRect, fields_.size, textColor, fonts.uiSmall, TextAlign::kLeft);
   }
   if (rightLeft > 0) {
     const Rect rightRect{rightLeft, rect.top, rect.right - padX, rect.bottom};
-    painter.drawTextEllipsis(rightRect, fields_.right, style_.text, fonts.uiSmall);
+    painter.drawTextEllipsis(rightRect, fields_.right, textColor, fonts.uiSmall);
   }
 
-  painter.drawHLine(rect.left, rect.right, rect.top, style_.divider);
+  painter.drawHLine(rect.left, rect.right, rect.top, divider);
+}
+
+Color StatusBar::backgroundColor() const {
+  return style_.background != kNoColor ? style_.background : theme().tool;
 }
 
 }  // namespace AiUI

@@ -23,9 +23,12 @@ struct StatusStyle {
   int tagPadX = 6;
   int tagHeight = 19;
   int tagRadius = 4;
-  Color background = kColorTool;
-  Color text = kColorTextMuted;
-  Color divider = kColorLine;
+  // 颜色：kNoColor 表示跟随主题
+  Color background = kNoColor;
+  Color text = kNoColor;
+  Color divider = kNoColor;
+  Color tagBg = kNoColor;
+  Color tagInk = kNoColor;
 };
 
 class StatusBar : public View {
@@ -39,7 +42,7 @@ class StatusBar : public View {
  protected:
   void onPaint(Painter& painter, const Rect& rect) override;
   Size onMeasure(const Size& available) override;
-  Color backgroundColor() const override { return style_.background; }
+  Color backgroundColor() const override;
 
  private:
   StatusFields fields_{};

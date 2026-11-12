@@ -44,13 +44,18 @@ class Window::Root : public LinearLayout {
 };
 
 Window::Window() : root_(std::make_unique<Root>()) {
-  root_->setBackgroundColor(kColorBody);
+  root_->setBackgroundColor(defaultTheme().body);
 
   auto* bar = new TitleBar();
   titleBar_ = bar;
   root_->setTitleBar(bar);
   bar->setAppIcon(platform()->appIcon());
   root_->addView(bar, LayoutParams{}.withSize(LayoutParams::kMatchParent, bar->height()));
+
+  // 初始主题落在整棵树上：标题栏和内容都从根节点继承
+  appTheme_ = &kLightTheme;
+  root_->setTheme(appTheme_);
+  bar->setTheme(appTheme_);
 
   // 标题栏按钮转成窗口动作
   bar->setOnMinimize([this] {
@@ -86,9 +91,34 @@ void Window::setTitle(const std::wstring& title) {
 void Window::setTheme(const WindowTheme& theme) {
   theme_ = theme;
   if (titleBar_) titleBar_->setStyle(theme_.titleBar);
-  if (root_) root_->setBackgroundColor(theme_.background == kNoColor ? kColorBody
-                                                                    : theme_.background);
+  if (root_) {
+    const Color fallback = appTheme_ ? appTheme_->body : defaultTheme().body;
+    root_->setBackgroundColor(theme_.background == kNoColor ? fallback : theme_.background);
+  }
   if (window_) window_->invalidate();
+}
+
+void Window::setAppTheme(const Theme* theme) {
+  appTheme_ = theme;
+  if (root_) root_->setTheme(theme);
+  if (titleBar_) {
+    // 标题栏从自身主题取色，先挂上再重算样式
+    titleBar_->setTheme(theme);
+    titleBar_->setStyle(theme_.titleBar);
+  }
+  if (root_) {
+    const Color bg = theme_.background != kNoColor
+                         ? theme_.background
+                         : (theme ? theme->body : defaultTheme().body);
+    root_->setBackgroundColor(bg);
+  }
+  if (window_) window_->invalidate();
+}
+
+void Window::setDarkMode(bool dark) {
+  if (darkMode_ == dark) return;
+  darkMode_ = dark;
+  setAppTheme(dark ? &kDarkTheme : &kLightTheme);
 }
 
 void Window::setStyle(const WindowStyle& style) {

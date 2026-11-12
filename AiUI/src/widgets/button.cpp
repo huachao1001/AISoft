@@ -34,22 +34,24 @@ void Button::setEnabled(bool enabled) {
 }
 
 void Button::resolvePalette(Color& background, Color& border, Color& ink) const {
+  const Theme& t = theme();
+
   // 只有 kOutline 有描边，其它样式默认无线；先给确定值，
   // 免得调用方拿到上一个控件残留的 color
   border = kNoColor;
   if (!isEnabled()) {
-    background = spec_.style == ButtonStyle::kOutline ? kColorBtnDisBg : kNoColor;
-    ink = kColorTextFaint;
+    background = spec_.style == ButtonStyle::kOutline ? t.btnDisBg : kNoColor;
+    ink = t.textFaint;
   } else {
     switch (spec_.style) {
       case ButtonStyle::kOutline:
-        background = pressed_ ? kColorBtnDownBg : (hot_ ? kColorBtnHoverBg : kColorPane);
-        ink = kColorInk;
+        background = pressed_ ? t.btnDownBg : (hot_ ? t.btnHoverBg : t.pane);
+        ink = t.ink;
         break;
       case ButtonStyle::kSubtle:
       case ButtonStyle::kFlat:
-        background = pressed_ ? kColorBtnDownBg : (hot_ ? kColorHover : kNoColor);
-        ink = kColorInk;
+        background = pressed_ ? t.btnDownBg : (hot_ ? t.hover : kNoColor);
+        ink = t.ink;
         break;
     }
   }

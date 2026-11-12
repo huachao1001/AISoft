@@ -229,7 +229,21 @@ Button* TitleBar::systemButton(TitleBarButton button) const {
 
 // 样式与激活状态统一下发到各部件
 void TitleBar::applyStyle() {
-  const Color ink = active_ ? style_.text : style_.inactiveText;
+  // kNoColor 落到主题：标题栏不该写死白色，深色主题下会刺眼
+  const Theme& t = theme();
+  TitleBarStyle s = style_;
+  if (s.background == kNoColor) s.background = t.titleBg;
+  if (s.activeBackground == kNoColor) s.activeBackground = t.titleBg;
+  if (s.text == kNoColor) s.text = t.titleText;
+  if (s.inactiveText == kNoColor) s.inactiveText = t.titleTextInactive;
+  if (s.buttonHover == kNoColor) s.buttonHover = t.titleButtonHover;
+  if (s.buttonDown == kNoColor) s.buttonDown = t.titleButtonDown;
+  if (s.closeHover == kNoColor) s.closeHover = t.closeHover;
+  if (s.closeDown == kNoColor) s.closeDown = t.closeDown;
+  if (s.closeInk == kNoColor) s.closeInk = t.closeInk;
+  if (s.line == kNoColor) s.line = t.titleLine;
+
+  const Color ink = active_ ? s.text : s.inactiveText;
 
   if (iconView_) {
     const bool show = showTitleIcon_ && appIcon_.isValid() && defaults_.appIconSize > 0;
@@ -250,14 +264,14 @@ void TitleBar::applyStyle() {
   for (Button* button : {minimizeButton_, maximizeButton_, closeButton_}) {
     if (!button) continue;
     const bool isClose = button == closeButton_;
-    ButtonSpec spec = makeButtonSpec(style_, defaults_, button->spec().icon, isClose);
+    ButtonSpec spec = makeButtonSpec(s, defaults_, button->spec().icon, isClose);
     spec.height = bandHeightOverride_;
     spec.ink = ink;
-    spec.hoverInk = isClose ? style_.closeInk : ink;
+    spec.hoverInk = isClose ? s.closeInk : ink;
     button->setSpec(spec);
   }
 
-  setBackgroundColor(active_ ? style_.activeBackground : style_.background);
+  setBackgroundColor(active_ ? s.activeBackground : s.background);
 }
 
 void TitleBar::syncButtonIcons() {
@@ -282,7 +296,8 @@ void TitleBar::onPaint(Painter& painter, const Rect& rect) {
   // 底部分隔线，与内容区分开
   const int thickness = (std::max)(1, style_.lineThickness * dpi() / 96);
   const int top = rect.bottom - thickness;
-  painter.fillRect(Rect{rect.left, top, rect.right, rect.bottom}, style_.line);
+  const Color line = style_.line != kNoColor ? style_.line : theme().titleLine;
+  painter.fillRect(Rect{rect.left, top, rect.right, rect.bottom}, line);
 }
 
 // ───────────────────────── 交互 ─────────────────────────

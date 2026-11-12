@@ -11,7 +11,8 @@ include/AiUI/
   events.h       中性事件：MouseEvent / Key / Modifiers / CursorShape
   platform.h     平台后端接口（窗口、字体、图片、绘制子系统）
   painter.h      PaintBackend（最小图元）+ Painter（组合绘制）+ Canvas（双缓冲）
-  theme.h        配色与尺寸常量（96 DPI 设计值）
+  theme.h        运行时调色板 Theme + 浅色/深色两套（96 DPI 设计值）
+  theme_registry.h 按名字取调色板，供 themes.xml 生成的代码登记
   icon.h         矢量图标 ID
   font.h         FontSet：按 DPI 创建的一组界面字体
   view.h         View：绘制与事件的基本单位
