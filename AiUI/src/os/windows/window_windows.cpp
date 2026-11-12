@@ -535,18 +535,17 @@ class WindowsWindow : public PlatformWindow {
 
       case WM_MOUSELEAVE: {
         tracking_ = false;
-        // 移到非客户区（最大化按钮、边框）也会收到这条消息。只有光标真的
-        // 离开窗口时才整体清悬停，否则刚推上去的高亮会被立刻撤掉。
+        // 移到非客户区（标题栏拖动带、最大化按钮、边框）也会收到这条消息。
+        // 不能只看光标是否还在窗口里：标题栏已划进客户区，光标停在标题
+        // 文字上时它仍在窗口内，但那里是 HTCAPTION，客户区不再有鼠标消息，
+        // 关闭按钮的红色悬停底色就会一直留着。
+        // 这里直接问命中测试：只有落在最大化按钮上才保留，其余一律清悬停。
         POINT cursor{};
-        RECT window{};
-        bool outside = true;
-        if (::GetCursorPos(&cursor) && ::GetWindowRect(hwnd_, &window)) {
-          outside = !::PtInRect(&window, cursor);
+        if (::GetCursorPos(&cursor) && ::ScreenToClient(hwnd_, &cursor)) {
+          if (host_.onHitTest(Point{cursor.x, cursor.y}) == HitTarget::kMaxButton) return 0;
         }
-        if (outside) {
-          hoverMaxButton_ = false;
-          host_.onMouseLeave();
-        }
+        hoverMaxButton_ = false;
+        host_.onMouseLeave();
         return 0;
       }
 
