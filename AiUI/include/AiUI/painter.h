@@ -58,6 +58,12 @@ class PaintBackend {
   virtual void resetClip() = 0;
   // 与当前裁剪区求交；配合 save/restore 逐层收缩
   virtual void clipRect(const Rect& rc) = 0;
+  // 圆角裁剪：与当前裁剪区求交，但边界带圆角。
+  // 用于「圆角容器里铺满整行的底色」——矩形裁剪会盖住容器的圆角。
+  virtual void clipRoundRect(const Rect& rc, int radius) {
+    (void)radius;
+    clipRect(rc);
+  }
 
   // 坐标平移与绘制状态栈：子树绘制靠它把原点移到子视图左上角
   virtual void translate(int dx, int dy) = 0;
@@ -137,6 +143,8 @@ class Painter {
   void resetClip() { backend_.resetClip(); }
   // 与已有裁剪区求交，用于逐层收缩子树可见范围
   void clipRect(const Rect& rc) { backend_.clipRect(rc); }
+  // 圆角裁剪：铺满整行的底色不会盖住容器圆角
+  void clipRoundRect(const Rect& rc, int radius) { backend_.clipRoundRect(rc, radius); }
 
   // ── 坐标平移 ──
   // 进入子视图前平移原点，返回时用 save/restore 还原

@@ -177,6 +177,14 @@ class GdiplusBackend : public PaintBackend {
     g_->SetClip(toGdiplus(rc), CombineModeIntersect);
   }
 
+  void clipRoundRect(const Rect& rc, int radius) override {
+    if (!g_ || rc.isEmpty()) return;
+    // 用圆角路径当裁剪区：铺满整行的底色不会溢出到容器圆角外
+    GraphicsPath path;
+    buildRoundPath(path, rc, radius);
+    g_->SetClip(&path, CombineModeIntersect);
+  }
+
   void translate(int dx, int dy) override {
     if (g_) g_->TranslateTransform(static_cast<REAL>(dx), static_cast<REAL>(dy));
   }

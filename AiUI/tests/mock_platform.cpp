@@ -68,6 +68,12 @@ void RecordingBackend::resetClip() { clip_ = Rect{}; }
 
 void RecordingBackend::clipRect(const Rect& rc) { clip_ = clip_.isEmpty() ? map(rc) : clip_.intersect(map(rc)); }
 
+void RecordingBackend::clipRoundRect(const Rect& rc, int radius) {
+  // 只记录成矩形裁剪：测试校验的是「有没有收缩区域」，圆角细节交给后端
+  (void)radius;
+  clipRect(rc);
+}
+
 void RecordingBackend::translate(int dx, int dy) {
   tx_ += dx;
   ty_ += dy;

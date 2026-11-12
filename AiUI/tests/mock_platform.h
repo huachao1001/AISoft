@@ -41,6 +41,7 @@ class RecordingBackend : public AiUI::PaintBackend {
   void setClip(const Rect& rc) override;
   void resetClip() override;
   void clipRect(const Rect& rc) override;
+  void clipRoundRect(const Rect& rc, int radius) override;
   void translate(int dx, int dy) override;
   void save() override;
   void restore() override;

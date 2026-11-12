@@ -133,7 +133,9 @@ void RadioGroup::onLayout(const Rect& frame) {
     int x = area.left;
     for (auto* item : items_) {
       const Size size = item->measure(Size{area.width(), area.height()});
-      item->layout(Rect{x, area.top, x + size.width, area.top + size.height});
+      // 垂直居中：选项行比容器矮，顶部对齐会显得比同一行的输入框高出一截
+      const int top = area.top + (area.height() - size.height) / 2;
+      item->layout(Rect{x, top, x + size.width, top + size.height});
       x += size.width + gap;
     }
     return;
@@ -244,7 +246,10 @@ void GroupBox::onLayout(const Rect& frame) {
 
 // ───────────────────────── ComboBox ─────────────────────────
 
-ComboBox::ComboBox() = default;
+ComboBox::ComboBox() {
+  // 下拉框要能被聚焦：失焦收起浮层、键盘上下键选值都依赖逻辑焦点
+  setFocusable(true);
+}
 
 ComboBox::~ComboBox() {
   // 浮层在 ViewRoot 上只是裸指针：控件先销毁时必须摘掉，否则根上留悬空引用
@@ -317,7 +322,8 @@ void ComboBox::onPaint(Painter& painter, const Rect& rect) {
   const int arrowSize = 12 * d / 96;
   const Rect arrowRect{rect.right - padX - arrowSize, rect.top + (rect.height() - arrowSize) / 2,
                        rect.right - padX, rect.top + (rect.height() + arrowSize) / 2};
-  painter.drawIcon(IconId::kChevronDown, arrowRect, arrowColor);
+  // 展开时箭头上下翻转，和系统的下拉观感一致
+  painter.drawIcon(popupOpen_ ? IconId::kChevronUp : IconId::kChevronDown, arrowRect, arrowColor);
 
   const Rect textRect{rect.left + padX, rect.top, arrowRect.left - padX / 2, rect.bottom};
   // 没选中项时显示提示文字：此时下拉是「其他格式」的入口，不是当前值
@@ -354,6 +360,8 @@ void ComboBox::openPopup() {
   if (popupOpen_) return;
   popupOpen_ = true;
   hotRow_ = selected_;
+  // 箭头要跟着翻转，控件自身也得重画（不只是浮层区域）
+  invalidate();
   // 交给 ViewRoot 置顶绘制：画在整棵树之上，且优先收鼠标事件
   root()->setOverlay(this);
 }
@@ -408,9 +416,11 @@ bool ComboBox::onOverlayMouseDown(const Point& windowPoint) {
     setSelectedIndex(row);
     return true;
   }
-  // 点在列表外就算放弃选择：点控件自身也走这里（收起，不重新展开）
+  // 点在列表外就算放弃选择
   closePopup();
-  return true;
+  // 点控件自身要吞掉：否则交给下面会被当成「重新展开」，列表就关不掉了。
+  // 点别处则放行，让那一次点击直接落到目标控件上，用户不必点两下。
+  return absoluteBounds().contains(windowPoint);
 }
 
 bool ComboBox::onOverlayMouseMove(const Point& windowPoint) {
@@ -436,7 +446,8 @@ void ComboBox::paintOverlay(Painter& painter) {
   // 阴影留白由外框自己撑：先铺一层描边色的圆角当边界
   painter.fillRoundRect(popup, t.pane, radius);
   painter.strokeRoundRect(popup, edgeOn(t.pane, 17), radius);
-  painter.clipRect(popup.inset(1, 1, 1, 1));
+  // 圆角裁剪：首末行的悬停底色是矩形，直接铺会盖住列表容器的圆角
+  painter.clipRoundRect(popup, radius);
 
   for (size_t i = 0; i < items_.size(); ++i) {
     const int top = popup.top + static_cast<int>(i) * rowHeight;
@@ -508,6 +519,9 @@ bool ComboBox::onKeyDown(const Key& key, const Modifiers& mods) {
 
 void ComboBox::onFocusChanged(bool focused) {
   focused_ = focused;
+  // 失焦就收起列表：焦点去了别处（点其他控件、切窗口）时，
+  // 浮层还留在屏幕上会挡住下面的内容
+  if (!focused && popupOpen_) closePopup();
   invalidate();
 }
 

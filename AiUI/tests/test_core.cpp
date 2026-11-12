@@ -15,6 +15,7 @@
 #include "AiUI/widgets/form_controls.h"
 #include "AiUI/widgets/input_box.h"
 #include "AiUI/widgets/list_view.h"
+#include "AiUI/widgets/option_view.h"
 #include "AiUI/widgets/tree_view.h"
 
 #include <memory>
@@ -1083,6 +1084,61 @@ AIUI_TEST(combo_popup_closes_when_clicking_outside) {
   viewRoot->onMouseDown(mouseAt(350, 280));
   AIUI_CHECK(!combo->isPopupOpen());
   AIUI_CHECK_EQ(combo->selectedIndex(), 1);
+}
+
+AIUI_TEST(combo_popup_closes_when_focus_moves_away) {
+  TestEnv env;
+  auto root = std::make_unique<LinearLayout>(Orientation::kVertical);
+  auto* combo = new ComboBox();
+  combo->setItems({L"存储", L"最快"});
+  root->addView(combo, LayoutParams{}.withSize(180, 30));
+  auto* other = new InputBox();
+  // 纵向堆叠：输入框紧接在下拉框下面（y = 30..60）
+  root->addView(other, LayoutParams{}.withSize(180, 30));
+  AIUI_CHECK(root->create(nullptr, Rect{0, 0, 400, 300}));
+
+  ViewRoot* viewRoot = root->root();
+  viewRoot->onMouseDown(mouseAt(20, 15, MouseButton::kLeft));
+  AIUI_CHECK(combo->isPopupOpen());
+
+  // 焦点被程序化转移（Tab 导航、宿主设焦点）：列表必须自己收起，
+  // 否则浮层会一直挂在屏幕上挡住下面的控件
+  viewRoot->requestFocus(other);
+  AIUI_CHECK(!combo->isPopupOpen());
+}
+
+AIUI_TEST(radio_group_centers_items_vertically) {
+  TestEnv env;
+  // 组高 30，选项行只有 22 高：应当上下留白均分，而不是贴顶
+  auto group = std::make_unique<RadioGroup>();
+  group->setOrientation(Orientation::kHorizontal);
+  RadioButton* zip = group->addItem(L"ZIP");
+  group->layout(Rect{0, 0, 200, 30});
+
+  const int expectedTop = (30 - zip->bounds().height()) / 2;
+  AIUI_CHECK_EQ(zip->bounds().top, expectedTop);
+  AIUI_CHECK(zip->bounds().top > 0);
+}
+
+AIUI_TEST(combo_popup_focus_moves_in_one_click) {
+  TestEnv env;
+  // 横向摆放：弹层向下展开，右侧输入框不会被弹层盖住
+  auto root = std::make_unique<LinearLayout>(Orientation::kHorizontal);
+  auto* combo = new ComboBox();
+  combo->setItems({L"存储", L"最快"});
+  root->addView(combo, LayoutParams{}.withSize(180, 30));
+  auto* other = new InputBox();
+  root->addView(other, LayoutParams{}.withSize(180, 30));
+  AIUI_CHECK(root->create(nullptr, Rect{0, 0, 400, 300}));
+
+  ViewRoot* viewRoot = root->root();
+  viewRoot->onMouseDown(mouseAt(20, 15, MouseButton::kLeft));
+  AIUI_CHECK(combo->isPopupOpen());
+
+  // 点列表外的其它控件：收起的同时焦点要落过去，不能要求用户点两下
+  viewRoot->onMouseDown(mouseAt(250, 15, MouseButton::kLeft));
+  AIUI_CHECK(!combo->isPopupOpen());
+  AIUI_CHECK(viewRoot->focused() == other);
 }
 
 // ───────────────────────── 事件冒泡 ─────────────────────────
