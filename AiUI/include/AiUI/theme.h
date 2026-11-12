@@ -37,12 +37,9 @@ constexpr Color kColorHover = makeColor(0xf3, 0xf4, 0xf6);
 constexpr Color kColorActiveInk = makeColor(0x1d, 0x4e, 0xd8);
 
 // ── 按钮 ──
-constexpr Color kColorBtnBorder = makeColor(0xd1, 0xd5, 0xdb);
 constexpr Color kColorBtnHoverBg = makeColor(0xf0, 0xf4, 0xf9);
-constexpr Color kColorBtnHoverBorder = makeColor(0xb9, 0xc8, 0xdd);
 constexpr Color kColorBtnDownBg = makeColor(0xe4, 0xeb, 0xf3);
 constexpr Color kColorBtnDisBg = makeColor(0xf8, 0xf8, 0xf8);
-constexpr Color kColorBtnDisBorder = makeColor(0xee, 0xee, 0xee);
 
 // ── 状态栏标签 ──
 constexpr Color kColorTagBg = makeColor(0xcf, 0xe2, 0xff);
@@ -52,9 +49,19 @@ constexpr Color kColorTagInk = makeColor(0x08, 0x42, 0x98);
 constexpr Color kColorDialogBg = makeColor(240, 247, 252);
 
 // ── 输入框 ──
-constexpr Color kColorInputBorder = makeColor(0xd1, 0xd5, 0xdb);
 constexpr Color kColorInputFocus = makeColor(0x60, 0xa5, 0xfa);
 constexpr Color kColorInputBg = makeColor(0xff, 0xff, 0xff);
+
+// 依底色明暗派生描边色：浅底叠淡墨、深底叠淡白。
+// 控件不该写死描边色——换主题、换宿主底色时，固定灰要么糊进背景、
+// 要么在深底上刺眼。percent 是在底色上叠加的墨色浓度。
+constexpr Color edgeOn(Color background, int percent = 18) {
+  const int luma = (colorRed(background) * 299 + colorGreen(background) * 587 +
+                    colorBlue(background) * 114) /
+                   1000;
+  const Color ink = luma < 128 ? makeColor(0xff, 0xff, 0xff) : makeColor(0x00, 0x00, 0x00);
+  return blendColor(background, ink, static_cast<float>(percent) / 100.0f);
+}
 
 // ── 布局尺寸 ──
 constexpr int kSizeToolH = 52;

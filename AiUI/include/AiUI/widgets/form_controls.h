@@ -122,7 +122,8 @@ struct ComboSpec {
   int radius = 6;
   int padX = 10;
   Color background = kColorPane;
-  Color border = kColorInputBorder;
+  // kNoColor 表示按 background 自动派生，换底色不用重配边框
+  Color border = kNoColor;
   Color ink = kColorText;
   Color arrow = kColorTextMuted;
 };

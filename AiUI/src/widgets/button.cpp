@@ -34,28 +34,27 @@ void Button::setEnabled(bool enabled) {
 }
 
 void Button::resolvePalette(Color& background, Color& border, Color& ink) const {
+  // 只有 kOutline 有描边，其它样式默认无线；先给确定值，
+  // 免得调用方拿到上一个控件残留的 color
+  border = kNoColor;
   if (!isEnabled()) {
     background = spec_.style == ButtonStyle::kOutline ? kColorBtnDisBg : kNoColor;
-    border = kColorBtnDisBorder;
     ink = kColorTextFaint;
   } else {
     switch (spec_.style) {
       case ButtonStyle::kOutline:
         background = pressed_ ? kColorBtnDownBg : (hot_ ? kColorBtnHoverBg : kColorPane);
-        border = hot_ ? kColorBtnHoverBorder : kColorBtnBorder;
         ink = kColorInk;
         break;
       case ButtonStyle::kSubtle:
       case ButtonStyle::kFlat:
         background = pressed_ ? kColorBtnDownBg : (hot_ ? kColorHover : kNoColor);
-        border = kNoColor;
         ink = kColorInk;
         break;
     }
   }
   // 显式指定的颜色优先
   if (spec_.background != kNoColor) background = spec_.background;
-  if (spec_.border != kNoColor) border = spec_.border;
   if (spec_.ink != kNoColor) ink = spec_.ink;
 
   // 悬停/按下态的显式色盖过基础色，标题栏这类需要精确控制外观的按钮靠它
@@ -64,6 +63,17 @@ void Button::resolvePalette(Color& background, Color& border, Color& ink) const 
     else if (hot_ && spec_.hoverBackground != kNoColor) background = spec_.hoverBackground;
     if (hot_ && spec_.hoverInk != kNoColor) ink = spec_.hoverInk;
   }
+
+  if (spec_.style != ButtonStyle::kOutline) return;
+  if (spec_.border != kNoColor) {
+    border = spec_.border;
+    return;
+  }
+  // 描边跟着最终背景走：换主题、换显式底色都不用手工配一组边框色。
+  // 悬停略深一档保留层次，禁用则更淡，不能比可用态还抢眼。
+  const Color base = background != kNoColor ? background : resolvedBackground();
+  const int percent = !isEnabled() ? 8 : (hot_ ? 24 : 17);
+  border = edgeOn(base, percent);
 }
 
 int Button::preferredWidth() {

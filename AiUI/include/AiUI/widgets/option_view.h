@@ -22,7 +22,8 @@ struct OptionSpec {
   int radius = 4;
   Color ink = kNoColor;
   Color boxBackground = kColorPane;
-  Color boxBorder = kColorInputBorder;
+  // kNoColor 表示按 boxBackground 自动派生
+  Color boxBorder = kNoColor;
   Color accent = kColorInputFocus;
 };
 

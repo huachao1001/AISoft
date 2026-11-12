@@ -27,8 +27,11 @@ void OptionView::onPaint(Painter& painter, const Rect& rect) {
   const int d = dpi();
   const Color ink = spec_.ink != kNoColor ? spec_.ink
                                           : (isEnabled() ? kColorText : kColorTextFaint);
-  const Color border = isEnabled() ? spec_.boxBorder : kColorBtnDisBorder;
-  const Color accent = isEnabled() ? spec_.accent : kColorBtnDisBorder;
+  // 禁用态描边也要跟着底色走，只是更淡：写死浅灰在深色主题上会变成亮线
+  const Color border = !isEnabled()            ? edgeOn(spec_.boxBackground, 8)
+                        : spec_.boxBorder != kNoColor ? spec_.boxBorder
+                                                      : edgeOn(spec_.boxBackground, 22);
+  const Color accent = isEnabled() ? spec_.accent : edgeOn(spec_.boxBackground, 8);
 
   const Rect box = boxRect(rect);
   const int radius = spec_.radius * d / 96;

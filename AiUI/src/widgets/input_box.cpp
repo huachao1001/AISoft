@@ -257,7 +257,9 @@ void InputBox::onPaint(Painter& painter, const Rect& rect) {
   const int radius = spec_.radius * d / 96;
 
   painter.fillRoundRect(rect, kColorInputBg, radius);
-  painter.strokeRoundRect(rect, focused_ ? kColorInputFocus : kColorInputBorder, radius);
+  // 描边由自身底色派生：浅底得到淡灰、深底得到淡白，
+  // 换主题不用再手写一套边框色
+  painter.strokeRoundRect(rect, focused_ ? kColorInputFocus : edgeOn(kColorInputBg, 17), radius);
 
   const Rect textArea = textRect();
   if (spec_.hasLeadIcon) {

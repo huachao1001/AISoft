@@ -200,9 +200,9 @@ void GroupBox::onPaint(Painter& painter, const Rect& rect) {
   const int d = dpi();
   const int titleHeight = titleHeight_ * d / 96;
 
-  // 边框从标题中线开始，标题压在缺口上
+  // 边框从标题中线开始，标题压在缺口上；颜色跟着所在容器的底色走
   const Rect frame{rect.left, rect.top + titleHeight / 2, rect.right, rect.bottom};
-  painter.strokeRoundRect(frame, kColorLine, 6 * d / 96);
+  painter.strokeRoundRect(frame, edgeOn(resolvedBackground(), 15), 6 * d / 96);
 
   if (title_.empty()) return;
 
@@ -277,8 +277,10 @@ void ComboBox::onPaint(Painter& painter, const Rect& rect) {
   const int radius = spec_.radius * d / 96;
 
   painter.fillRoundRect(rect, spec_.background, radius);
-  // 展开时高亮边框，给用户"正开着"的反馈
-  painter.strokeRoundRect(rect, focused_ ? kColorInputFocus : spec_.border, radius);
+  // 展开时高亮边框，给用户"正开着"的反馈；未指定边框色时按背景自动派生
+  const Color border =
+      spec_.border != kNoColor ? spec_.border : edgeOn(spec_.background, 17);
+  painter.strokeRoundRect(rect, focused_ ? kColorInputFocus : border, radius);
 
   const int padX = spec_.padX * d / 96;
   const int arrowSize = 12 * d / 96;

@@ -32,6 +32,20 @@ constexpr std::uint8_t colorBlue(Color c) { return static_cast<std::uint8_t>(c);
 // 完全透明的哨兵值，表示“交给主题决定”
 constexpr Color kNoColor = 0;
 
+// 把 over 按 ratio（0..1）叠到 base 上，两端颜色都当作不透明。
+// 用于「在任意底色上淡出一层墨色」这类派生色：底色换了，结果自动跟着变。
+constexpr Color blendColor(Color base, Color over, float ratio) {
+  if (ratio <= 0.0f) return base;
+  if (ratio >= 1.0f) return over;
+  auto mix = [ratio](std::uint8_t b, std::uint8_t o) {
+    return static_cast<std::uint8_t>(static_cast<float>(b) +
+                                     (static_cast<float>(o) - static_cast<float>(b)) * ratio +
+                                     0.5f);
+  };
+  return makeColor(mix(colorRed(base), colorRed(over)), mix(colorGreen(base), colorGreen(over)),
+                   mix(colorBlue(base), colorBlue(over)));
+}
+
 struct Point {
   int x = 0;
   int y = 0;

@@ -668,6 +668,42 @@ AIUI_TEST(input_box_draws_caret_when_empty) {
 
 // ───────────────────────── 失焦与背景 ─────────────────────────
 
+// 描边色必须跟着底色走：浅底叠淡墨、深底叠淡白。
+// 写死灰色在深色主题上会糊掉，这条用来钉住派生规则。
+AIUI_TEST(edge_color_adapts_to_background) {
+  // 白底：得到比白略深的灰
+  const Color onWhite = edgeOn(makeColor(0xff, 0xff, 0xff), 17);
+  AIUI_CHECK(colorRed(onWhite) < 0xff);
+  AIUI_CHECK(colorRed(onWhite) > 0xc0);
+  // 纯灰：三通道一致，说明是等量叠墨而不是偏色
+  AIUI_CHECK(colorRed(onWhite) == colorGreen(onWhite));
+  AIUI_CHECK(colorGreen(onWhite) == colorBlue(onWhite));
+
+  // 深底：要变亮而不是变暗，否则深色主题上完全看不见
+  const Color dark = makeColor(0x1e, 0x1e, 0x1e);
+  const Color onDark = edgeOn(dark, 17);
+  AIUI_CHECK(colorRed(onDark) > colorRed(dark));
+  // 也不能一路冲到纯白，否则深底上是一根刺眼的亮线
+  AIUI_CHECK(colorRed(onDark) < 0xff);
+
+  // 浓度越高，离底色越远
+  const Color weak = edgeOn(kColorPane, 10);
+  const Color strong = edgeOn(kColorPane, 30);
+  AIUI_CHECK(colorRed(strong) < colorRed(weak));
+}
+
+// blendColor 的端点与中值
+AIUI_TEST(blend_color_endpoints_and_middle) {
+  const Color white = makeColor(0xff, 0xff, 0xff);
+  const Color black = makeColor(0x00, 0x00, 0x00);
+  AIUI_CHECK(blendColor(white, black, 0.0f) == white);
+  AIUI_CHECK(blendColor(white, black, 1.0f) == black);
+  // 50% 应是中灰
+  const Color mid = blendColor(white, black, 0.5f);
+  AIUI_CHECK_EQ(static_cast<int>(colorRed(mid)), 128);
+}
+
+
 // 切到别的软件时窗口失活，插入点必须收起来：
 // 只停定时器会让光标停在最后一次可见状态，看起来像卡住了。
 AIUI_TEST(input_box_hides_caret_when_window_deactivates) {
