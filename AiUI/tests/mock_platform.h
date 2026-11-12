@@ -190,6 +190,9 @@ class FakePlatform : public AiUI::Platform {
   void destroyWindow(AiUI::PlatformWindow* window) override;
 
   int screenDpi() override { return dpi_; }
+  Rect workArea() override { return Rect{0, 0, 1920, 1080}; }
+  int runEventLoop() override { return 0; }
+  void quitEventLoop(int exitCode) override { (void)exitCode; }
 
   const wchar_t* defaultFontFamily() override { return L"Test Sans"; }
   bool setClipboardText(const std::wstring& text) override {

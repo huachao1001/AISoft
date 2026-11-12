@@ -3,7 +3,9 @@
 
 #include "AiUI/platform.h"
 
+#include <commctrl.h>
 #include <shellapi.h>
+#include <shlwapi.h>
 #include <windowsx.h>
 
 #include <map>
@@ -193,6 +195,12 @@ class WindowsWindow : public PlatformWindow {
     return Rect{rc.left, rc.top, rc.right, rc.bottom};
   }
 
+  Point clientOrigin() const override {
+    POINT pt{0, 0};
+    if (hwnd_) ::ClientToScreen(hwnd_, &pt);
+    return Point{pt.x, pt.y};
+  }
+
   void show(bool visible) override {
     if (hwnd_) ::ShowWindow(hwnd_, visible ? SW_SHOW : SW_HIDE);
   }
@@ -280,6 +288,16 @@ class WindowsWindow : public PlatformWindow {
 
   bool isMaximized() const override { return hwnd_ && ::IsZoomed(hwnd_); }
 
+  // 还原态外框：最大化时 GetWindowPlacement 仍保留还原尺寸，持久化窗口用
+  Rect normalBounds() const override {
+    if (!hwnd_) return windowRect();
+    WINDOWPLACEMENT wp{};
+    wp.length = sizeof(wp);
+    if (!::GetWindowPlacement(hwnd_, &wp)) return windowRect();
+    const RECT& rc = wp.rcNormalPosition;
+    return Rect{rc.left, rc.top, rc.right, rc.bottom};
+  }
+
   void close() override {
     if (hwnd_) ::PostMessageW(hwnd_, WM_CLOSE, 0, 0);
   }
@@ -295,6 +313,15 @@ class WindowsWindow : public PlatformWindow {
     if (!hwnd_) return;
     ::ReleaseCapture();
     ::SendMessageW(hwnd_, WM_NCLBUTTONDOWN, hitCode(edge), 0);
+  }
+
+  void setFileDropHandler(
+      std::function<void(const std::vector<std::wstring>& paths)> fn) override {
+    if (!hwnd_) return;
+    fileDropHandler_ = std::move(fn);
+    // 只在真的要用时才向系统注册：注册过的窗口会被资源管理器当作投放目标，
+    // 光标形态与普通窗口不同
+    ::DragAcceptFiles(hwnd_, fileDropHandler_ != nullptr);
   }
 
   static LRESULT CALLBACK proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -579,6 +606,27 @@ class WindowsWindow : public PlatformWindow {
       case WM_GETDLGCODE:
         return DLGC_WANTALLKEYS | DLGC_WANTCHARS | DLGC_WANTARROWS;
 
+      case WM_DROPFILES: {
+        if (fileDropHandler_) {
+          HDROP drop = reinterpret_cast<HDROP>(wParam);
+          const UINT count = ::DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+          std::vector<std::wstring> paths;
+          paths.reserve(count);
+          for (UINT i = 0; i < count; ++i) {
+            const UINT len = ::DragQueryFileW(drop, i, nullptr, 0);
+            if (len == 0) continue;
+            std::wstring path(len, L'\0');
+            ::DragQueryFileW(drop, i, path.data(), len + 1);
+            paths.push_back(std::move(path));
+          }
+          ::DragFinish(drop);
+          if (!paths.empty()) fileDropHandler_(paths);
+        } else {
+          ::DragFinish(reinterpret_cast<HDROP>(wParam));
+        }
+        return 0;
+      }
+
       case WM_CLOSE:
         // 交给宿主决定：自绘窗口可以拦截（如未保存确认）
         if (host_.onCloseRequest()) return 0;
@@ -672,6 +720,8 @@ class WindowsWindow : public PlatformWindow {
   CanvasCache canvasCache_;
   // 擦背景用的刷子；窗口变大时先铺底色，避免露出黑底一帧
   HBRUSH eraseBrush_ = nullptr;
+  // 拖入文件的回调；非空时才向系统注册接受拖放
+  std::function<void(const std::vector<std::wstring>& paths)> fileDropHandler_;
   // 最小尺寸（96 DPI 设计值），0 表示不限制
   int minWidth_ = 0;
   int minHeight_ = 0;
@@ -769,6 +819,22 @@ class WindowsPlatform : public Platform {
   }
 
   wchar_t pathSeparator() override { return L'\\'; }
+  int compareText(const std::wstring& a, const std::wstring& b) override {
+    // 用系统的忽略大小写比较：与资源管理器的排序观感一致
+    const int r = ::CompareStringOrdinal(a.c_str(), static_cast<int>(a.size()), b.c_str(),
+                                         static_cast<int>(b.size()), TRUE);
+    if (r == CSTR_LESS_THAN) return -1;
+    if (r == CSTR_GREATER_THAN) return 1;
+    return 0;
+  }
+  bool containsTextIgnoreCase(const std::wstring& text, const std::wstring& needle) override {
+    if (needle.empty()) return true;
+    return ::StrStrIW(text.c_str(), needle.c_str()) != nullptr;
+  }
+  bool equalsPath(const std::wstring& a, const std::wstring& b) override {
+    // Windows 盘符与扩展名不区分大小写，用系统排序规则比较
+    return ::CompareStringOrdinal(a.c_str(), -1, b.c_str(), -1, TRUE) == CSTR_EQUAL;
+  }
 
   Font createFont(const wchar_t* family, float pointSize, bool bold, int dpi) override {
     return os::windows::makeFont(family, pointSize, bold, dpi);
@@ -836,6 +902,154 @@ class WindowsPlatform : public Platform {
     return static_cast<int64_t>(::GetTickCount64());
   }
 
+  // ── 平台能力：转给 platform_windows.cpp ──
+  Rect workArea() override {
+    RECT work{};
+    if (!::SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0)) {
+      work = RECT{0, 0, ::GetSystemMetrics(SM_CXSCREEN), ::GetSystemMetrics(SM_CYSCREEN)};
+    }
+    return Rect{work.left, work.top, work.right, work.bottom};
+  }
+
+  int runEventLoop() override {
+    // 快捷键由 ViewRoot 的按键回调接管，这里只管派发。
+    // 不用 IsDialogMessage：它会把回车吃掉，自绘控件收不到。
+    MSG msg;
+    while (::GetMessageW(&msg, nullptr, 0, 0) > 0) {
+      ::TranslateMessage(&msg);
+      ::DispatchMessageW(&msg);
+    }
+    return static_cast<int>(msg.wParam);
+  }
+
+  void quitEventLoop(int exitCode) override { ::PostQuitMessage(exitCode); }
+
+  std::wstring appDataDir(const std::wstring& appName) override {
+    return os::windows::appDataDirImpl(appName);
+  }
+  std::vector<DirEntry> listDirectory(const std::wstring& dir, bool skipHidden) override {
+    return os::windows::listDirectoryImpl(dir, skipHidden);
+  }
+  bool pathExists(const std::wstring& path) override {
+    return os::windows::pathExistsImpl(path);
+  }
+  bool isDirectory(const std::wstring& path) override {
+    return os::windows::isDirectoryImpl(path);
+  }
+  bool createDirectory(const std::wstring& path) override {
+    return os::windows::createDirectoryImpl(path);
+  }
+  uint64_t fileSize(const std::wstring& path) override {
+    return os::windows::fileSizeImpl(path);
+  }
+  int64_t modifiedTime(const std::wstring& path) override {
+    return os::windows::modifiedTimeImpl(path);
+  }
+  bool setModifiedTime(const std::wstring& path, int64_t millis) override {
+    return os::windows::setModifiedTimeImpl(path, millis);
+  }
+  std::string readFile(const std::wstring& path, size_t maxBytes) override {
+    return os::windows::readFileImpl(path, maxBytes);
+  }
+  bool writeFile(const std::wstring& path, const std::string& data) override {
+    return os::windows::writeFileImpl(path, data);
+  }
+  bool deleteFile(const std::wstring& path) override {
+    return os::windows::deleteFileImpl(path);
+  }
+  std::unique_ptr<FileStream> openFileStream(const std::wstring& path, bool openWrite) override {
+    return os::windows::openFileStreamImpl(path, openWrite);
+  }
+  bool moveFile(const std::wstring& from, const std::wstring& to) override {
+    return os::windows::moveFileImpl(from, to);
+  }
+  std::wstring absolutePath(const std::wstring& path) override {
+    return os::windows::absolutePathImpl(path);
+  }
+  std::wstring executablePath() override { return os::windows::executablePathImpl(); }
+  std::vector<std::wstring> commandLineArgs() override {
+    return os::windows::commandLineArgsImpl();
+  }
+  std::wstring tempDir() override { return os::windows::tempDirImpl(); }
+  uint32_t processId() override { return os::windows::processIdImpl(); }
+  bool moveToTrash(const std::wstring& path) override {
+    return os::windows::moveToTrashImpl(path);
+  }
+  std::wstring specialFolder(SpecialFolder folder) override {
+    return os::windows::specialFolderImpl(folder);
+  }
+  std::vector<DriveInfo> listDrives() override { return os::windows::listDrivesImpl(); }
+
+  MessageBoxResult showMessageBox(NativeHandle owner, const MessageBoxParams& params) override {
+    return os::windows::showMessageBoxImpl(owner, params);
+  }
+  bool canOwnModal(NativeHandle window) override {
+    return os::windows::canOwnModalImpl(window);
+  }
+  int showPopupMenu(NativeHandle owner, const Point& position,
+                    const std::vector<MenuItem>& items) override {
+    return os::windows::showPopupMenuImpl(owner, position, items);
+  }
+  Point cursorPosition() override { return os::windows::cursorPositionImpl(); }
+  void bringToFront(NativeHandle window) override { os::windows::bringToFrontImpl(window); }
+
+  std::wstring registerContextMenu(const std::vector<ContextMenuEntry>& entries) override {
+    return os::windows::registerContextMenuImpl(entries);
+  }
+  std::wstring unregisterContextMenu(const std::vector<ContextMenuEntry>& entries) override {
+    return os::windows::unregisterContextMenuImpl(entries);
+  }
+  bool isContextMenuRegistered(const std::vector<ContextMenuEntry>& entries) override {
+    return os::windows::isContextMenuRegisteredImpl(entries);
+  }
+
+  bool isUiThread() override { return os::windows::isUiThreadImpl(); }
+  void sleepMillis(int ms) override { os::windows::sleepMillisImpl(ms); }
+  float scaleFactor() override { return os::windows::scaleFactorImpl(); }
+
+  std::wstring pickFolder(NativeHandle owner, const std::wstring& title,
+                          const std::wstring& initialDir) override {
+    return os::windows::pickFolderImpl(owner, title, initialDir);
+  }
+  std::wstring pickSaveFile(NativeHandle owner, const std::wstring& title,
+                            const std::wstring& initialDir, const std::wstring& defaultName,
+                            const std::wstring& defaultExt,
+                            const std::vector<std::wstring>& filters) override {
+    return os::windows::pickSaveFileImpl(owner, title, initialDir, defaultName, defaultExt,
+                                         filters);
+  }
+  std::wstring pickOpenFile(NativeHandle owner, const std::wstring& title,
+                            const std::wstring& initialDir,
+                            const std::vector<std::wstring>& filters) override {
+    return os::windows::pickOpenFileImpl(owner, title, initialDir, filters);
+  }
+
+  bool openWithSystem(const std::wstring& path) override {
+    return os::windows::openWithSystemImpl(path);
+  }
+  bool showProperties(NativeHandle owner, const std::wstring& path) override {
+    return os::windows::showPropertiesImpl(owner, path);
+  }
+
+  void postToUiThread(std::function<void()> fn) override {
+    os::windows::postToUiThread(std::move(fn));
+  }
+
+  void invokeOnUiThread(std::function<void()> fn) override {
+    os::windows::invokeOnUiThread(std::move(fn));
+  }
+
+  bool claimSingleInstance(const std::wstring& appId) override {
+    return os::windows::claimSingleInstanceImpl(appId);
+  }
+  void setLaunchPayloadHandler(std::function<void(const std::wstring& payload)> fn) override {
+    os::windows::setLaunchPayloadHandlerImpl(std::move(fn));
+  }
+  bool forwardToRunningInstance(const std::wstring& appId,
+                                const std::wstring& payload) override {
+    return os::windows::forwardToRunningInstanceImpl(appId, payload);
+  }
+
  private:
   HINSTANCE instance_ = ::GetModuleHandleW(nullptr);
   std::map<WindowsWindow*, std::unique_ptr<WindowsWindow>> windows_;
@@ -884,6 +1098,27 @@ void shutdownPlatform() {
 }
 
 bool isPlatformReady() { return os::windows::hasStarted(); }
+
+void initHostProcess() {
+  // 逐显示器 DPI 感知：必须在创建任何窗口前设置，否则系统按 96 DPI 缩放
+  using SetCtxFn = BOOL(WINAPI*)(void*);
+  static auto setCtx = reinterpret_cast<SetCtxFn>(
+      ::GetProcAddress(::GetModuleHandleW(L"user32.dll"), "SetProcessDpiAwarenessContext"));
+  if (!setCtx || !setCtx(reinterpret_cast<void*>(-4))) ::SetProcessDPIAware();
+
+  // 公共控件：原生对话框里的进度条、列表等依赖它
+  INITCOMMONCONTROLSEX icc{sizeof(icc), ICC_WIN95_CLASSES | ICC_LISTVIEW_CLASSES |
+                                               ICC_TREEVIEW_CLASSES | ICC_PROGRESS_CLASS |
+                                               ICC_STANDARD_CLASSES | ICC_BAR_CLASSES};
+  ::InitCommonControlsEx(&icc);
+
+  // 工作线程回传 UI 用的收件窗口
+  os::windows::prepareUiThreadDispatch();
+}
+
+void reportFatalError(const wchar_t* message) {
+  ::MessageBoxW(nullptr, message, L"错误", MB_OK | MB_ICONERROR);
+}
 
 void runModalLoop(NativeHandle modal, NativeHandle owner) {
   HWND dialog = static_cast<HWND>(modal);

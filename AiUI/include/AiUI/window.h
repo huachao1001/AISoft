@@ -69,6 +69,8 @@ class Window {
   NativeHandle handle() const;
   Rect clientRect() const;
   int dpi() const;
+  // 宿主需要查窗口状态（是否最大化、还原尺寸）时用；不要在控件层流传
+  PlatformWindow* platformWindow() const { return window_; }
 
   // Esc 是否关闭窗口；对话框用 true，主窗口保持 false
   void setEscapeCloses(bool closes) { escapeCloses_ = closes; }

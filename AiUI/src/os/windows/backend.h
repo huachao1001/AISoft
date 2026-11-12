@@ -71,6 +71,68 @@ Gdiplus::Bitmap* asBitmap(const Image& image);
 // HICON → ARGB 位图；句柄由调用方释放，返回值由 releaseLoadedImage 释放
 Image imageFromIcon(HICON icon);
 
+// ── 平台能力（实现在 platform_windows.cpp）──
+// 这些与窗口绘制无关，WindowsPlatform 只做转发
+std::wstring appDataDirImpl(const std::wstring& appName);
+std::vector<DirEntry> listDirectoryImpl(const std::wstring& dir, bool skipHidden);
+bool pathExistsImpl(const std::wstring& path);
+bool isDirectoryImpl(const std::wstring& path);
+bool createDirectoryImpl(const std::wstring& path);
+uint64_t fileSizeImpl(const std::wstring& path);
+int64_t modifiedTimeImpl(const std::wstring& path);
+bool setModifiedTimeImpl(const std::wstring& path, int64_t millis);
+std::string readFileImpl(const std::wstring& path, size_t maxBytes);
+bool writeFileImpl(const std::wstring& path, const std::string& data);
+bool deleteFileImpl(const std::wstring& path);
+bool moveToTrashImpl(const std::wstring& path);
+std::unique_ptr<FileStream> openFileStreamImpl(const std::wstring& path, bool openWrite);
+bool moveFileImpl(const std::wstring& from, const std::wstring& to);
+std::wstring absolutePathImpl(const std::wstring& path);
+std::wstring executablePathImpl();
+std::vector<std::wstring> commandLineArgsImpl();
+std::wstring tempDirImpl();
+uint32_t processIdImpl();
+std::wstring specialFolderImpl(SpecialFolder folder);
+std::vector<DriveInfo> listDrivesImpl();
+
+MessageBoxResult showMessageBoxImpl(NativeHandle owner, const MessageBoxParams& params);
+bool canOwnModalImpl(NativeHandle window);
+int showPopupMenuImpl(NativeHandle owner, const Point& position,
+                      const std::vector<MenuItem>& items);
+Point cursorPositionImpl();
+void bringToFrontImpl(NativeHandle window);
+
+std::wstring registerContextMenuImpl(const std::vector<ContextMenuEntry>& entries);
+std::wstring unregisterContextMenuImpl(const std::vector<ContextMenuEntry>& entries);
+bool isContextMenuRegisteredImpl(const std::vector<ContextMenuEntry>& entries);
+
+bool isUiThreadImpl();
+void sleepMillisImpl(int ms);
+float scaleFactorImpl();
+
+std::wstring pickFolderImpl(NativeHandle owner, const std::wstring& title,
+                            const std::wstring& initialDir);
+std::wstring pickSaveFileImpl(NativeHandle owner, const std::wstring& title,
+                              const std::wstring& initialDir, const std::wstring& defaultName,
+                              const std::wstring& defaultExt,
+                              const std::vector<std::wstring>& filters);
+std::wstring pickOpenFileImpl(NativeHandle owner, const std::wstring& title,
+                              const std::wstring& initialDir,
+                              const std::vector<std::wstring>& filters);
+
+bool openWithSystemImpl(const std::wstring& path);
+bool showPropertiesImpl(NativeHandle owner, const std::wstring& path);
+
+// UI 线程投递：窗口线程需在消息循环启动前调 prepareUiThreadDispatch
+void prepareUiThreadDispatch();
+void shutdownUiThreadDispatch();
+void postToUiThread(std::function<void()> fn);
+void invokeOnUiThread(std::function<void()> fn);
+
+bool claimSingleInstanceImpl(const std::wstring& appId);
+void setLaunchPayloadHandlerImpl(std::function<void(const std::wstring&)> fn);
+bool forwardToRunningInstanceImpl(const std::wstring& appId, const std::wstring& payload);
+
 }  // namespace windows
 }  // namespace os
 }  // namespace AiUI
