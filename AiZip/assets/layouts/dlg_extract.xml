@@ -3,9 +3,9 @@
   解压对话框：目标路径、更新方式、覆盖方式、其他选项。
   语义与原版一致；控件装配与校验在 DlgExtract 里。
 -->
-<LinearLayout orientation="vertical" padding="16" background="#f0f7fc">
+<LinearLayout orientation="vertical" padding="16" background="dialogBg">
 
-  <TextView text="目标路径(T)" height="18" textColor="#555555"/>
+  <TextView text="目标路径(T)" height="18" textColor="textHead"/>
 
   <!-- 路径输入 + 右侧两个动作按钮 -->
   <LinearLayout orientation="horizontal" height="30" marginY="4">

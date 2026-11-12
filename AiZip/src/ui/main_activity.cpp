@@ -1,4 +1,4 @@
-﻿// 主界面 Activity 实现：装配控件、响应交互、窗口级行为
+// 主界面 Activity 实现：装配控件、响应交互、窗口级行为
 #include "main_activity.h"
 
 #include "app.h"
@@ -10,6 +10,7 @@
 #include "util.h"
 #include "AiUI/font.h"
 #include "AiUI/theme.h"
+#include "AiUI/theme_registry.h"
 #include "AiUI/widgets/breadcrumb_bar.h"
 #include "AiUI/widgets/button.h"
 #include "AiUI/widgets/button_bar.h"
@@ -137,12 +138,12 @@ AiUI::ListIcon itemIcon(const Item& item) {
   AiUI::ListIcon icon;
   if (item.isDir) {
     icon.glyph = AiUI::IconId::kFolder;
-    icon.color = AiUI::kColorTextFaint;
+    // 颜色交给主题：图标色跟随当前调色板
     return icon;
   }
   icon.image = AiUI::fileIcon(item.fullPath.empty() ? item.name : item.fullPath, false);
   icon.glyph = AiUI::IconId::kFile;
-  icon.color = AiUI::kColorTextFaint;
+  // 颜色交给主题：图标色跟随当前调色板
   return icon;
 }
 
@@ -175,6 +176,8 @@ MainActivity::MainActivity() {
   setTitle(L"AIZip");
   // 主窗口不响应 Esc
   setEscapeCloses(false);
+  // 主题名来自设置（themes.xml 里的 name）；查不到就落到浅色
+  setTheme(&AiUI::ThemeRegistry::getOr(g_app.settings.theme, AiUI::kLightTheme));
 }
 
 MainActivity::~MainActivity() {
@@ -363,9 +366,8 @@ void MainActivity::attachFileList() {
 
 void MainActivity::attachStatusBar() {
   if (!status_) return;
-  AiUI::StatusStyle style;
-  style.background = AiUI::kColorTool;
-  status_->setStyle(style);
+  // 底色交给主题：写死浅色在深色主题下会留一块白
+  status_->setStyle(AiUI::StatusStyle{});
   refreshStatusBar();
 }
 

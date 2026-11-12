@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  全局配色。只写需要改的字段，其余沿用浅色主题。
+
+  AiZip 用 light / dark 两套；运行时用名字切换：
+    window.setAppTheme(&ThemeRegistry::getOr(L"dark", kLightTheme));
+  也可以直接在代码里用 kDarkTheme 常量。
+-->
+<themes>
+
+  <Theme name="light"/>
+
+  <Theme name="dark"
+         body="#1e1e1e"
+         tool="#252526"
+         pane="#252526"
+         line="#3c3c3c"
+         lineSoft="#2d2d2d"
+         lineHead="#3c3c3c"
+         headerBg="#2d2d2d"
+         text="#d4d4d4"
+         textHead="#b0b0b0"
+         textMuted="#9a9a9a"
+         textFaint="#6a6a6a"
+         ink="#e0e0e0"
+         link="#4a9eff"
+         linkHover="#2a3f5f"
+         currentBg="#2a3f5f"
+         selBg="#2a4a6f"
+         rowHover="#2a2d2e"
+         hover="#2a2d2e"
+         activeInk="#7ab8ff"
+         btnHoverBg="#33383d"
+         btnDownBg="#3f4650"
+         btnDisBg="#2a2a2a"
+         tagBg="#1e3a5f"
+         tagInk="#9cc7ff"
+         dialogBg="#252526"
+         inputBg="#1e1e1e"
+         inputFocus="#4a9eff"
+         titleBg="#202020"
+         titleBgInactive="#202020"
+         titleText="#d4d4d4"
+         titleTextInactive="#808080"
+         titleButtonHover="#333333"
+         titleButtonDown="#404040"
+         closeHover="#e81123"
+         closeDown="#c50e1d"
+         closeInk="#ffffff"
+         titleLine="#3c3c3c"
+         separator="#6a6a6a"
+         currentInk="#e8e8e8"
+         iconMuted="#8a919e"/>
+
+</themes>

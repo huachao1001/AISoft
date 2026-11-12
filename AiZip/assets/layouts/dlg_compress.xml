@@ -3,16 +3,16 @@
   压缩对话框：文件路径、格式与压缩级别、压缩选项。
   行为（默认文件名、格式联动、分离打包）在 DlgCompress 里。
 -->
-<LinearLayout orientation="vertical" padding="16" background="#f0f7fc">
+<LinearLayout orientation="vertical" padding="16" background="dialogBg">
 
-  <TextView text="压缩文件名(F)" height="18" textColor="#555555"/>
+  <TextView text="压缩文件名(F)" height="18" textColor="textHead"/>
 
   <LinearLayout orientation="horizontal" height="30" marginY="4">
     <InputBox id="path" weight="1" height="30" padding="8"/>
     <Button id="btnBrowse" text="浏览(B)..." style="outline" width="92" height="30" marginX="8"/>
   </LinearLayout>
 
-  <TextView text="压缩文件格式" height="18" marginY="4" textColor="#555555"/>
+  <TextView text="压缩文件格式" height="18" marginY="4" textColor="textHead"/>
 
   <!-- 格式一行：ZIP / 7Z / 其他（第三个单选无文字，由右侧下拉框承载） -->
   <LinearLayout orientation="horizontal" height="30" alignY="center">
@@ -28,13 +28,13 @@
   <LinearLayout orientation="horizontal" marginY="8">
 
     <LinearLayout orientation="vertical" width="240">
-      <TextView text="压缩级别(C)" height="18" textColor="#555555"/>
+      <TextView text="压缩级别(C)" height="18" textColor="textHead"/>
       <ComboBox id="level" height="30" marginY="4"/>
 
-      <TextView text="更新方式(U)" height="18" marginY="4" textColor="#555555"/>
+      <TextView text="更新方式(U)" height="18" marginY="4" textColor="textHead"/>
       <ComboBox id="updateMode" height="30" marginY="4"/>
 
-      <TextView text="压缩分卷大小设置(V)" height="18" marginY="4" textColor="#555555"/>
+      <TextView text="压缩分卷大小设置(V)" height="18" marginY="4" textColor="textHead"/>
       <LinearLayout orientation="horizontal" height="30">
         <InputBox id="volume" weight="1" height="30" padding="8"/>
         <ComboBox id="volumeUnit" width="72" height="30" marginX="6"/>

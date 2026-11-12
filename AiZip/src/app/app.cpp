@@ -1,10 +1,9 @@
-﻿#include "app.h"
+#include "app.h"
 
 #include "dlg_compress.h"
 #include "dlg_extract.h"
 #include "dlg_input.h"
 #include "dlg_progress.h"
-#include "ui.h"
 #include "main_activity.h"
 #include "ui_main.h"
 #include "util.h"

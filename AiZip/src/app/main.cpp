@@ -1,17 +1,17 @@
-﻿// 程序入口：单实例、命令行分发、主窗口
+// 程序入口：单实例、命令行分发、主窗口
 //
 // 不出现任何平台 API：DPI、公共控件、消息循环、窗口状态都走 AiUI::Platform。
 #include "app.h"
 #include "main_activity.h"
 #include "shell_menu.h"
 #include "single_instance.h"
-#include "ui.h"
 #include "ui_main.h"
 #include "util.h"
 #include "AiUI/app.h"
 #include "AiUI/font.h"
 #include "AiUI/icon.h"
 #include "AiUI/platform.h"
+#include "AiUI/theme_registry.h"
 
 namespace {
 
@@ -29,6 +29,11 @@ int AiUI::runApp() {
   g_app.settings = util::LoadSettings();
   g_app.dpi = AiUI::platform()->screenDpi();
   AiUI::fonts.create(g_app.dpi);
+
+  // 全局默认主题：对话框等没有单独指定主题的界面都从这里取。
+  // 名字对应 themes.xml 里的 <Theme name="...">，找不到则用浅色。
+  AiUI::Activity::setDefaultTheme(
+      &AiUI::ThemeRegistry::getOr(g_app.settings.theme, AiUI::kLightTheme));
 
   // 右键菜单默认注册到当前用户（不需要管理员，也不改任何文件关联）。
   // 程序换位置后旧菜单会指向失效路径，所以每次启动都校对一遍。

@@ -69,6 +69,9 @@ aiui_add_layouts(AiZip
   assets/layouts/dlg_compress.xml
 )
 
+# 主题配色：themes.xml 里的每个 <Theme name="..."> 生成一个命名调色板
+aiui_add_themes(AiZip assets/layouts/themes.xml)
+
 # 平台入口（wWinMain / NSApplication / main）由 AiUI 提供，应用只实现 AiUI::runApp()
 aiui_add_app_entry(AiZip)
 

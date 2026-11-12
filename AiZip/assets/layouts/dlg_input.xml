@@ -3,9 +3,9 @@
   单行输入对话框：一行说明 + 输入框 + 底部按钮。
   行为（初始值、密码模式、确认后写回）在 DlgInput 里配置。
 -->
-<LinearLayout orientation="vertical" padding="16" background="#f0f7fc">
+<LinearLayout orientation="vertical" padding="16" background="dialogBg">
 
-  <TextView id="label" height="20" small="false" textColor="#555555"/>
+  <TextView id="label" height="20" small="false" textColor="textHead"/>
 
   <InputBox id="edit" height="30" marginY="8" padding="8"/>
 

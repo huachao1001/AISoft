@@ -219,6 +219,7 @@ Settings LoadSettings() {
     else if (key == L"winW") s.winW = _wtoi(value.c_str());
     else if (key == L"winH") s.winH = _wtoi(value.c_str());
     else if (key == L"winMax") s.winMax = _wtoi(value.c_str()) != 0;
+    else if (key == L"theme") s.theme = value;
     else if (key.rfind(L"listColWidth", 0) == 0) {
       const int index = _wtoi(key.c_str() + 12);
       if (index >= 0 && index < 4) s.listColWidth[index] = _wtoi(value.c_str());
@@ -253,6 +254,7 @@ void SaveSettings(const Settings& s) {
   writeInt("winW", s.winW);
   writeInt("winH", s.winH);
   writeInt("winMax", s.winMax ? 1 : 0);
+  write("theme", s.theme);
   for (int i = 0; i < 4; ++i) {
     const std::string key = "listColWidth" + std::to_string(i);
     writeInt(key.c_str(), s.listColWidth[i]);

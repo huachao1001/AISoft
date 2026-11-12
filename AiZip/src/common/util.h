@@ -60,6 +60,8 @@ struct Settings {
   int listColWidth[4] = {0, 0, 0, 0};
   int winW = -1, winH = -1;                        // -1 = 未设置；坐标不持久化，启动居中
   bool winMax = false;
+  // 主题名，对应 themes.xml 里的 <Theme name="...">；空串按浅色处理
+  std::wstring theme = L"light";
 };
 Settings LoadSettings();
 void SaveSettings(const Settings& s);
