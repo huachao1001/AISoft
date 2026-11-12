@@ -14,13 +14,15 @@
   </LinearLayout>
 
   <!-- 压缩格式：ZIP / 7Z 直接选，其余格式收进下拉 -->
-  <LinearLayout orientation="horizontal" height="30">
+  <LinearLayout orientation="horizontal" height="30" alignY="center">
     <TextView text="压缩格式" width="84" height="30" align="right" textColor="textMuted"/>
     <LinearLayout orientation="horizontal" weight="1" height="30" marginX="10">
       <RadioGroup id="formatGroup" width="wrap" height="30" orientation="horizontal"
                   rowGap="16">
         <RadioButton id="fmtZip">ZIP</RadioButton>
         <RadioButton id="fmt7z">7Z</RadioButton>
+        <!-- 第三项没有文字：它代表「其他格式」，具体格式由右侧下拉框承载 -->
+        <RadioButton id="fmtOther"></RadioButton>
       </RadioGroup>
       <ComboBox id="otherFormat" weight="1" height="30" marginX="16"
                 cue="其他格式"/>
@@ -28,32 +30,31 @@
   </LinearLayout>
 
   <!-- 压缩级别 -->
-  <LinearLayout orientation="horizontal" height="30">
+  <LinearLayout orientation="horizontal" height="30" alignY="center">
     <TextView text="压缩级别" width="84" height="30" align="right" textColor="textMuted"/>
-    <ComboBox id="level" height="30" weight="1" marginX="10"/>
+    <ComboBox id="level" height="30" width="180" marginX="10"/>
   </LinearLayout>
 
   <!-- 压缩分卷：留空表示不分卷 -->
-  <LinearLayout orientation="horizontal" height="30">
+  <LinearLayout orientation="horizontal" height="30" alignY="center">
     <TextView text="分卷大小" width="84" height="30" align="right" textColor="textMuted"/>
-    <InputBox id="volume" height="30" weight="1" marginX="10"
-              cue="留空表示不分卷（最小 100 MB）"/>
+    <InputBox id="volume" height="30" width="190" marginX="10"
+              cue="留空不分卷，≥100 MB"/>
     <ComboBox id="volumeUnit" width="80" height="30" marginX="8"/>
   </LinearLayout>
 
   <!-- 密码 -->
-  <LinearLayout orientation="horizontal" height="30">
+  <LinearLayout orientation="horizontal" height="30" alignY="center">
     <TextView text="压缩密码" width="84" height="30" align="right" textColor="textMuted"/>
-    <InputBox id="password" height="30" weight="1" marginX="10" password="true"
+    <InputBox id="password" height="30" width="180" marginX="10" password="true"
               cue="留空表示不加密"/>
   </LinearLayout>
 
   <!-- 弹簧：把按钮行顶到底部，窗口拉高时不至于浮在半空 -->
   <View weight="1" height="1"/>
 
-  <!-- 底部：左「恢复默认」，右「确定 / 取消」 -->
+  <!-- 底部：右「确定 / 取消」 -->
   <LinearLayout orientation="horizontal" height="32">
-    <Button id="btnDefault" text="恢复默认" style="outline" width="96" height="32"/>
     <View weight="1"/>
     <Button id="btnOk" text="确定" width="84" height="32"/>
     <Button id="btnCancel" text="取消" style="outline" width="84" height="32" marginX="10"/>

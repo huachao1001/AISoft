@@ -24,9 +24,11 @@
 namespace ui {
 namespace {
 
-const wchar_t* kLevelNames[] = {L"存储", L"最快", L"快速", L"标准", L"最大", L"极限"};
-const int kLevelValues[] = {0, 1, 3, 5, 7, 9};
-constexpr int kLevelCount = 6;
+// 三档：标准（默认）、速度优先、文件最小
+const wchar_t* kLevelNames[] = {L"标准", L"速度优先", L"文件最小"};
+const int kLevelValues[] = {5, 1, 9};
+constexpr int kLevelCount = 3;
+constexpr int kLevelDefault = 0;  // 索引，对应「标准」
 
 // 分卷下限：更小的卷没有实用价值，卷数还会爆炸
 constexpr uint64_t kMinVolumeBytes = 100ull * 1024ull * 1024ull;
@@ -100,9 +102,12 @@ class DlgCompress : public DialogActivity {
   void refreshFormatUi();
 
   void browse();
-  void saveAsDefault();
 
   std::vector<std::wstring> sources_;
+
+  // applyFormat 会回写单选组，而单选组的 onChange 又调 applyFormat：
+  // 置位期间不再响应 onChange，避免来回打转
+  bool syncingFormat_ = false;
 
   CompressTask task_;
   bool hasTask_ = false;
@@ -130,7 +135,8 @@ void DlgCompress::onCreate() {
   if (format < 0 || format >= z7::FormatCount()) format = 0;
   formatIndex_ = format;
 
-  int levelIndex = 3;
+  // 旧设置里的档位值可能已被移除（7 / 3 / 0 等），取不到就退回「标准」
+  int levelIndex = kLevelDefault;
   for (int i = 0; i < kLevelCount; ++i) {
     if (kLevelValues[i] == g_app.settings.compressLevel) {
       levelIndex = i;
@@ -153,14 +159,29 @@ void DlgCompress::onCreate() {
     std::vector<std::wstring> items;
     for (int i = 2; i < z7::FormatCount(); ++i) items.emplace_back(z7::Formats()[i].name);
     otherFormat_->setItems(items);
-    otherFormat_->setOnChange([this](int index) { applyFormat(2 + index); });
+    otherFormat_->setOnChange([this](int index) {
+      if (index < 0 || syncingFormat_) return;
+      // 选了下拉项就等于选了「其他」那一项
+      applyFormat(2 + index);
+      refreshFormatUi();
+    });
   }
 
   if (formatGroup_) {
     formatGroup_->setOnChange([this](int index) {
-      // 选 ZIP / 7Z 时清空「其他格式」，两处不能同时显示不同格式
-      if (index < 2 && otherFormat_) otherFormat_->setSelectedIndex(-1, false);
-      applyFormat(index < 2 ? index : 2 + (otherFormat_ ? otherFormat_->selectedIndex() : 0));
+      if (syncingFormat_) return;
+      if (index < 2) {
+        // 选 ZIP / 7Z 时清空「其他格式」，两处不能同时显示不同格式
+        applyFormat(index);
+      } else {
+        // 选「其他」时下拉框必须有个具体值，否则没有实际格式可选
+        const int current = otherFormat_ ? otherFormat_->selectedIndex() : -1;
+        if (current < 0 && otherFormat_ && otherFormat_->itemCount() > 0) {
+          applyFormat(2);
+        } else {
+          refreshFormatUi();
+        }
+      }
     });
   }
 
@@ -182,9 +203,6 @@ void DlgCompress::onCreate() {
   if (auto* browseButton = findView<AiUI::Button>("btnBrowse")) {
     browseButton->setOnClick([this] { browse(); });
   }
-  if (auto* def = findView<AiUI::Button>("btnDefault")) {
-    def->setOnClick([this] { saveAsDefault(); });
-  }
   if (auto* ok = findView<AiUI::Button>("btnOk")) {
     ok->setOnClick([this] {
       if (!onAccept()) return;
@@ -200,7 +218,7 @@ void DlgCompress::onCreate() {
 }
 
 int DlgCompress::selectedFormat() const {
-  // 单选有选中项就用它；都没选说明当前用的是下拉框里的其他格式
+  // 单选有选中项就用它；「其他」（索引 2）的实际格式由下拉框决定
   const int radio = formatGroup_ ? formatGroup_->checkedIndex() : -1;
   if (radio >= 0 && radio < 2) return radio;
   const int index = otherFormat_ ? otherFormat_->selectedIndex() : -1;
@@ -211,8 +229,8 @@ int DlgCompress::selectedFormat() const {
 }
 
 int DlgCompress::selectedLevel() const {
-  const int index = level_ ? level_->selectedIndex() : 3;
-  return (index >= 0 && index < kLevelCount) ? index : 3;
+  const int index = level_ ? level_->selectedIndex() : kLevelDefault;
+  return (index >= 0 && index < kLevelCount) ? index : kLevelDefault;
 }
 
 uint64_t DlgCompress::selectedVolumeSize() const {
@@ -245,18 +263,17 @@ void DlgCompress::applyFormat(int formatIndex) {
   const bool changed = formatIndex != formatIndex_;
   formatIndex_ = formatIndex;
 
-  // ZIP / 7Z 用单选表示；其余格式在下拉框里，此时两个单选都不选中
+  // 回写界面期间屏蔽单选组的 onChange，避免它又调回 applyFormat
+  syncingFormat_ = true;
+  // ZIP / 7Z 对应前两个单选；其余格式归到「其他」那一项
   if (formatGroup_) {
-    if (formatIndex < 2) {
-      formatGroup_->setCheckedIndex(formatIndex);
-    } else {
-      formatGroup_->clearChecked();
-    }
+    formatGroup_->setCheckedIndex(formatIndex < 2 ? formatIndex : 2);
   }
   if (otherFormat_) {
     // 选 ZIP / 7Z 时下拉框保持空提示，避免同时显示两个格式
     otherFormat_->setSelectedIndex(formatIndex >= 2 ? formatIndex - 2 : -1, false);
   }
+  syncingFormat_ = false;
 
   if (changed) syncExtension(formatIndex);
 }
@@ -294,18 +311,6 @@ void DlgCompress::browse() {
        L"BZIP2 文件", L"*.bz2", L"XZ 文件", L"*.xz", L"TAR 归档", L"*.tar", L"WIM 映像", L"*.wim",
        L"所有文件", L"*.*"});
   if (!picked.empty() && path_) path_->setText(picked);
-}
-
-void DlgCompress::saveAsDefault() {
-  g_app.settings.compressFormat = nameFor(selectedFormat());
-  g_app.settings.compressLevel = kLevelValues[selectedLevel()];
-  util::SaveSettings(g_app.settings);
-
-  AiUI::MessageBoxParams params;
-  params.title = L"AIZip";
-  params.message = L"已保存为默认设置。";
-  params.icon = AiUI::MessageBoxIcon::kInfo;
-  AiUI::platform()->showMessageBox(window()->handle(), params);
 }
 
 bool DlgCompress::onAccept() {
@@ -381,8 +386,10 @@ bool DlgCompress::onAccept() {
   // 固实只有 7Z 支持；界面上不再提供勾选，按保存的设置与格式能力决定
   const bool solid = g_app.settings.solid && info.solidCapable;
 
+  // 记住这次选的格式与档位：「恢复默认」按钮已去掉，确定即视为记住当前选择
   g_app.settings.compressFormat = nameFor(formatIndex);
   g_app.settings.compressLevel = kLevelValues[levelIndex];
+  util::SaveSettings(g_app.settings);
 
   arc::CompressOptions options;
   options.level = kLevelValues[levelIndex];
