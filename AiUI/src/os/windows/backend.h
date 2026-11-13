@@ -121,6 +121,19 @@ std::wstring registerShellMenuHandlerImpl(const ShellMenuHandler& handler);
 std::wstring unregisterShellMenuHandlerImpl(const ShellMenuHandler& handler);
 bool isShellMenuHandlerRegisteredImpl(const ShellMenuHandler& handler);
 
+bool isRunningElevatedImpl();
+bool relaunchElevatedImpl();
+std::wstring defaultInstallDirImpl(InstallScope scope);
+std::wstring installFilesImpl(const std::wstring& targetDir, const std::vector<InstallFile>& files);
+std::wstring removeInstalledFilesImpl(const std::wstring& targetDir,
+                                      const std::vector<InstallFile>& files);
+std::wstring writeInstallMarkerImpl(const std::wstring& targetDir, const std::wstring& marker,
+                                    const std::string& content);
+std::wstring createShortcutsImpl(const std::wstring& targetDir, const std::wstring& exeName,
+                                 const std::wstring& displayName, InstallScope scope);
+std::wstring removeShortcutsImpl(const std::wstring& displayName, InstallScope scope);
+int runAndWaitImpl(const std::wstring& exePath, const std::wstring& arguments);
+
 std::unique_ptr<PlatformTray> createTrayIconImpl(PlatformTrayHost& host);
 
 bool isUiThreadImpl();

@@ -5,6 +5,18 @@
 
 namespace AiUI {
 
+namespace {
+
+// 本次进程的安装范围。安装程序提权后置为「所有用户」，
+// 由它在注册前显式设置，普通启动路径保持默认。
+InstallScope g_installScope = InstallScope::kCurrentUser;
+
+}  // namespace
+
+InstallScope currentInstallScope() { return g_installScope; }
+
+void setCurrentInstallScope(InstallScope scope) { g_installScope = scope; }
+
 std::wstring registerShellVerbs(const std::vector<ShellVerb>& verbs) {
   return platform()->registerShellVerbs(verbs);
 }
@@ -18,14 +30,33 @@ bool areShellVerbsRegistered(const std::vector<ShellVerb>& verbs) {
 }
 
 std::wstring registerShellMenuHandler(const ShellMenuHandler& handler) {
+  // 未显式指定范围时跟随当前进程范围，安装程序与普通启动都能用同一份调用
+  if (!handler.scopeExplicit) {
+    ShellMenuHandler scoped = handler;
+    scoped.scope = currentInstallScope();
+    scoped.scopeExplicit = true;
+    return platform()->registerShellMenuHandler(scoped);
+  }
   return platform()->registerShellMenuHandler(handler);
 }
 
 std::wstring unregisterShellMenuHandler(const ShellMenuHandler& handler) {
+  if (!handler.scopeExplicit) {
+    ShellMenuHandler scoped = handler;
+    scoped.scope = currentInstallScope();
+    scoped.scopeExplicit = true;
+    return platform()->unregisterShellMenuHandler(scoped);
+  }
   return platform()->unregisterShellMenuHandler(handler);
 }
 
 bool isShellMenuHandlerRegistered(const ShellMenuHandler& handler) {
+  if (!handler.scopeExplicit) {
+    ShellMenuHandler scoped = handler;
+    scoped.scope = currentInstallScope();
+    scoped.scopeExplicit = true;
+    return platform()->isShellMenuHandlerRegistered(scoped);
+  }
   return platform()->isShellMenuHandlerRegistered(handler);
 }
 

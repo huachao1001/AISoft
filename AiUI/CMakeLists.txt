@@ -29,6 +29,7 @@ set(AIUI_SOURCES
   src/theme_registry.cpp
   src/font.cpp
   src/shell.cpp
+  src/install.cpp
 
   src/events/event_dispatcher.cpp
   # 布局
@@ -61,6 +62,7 @@ if(WIN32)
     src/os/windows/title_bar_windows.cpp
     src/os/windows/platform_windows.cpp
     src/os/windows/shell_menu_register.cpp
+    src/os/windows/install_windows.cpp
   )
 elseif(APPLE)
   message(FATAL_ERROR "AiUI 的 macOS 后端尚未实现")

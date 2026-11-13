@@ -18,10 +18,19 @@ namespace os {
 namespace windows {
 namespace {
 
-// 组件释放目录：按 id 分开，多个应用各占一层，卸载时删掉这一层即可
+// 组件释放目录。显式给了就用它（安装好的程序用自己所在目录，卸载时一并清掉）；
+// 否则按 id 分一层放在用户数据目录，多个应用各占一层。
 std::wstring componentDir(const ShellMenuHandler& handler) {
+  if (!handler.componentDir.empty()) {
+    ::CreateDirectoryW(handler.componentDir.c_str(), nullptr);
+    return handler.componentDir;
+  }
+
+  const KNOWNFOLDERID& folder = handler.scope == InstallScope::kAllUsers
+                                    ? FOLDERID_ProgramData
+                                    : FOLDERID_LocalAppData;
   wchar_t* base = nullptr;
-  if (FAILED(::SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &base))) return {};
+  if (FAILED(::SHGetKnownFolderPath(folder, 0, nullptr, &base))) return {};
   std::wstring dir = base;
   ::CoTaskMemFree(base);
   dir += L"\\";
@@ -29,6 +38,18 @@ std::wstring componentDir(const ShellMenuHandler& handler) {
   ::CreateDirectoryW(dir.c_str(), nullptr);
   return dir;
 }
+
+// 内容指纹：组件文件名带这个后缀，新旧版本不会互相顶掉
+unsigned Fingerprint(const std::vector<BYTE>& payload) {
+  unsigned hash = 2166136261u;
+  for (BYTE b : payload) {
+    hash ^= b;
+    hash *= 16777619u;
+  }
+  return hash;
+}
+
+bool fileMatches(const std::wstring& path, const std::vector<BYTE>& expected);
 
 // 先写临时文件再改名：写到一半崩溃留下的半个 DLL 会让资源管理器加载失败
 bool writeFileAtomic(const std::wstring& path, const void* data, size_t size) {
@@ -56,12 +77,29 @@ bool writeFileAtomic(const std::wstring& path, const void* data, size_t size) {
     ::DeleteFileW(temp.c_str());
     return false;
   }
-  // 组件正被资源管理器占用时替换会失败，那种情况保留旧文件即可
   if (!::MoveFileExW(temp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING)) {
     ::DeleteFileW(temp.c_str());
     return false;
   }
   return true;
+}
+
+// 释放组件并返回实际落地的路径。
+// 文件名带内容指纹：资源管理器会一直持有已加载的旧 DLL，同名文件根本没法替换；
+// 换个名字让新旧共存，注册表指向新文件即可。
+std::wstring placeComponent(const std::wstring& dir, const std::wstring& fileName,
+                            const std::vector<BYTE>& payload) {
+  const size_t dot = fileName.find_last_of(L'.');
+  const std::wstring stem = fileName.substr(0, dot);
+  const std::wstring ext = fileName.substr(dot);
+
+  wchar_t suffix[16] = {};
+  ::swprintf_s(suffix, L"_%08X", Fingerprint(payload));
+  const std::wstring path = dir + L"\\" + stem + suffix + ext;
+
+  if (fileMatches(path, payload)) return path;
+  if (!writeFileAtomic(path, payload.data(), payload.size())) return {};
+  return path;
 }
 
 bool readEmbedded(int resourceId, std::vector<BYTE>& out) {
@@ -102,10 +140,16 @@ bool fileMatches(const std::wstring& path, const std::vector<BYTE>& expected) {
   return ::memcmp(actual.data(), expected.data(), expected.size()) == 0;
 }
 
-bool regSetString(const std::wstring& subKey, const wchar_t* name, const std::wstring& value) {
+// 注册表根键：所有用户写 HKLM（需提权），否则写 HKCU
+HKEY classRoot(const ShellMenuHandler& handler) {
+  return handler.scope == InstallScope::kAllUsers ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;
+}
+
+bool regSetString(HKEY root, const std::wstring& subKey, const wchar_t* name,
+                  const std::wstring& value) {
   HKEY key = nullptr;
-  if (::RegCreateKeyExW(HKEY_CURRENT_USER, subKey.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, &key,
-                        nullptr) != ERROR_SUCCESS) {
+  if (::RegCreateKeyExW(root, subKey.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, &key, nullptr) !=
+      ERROR_SUCCESS) {
     return false;
   }
   const LONG r = ::RegSetValueExW(key, name, 0, REG_SZ,
@@ -115,9 +159,22 @@ bool regSetString(const std::wstring& subKey, const wchar_t* name, const std::ws
   return r == ERROR_SUCCESS;
 }
 
-bool regDeleteTree(const std::wstring& subKey) {
-  const LONG r = ::RegDeleteTreeW(HKEY_CURRENT_USER, subKey.c_str());
+bool regDeleteTree(HKEY root, const std::wstring& subKey) {
+  const LONG r = ::RegDeleteTreeW(root, subKey.c_str());
   return r == ERROR_SUCCESS || r == ERROR_FILE_NOT_FOUND || r == ERROR_PATH_NOT_FOUND;
+}
+
+// 读一个字符串值；不存在或类型不对返回空
+std::wstring regGetString(HKEY root, const std::wstring& subKey, const wchar_t* name) {
+  HKEY key = nullptr;
+  if (::RegOpenKeyExW(root, subKey.c_str(), 0, KEY_READ, &key) != ERROR_SUCCESS) return {};
+
+  wchar_t buffer[MAX_PATH * 2] = {};
+  DWORD size = sizeof(buffer);
+  const LONG r =
+      ::RegQueryValueExW(key, name, nullptr, nullptr, reinterpret_cast<LPBYTE>(buffer), &size);
+  ::RegCloseKey(key);
+  return r == ERROR_SUCCESS ? std::wstring(buffer) : std::wstring();
 }
 
 // 生效对象 → 挂 shellex 的位置
@@ -152,33 +209,35 @@ std::wstring registerShellMenuHandlerImpl(const ShellMenuHandler& handler) {
   }
 
   const std::wstring dir = componentDir(handler);
-  if (dir.empty()) return L"无法定位用户数据目录";
-  const std::wstring dll = dir + L"\\" + handler.componentName;
-  if (!fileMatches(dll, payload) && !writeFileAtomic(dll, payload.data(), payload.size())) {
-    return L"无法释放右键菜单组件：" + dll;
-  }
+  if (dir.empty()) return L"无法定位组件目录";
+  const std::wstring dll = placeComponent(dir, handler.componentName, payload);
+  if (dll.empty()) return L"无法释放右键菜单组件";
 
   const std::wstring exe = executablePathImpl();
   if (exe.empty()) return L"无法取得程序路径";
 
+  const HKEY root = classRoot(handler);
   const std::wstring clsidKey = L"Software\\Classes\\CLSID\\" + handler.clsid;
-  if (!regSetString(clsidKey, nullptr, handler.displayName)) return L"无法注册组件标识";
+  if (!regSetString(root, clsidKey, nullptr, handler.displayName)) return L"无法注册组件标识";
 
   const std::wstring inproc = clsidKey + L"\\InprocServer32";
-  if (!regSetString(inproc, nullptr, dll)) return L"无法注册组件路径";
+  if (!regSetString(root, inproc, nullptr, dll)) return L"无法注册组件路径";
   // 资源管理器在 UI 线程上调用组件，必须是 Apartment
-  if (!regSetString(inproc, L"ThreadingModel", L"Apartment")) return L"无法注册线程模型";
+  if (!regSetString(root, inproc, L"ThreadingModel", L"Apartment")) {
+    return L"无法注册线程模型";
+  }
   // 组件启动谁；写在这里就不必假设组件与 exe 同目录
-  if (!regSetString(clsidKey + L"\\AppPath", nullptr, exe)) {
+  if (!regSetString(root, clsidKey + L"\\AppPath", nullptr, exe)) {
     return L"无法登记宿主程序路径";
   }
 
-  for (const auto& root : classRootsFor(handler.targets)) {
-    if (!regSetString(handlerKey(handler, root), nullptr, handler.clsid)) {
-      return L"无法挂载右键菜单：" + root;
+  for (const auto& target : classRootsFor(handler.targets)) {
+    if (!regSetString(root, handlerKey(handler, target), nullptr, handler.clsid)) {
+      return L"无法挂载右键菜单：" + target;
     }
     // 旧版本用不带 AIUI_ 前缀的键；不清掉会同时出现两套入口
-    regDeleteTree(L"Software\\Classes\\" + root + L"\\shellex\\ContextMenuHandlers\\" + handler.id);
+    regDeleteTree(root,
+                  L"Software\\Classes\\" + target + L"\\shellex\\ContextMenuHandlers\\" + handler.id);
   }
 
   // 让资源管理器丢掉已缓存的菜单项
@@ -187,11 +246,12 @@ std::wstring registerShellMenuHandlerImpl(const ShellMenuHandler& handler) {
 }
 
 std::wstring unregisterShellMenuHandlerImpl(const ShellMenuHandler& handler) {
-  for (const auto& root : classRootsFor(handler.targets)) {
-    regDeleteTree(handlerKey(handler, root));
+  const HKEY root = classRoot(handler);
+  for (const auto& target : classRootsFor(handler.targets)) {
+    regDeleteTree(root, handlerKey(handler, target));
   }
   if (!handler.clsid.empty()) {
-    regDeleteTree(L"Software\\Classes\\CLSID\\" + handler.clsid);
+    regDeleteTree(root, L"Software\\Classes\\CLSID\\" + handler.clsid);
   }
   // 组件文件保留：资源管理器可能仍加载着它，删除会失败并留下半残注册
   ::SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
@@ -201,56 +261,35 @@ std::wstring unregisterShellMenuHandlerImpl(const ShellMenuHandler& handler) {
 bool isShellMenuHandlerRegisteredImpl(const ShellMenuHandler& handler) {
   if (handler.clsid.empty()) return false;
 
+  const HKEY root = classRoot(handler);
+
   // 组件挂载项必须指向当前 CLSID
-  HKEY reg = nullptr;
-  const std::wstring key = handlerKey(handler, L"*");
-  if (::RegOpenKeyExW(HKEY_CURRENT_USER, key.c_str(), 0, KEY_READ, &reg) != ERROR_SUCCESS) {
-    return false;
-  }
-  wchar_t buffer[64] = {};
-  DWORD size = sizeof(buffer);
-  const LONG r =
-      ::RegQueryValueExW(reg, nullptr, nullptr, nullptr, reinterpret_cast<LPBYTE>(buffer), &size);
-  ::RegCloseKey(reg);
-  if (r != ERROR_SUCCESS) return false;
-  if (::CompareStringOrdinal(buffer, -1, handler.clsid.c_str(), -1, TRUE) != CSTR_EQUAL) {
+  const std::wstring mounted = regGetString(root, handlerKey(handler, L"*"), nullptr);
+  if (mounted.empty()) return false;
+  if (::CompareStringOrdinal(mounted.c_str(), -1, handler.clsid.c_str(), -1, TRUE) != CSTR_EQUAL) {
     return false;
   }
 
   // 组件与宿主路径也要对：exe 被挪走或组件升级后必须重写，否则菜单会指向旧位置
   const std::wstring dir = componentDir(handler);
   if (dir.empty()) return false;
-  const std::wstring expectedDll = dir + L"\\" + handler.componentName;
 
-  std::wstring actualDll;
+  std::vector<BYTE> payload;
+  if (!readEmbedded(handler.componentResourceId, payload)) return false;
+
   const std::wstring inproc = L"Software\\Classes\\CLSID\\" + handler.clsid + L"\\InprocServer32";
-  if (::RegOpenKeyExW(HKEY_CURRENT_USER, inproc.c_str(), 0, KEY_READ, &reg) != ERROR_SUCCESS) {
-    return false;
-  }
-  wchar_t pathBuffer[MAX_PATH * 2] = {};
-  size = sizeof(pathBuffer);
-  const LONG pathResult =
-      ::RegQueryValueExW(reg, nullptr, nullptr, nullptr, reinterpret_cast<LPBYTE>(pathBuffer), &size);
-  ::RegCloseKey(reg);
-  if (pathResult != ERROR_SUCCESS) return false;
-  actualDll = pathBuffer;
-  if (::CompareStringOrdinal(actualDll.c_str(), -1, expectedDll.c_str(), -1, TRUE) != CSTR_EQUAL) {
-    return false;
-  }
+  const std::wstring actualDll = regGetString(root, inproc, nullptr);
+  if (actualDll.empty()) return false;
+  // 文件名带内容指纹，无法按名字比对；只要落在我们的目录且内容就是当前这一份即可
+  const size_t slash = actualDll.find_last_of(L'\\');
+  if (slash == std::wstring::npos || actualDll.substr(0, slash) != dir) return false;
+  if (!fileMatches(actualDll, payload)) return false;
 
   const std::wstring exe = executablePathImpl();
   if (exe.empty()) return false;
-  const std::wstring appPathKey = L"Software\\Classes\\CLSID\\" + handler.clsid + L"\\AppPath";
-  if (::RegOpenKeyExW(HKEY_CURRENT_USER, appPathKey.c_str(), 0, KEY_READ, &reg) != ERROR_SUCCESS) {
-    return false;
-  }
-  wchar_t appBuffer[MAX_PATH * 2] = {};
-  size = sizeof(appBuffer);
-  const LONG appResult =
-      ::RegQueryValueExW(reg, nullptr, nullptr, nullptr, reinterpret_cast<LPBYTE>(appBuffer), &size);
-  ::RegCloseKey(reg);
-  if (appResult != ERROR_SUCCESS) return false;
-  return ::CompareStringOrdinal(appBuffer, -1, exe.c_str(), -1, TRUE) == CSTR_EQUAL;
+  const std::wstring registeredExe =
+      regGetString(root, L"Software\\Classes\\CLSID\\" + handler.clsid + L"\\AppPath", nullptr);
+  return ::CompareStringOrdinal(registeredExe.c_str(), -1, exe.c_str(), -1, TRUE) == CSTR_EQUAL;
 }
 
 }  // namespace windows

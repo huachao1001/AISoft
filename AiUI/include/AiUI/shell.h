@@ -14,6 +14,18 @@
 
 namespace AiUI {
 
+// 安装范围：决定注册表根键与组件落地目录。
+// 当前用户不需要提权；所有用户需要管理员权限。
+enum class InstallScope {
+  kCurrentUser,
+  kAllUsers,
+};
+
+// 本次进程实际拥有的安装范围。安装程序提权后以「所有用户」身份运行，
+// 右键组件也要按同一范围注册，否则菜单会出现在错误的账户下。
+InstallScope currentInstallScope();
+void setCurrentInstallScope(InstallScope scope);
+
 class PlatformTray;
 
 // ── 文件管理器右键菜单 ──
@@ -75,6 +87,13 @@ struct ShellMenuHandler {
   std::wstring displayName;
   // 生效对象，语义同 ShellVerb::targets：{"*"} 所有文件、{"Directory"} 所有目录。
   std::vector<std::wstring> targets;
+  // 安装范围。留默认值时用 currentInstallScope()，安装程序可以显式指定。
+  InstallScope scope = InstallScope::kCurrentUser;
+  // true 表示 scope 已被显式赋值；false 时跟随后端的当前范围
+  bool scopeExplicit = false;
+  // 组件落地目录。留空时由后端按 scope 选默认位置；
+  // 安装好的程序用自己所在目录，卸载时才能随程序一起清掉。
+  std::wstring componentDir;
 };
 
 // 释放组件并注册；成功返回空串，失败返回可读原因

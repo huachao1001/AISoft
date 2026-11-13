@@ -1094,6 +1094,34 @@ class WindowsPlatform : public Platform {
     return os::windows::isShellMenuHandlerRegisteredImpl(handler);
   }
 
+  bool isRunningElevated() override { return os::windows::isRunningElevatedImpl(); }
+  bool relaunchElevated() override { return os::windows::relaunchElevatedImpl(); }
+  std::wstring defaultInstallDir(InstallScope scope) override {
+    return os::windows::defaultInstallDirImpl(scope);
+  }
+  std::wstring installFiles(const std::wstring& targetDir,
+                            const std::vector<InstallFile>& files) override {
+    return os::windows::installFilesImpl(targetDir, files);
+  }
+  std::wstring removeInstalledFiles(const std::wstring& targetDir,
+                                    const std::vector<InstallFile>& files) override {
+    return os::windows::removeInstalledFilesImpl(targetDir, files);
+  }
+  std::wstring writeInstallMarker(const std::wstring& targetDir, const std::wstring& marker,
+                                  const std::string& content) override {
+    return os::windows::writeInstallMarkerImpl(targetDir, marker, content);
+  }
+  std::wstring createShortcuts(const std::wstring& targetDir, const std::wstring& exeName,
+                               const std::wstring& displayName, InstallScope scope) override {
+    return os::windows::createShortcutsImpl(targetDir, exeName, displayName, scope);
+  }
+  std::wstring removeShortcuts(const std::wstring& displayName, InstallScope scope) override {
+    return os::windows::removeShortcutsImpl(displayName, scope);
+  }
+  int runAndWait(const std::wstring& exePath, const std::wstring& arguments) override {
+    return os::windows::runAndWaitImpl(exePath, arguments);
+  }
+
   std::unique_ptr<PlatformTray> createTrayIcon(PlatformTrayHost& host) override {
     return os::windows::createTrayIconImpl(host);
   }

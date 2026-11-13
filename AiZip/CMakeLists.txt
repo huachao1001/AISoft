@@ -112,6 +112,63 @@ aiui_add_shell_menu_dll(aicmd
   SOURCES src/app/shell_menu_model.cpp
 )
 
+# ── 安装程序 ──
+# 自建安装包：只做「把文件放到目标目录 + 写注册表」。注册表那部分不在这里
+# 重写，而是调用已落地的 exe 自己注册（组件是它的内嵌资源）。
+#
+# 内嵌的程序要在构建期才存在，所以 payload.rc 由脚本生成，主 .rc 再包含它。
+set(SETUP_PAYLOAD_RC "${CMAKE_CURRENT_BINARY_DIR}/res/setup_payload.rc")
+add_custom_command(
+  OUTPUT "${SETUP_PAYLOAD_RC}"
+  COMMAND ${CMAKE_COMMAND}
+          -DEXE=$<TARGET_FILE:AiZip>
+          -DOUT=${SETUP_PAYLOAD_RC}
+          -DRC=${CMAKE_CURRENT_SOURCE_DIR}/src/res/setup.rc
+          -P "${CMAKE_CURRENT_SOURCE_DIR}/../AiUI/cmake/aiui_setup_rc.cmake"
+  DEPENDS AiZip "${CMAKE_CURRENT_SOURCE_DIR}/../AiUI/cmake/aiui_setup_rc.cmake"
+  COMMENT "生成安装包内嵌资源"
+  VERBATIM
+)
+
+add_executable(AiZipSetup WIN32
+  src/setup/main.cpp
+  src/setup/install_activity.cpp
+  src/res/setup.rc
+)
+
+# .rc 里 #include 的生成文件不被 CMake 跟踪，显式声明依赖，
+# 让 ninja 先跑生成规则再编译资源
+set_source_files_properties(src/res/setup.rc PROPERTIES
+  OBJECT_DEPENDS "${SETUP_PAYLOAD_RC}")
+
+target_include_directories(AiZipSetup PRIVATE
+  src/setup
+  src
+  "${CMAKE_CURRENT_BINARY_DIR}/res"
+)
+
+aiui_add_layouts(AiZipSetup assets/layouts/dlg_install.xml
+  OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/aiui_generated_setup")
+aiui_add_themes(AiZipSetup assets/layouts/themes.xml
+  OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/aiui_generated_setup")
+aiui_add_app_entry(AiZipSetup)
+
+target_compile_options(AiZipSetup PRIVATE /O2 /utf-8 /W4 /permissive-)
+target_link_options(AiZipSetup PRIVATE
+  /OPT:REF /OPT:ICF
+  "/MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/src/res/aizip.manifest"
+)
+target_link_libraries(AiZipSetup PRIVATE AiUI comctl32)
+
+# 安装包也要同步到 dist：用户实际拿到的就是它
+add_custom_command(TARGET AiZipSetup POST_BUILD
+  COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+          -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/sync_dist.ps1"
+          -Config "${CMAKE_BINARY_DIR}"
+  COMMENT "同步 dist（安装包）"
+  VERBATIM
+)
+
 # 内核功能回归工具（非发布产物）：命令行驱动压缩/解压，便于端到端校验
 add_executable(test_arc
   tools/test_arc.cpp

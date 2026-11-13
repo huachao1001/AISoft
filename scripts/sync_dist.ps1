@@ -15,6 +15,7 @@ $buildDir = if ([System.IO.Path]::IsPathRooted($Config)) { $Config } else { Join
 
 # 发布清单：源文件 → dist 里的名字
 $artifacts = @(
+  @{ Source = Join-Path $buildDir "AiZipSetup.exe"; Name = "AiZipSetup.exe" }
   @{ Source = Join-Path $buildDir "AiZip.exe"; Name = "AiZip.exe" }
 )
 

@@ -1,0 +1,36 @@
+#pragma code_page(65001)
+#include <windows.h>
+
+101 ICON "aizip.ico"
+
+// 内嵌的 AiZip.exe 由 CMake 在构建期生成到本文件旁边（setup_payload.rc），
+// 这里只做包含，路径随构建目录变化的问题就留在构建系统里。
+#include "setup_payload.rc"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION 1,0,0,0
+ PRODUCTVERSION 1,0,0,0
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0x0L
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "080404B0"
+        BEGIN
+            VALUE "CompanyName", "AIZip"
+            VALUE "FileDescription", "AIZip 安装程序"
+            VALUE "FileVersion", "1.0.0.0"
+            VALUE "InternalName", "AiZipSetup"
+            VALUE "OriginalFilename", "AiZipSetup.exe"
+            VALUE "ProductName", "AIZip"
+            VALUE "ProductVersion", "1.0.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x804, 1200
+    END
+END

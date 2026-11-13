@@ -27,6 +27,16 @@ int AiUI::runApp() {
   AiUI::initHostProcess();
   AiUI::startupPlatform();
 
+  // 安装程序的注册通道：装好文件后由它拉起本程序，写完注册表就退出。
+  // 放在读配置、建窗口之前，退出码就是注册结果，安装器据此判断成败。
+  for (const auto& arg : AiUI::platform()->commandLineArgs()) {
+    if (arg == L"--register-shell-menu") {
+      const std::wstring err = shell::RegisterContextMenu();
+      AiUI::shutdownPlatform();
+      return err.empty() ? 0 : 1;
+    }
+  }
+
   g_app.settings = util::LoadSettings();
   g_app.dpi = AiUI::platform()->screenDpi();
   AiUI::fonts.create(g_app.dpi);
@@ -38,8 +48,10 @@ int AiUI::runApp() {
 
   // 右键菜单默认注册到当前用户（不需要管理员，也不改任何文件关联）。
   // 程序换位置后旧菜单会指向失效路径，所以每次启动都校对一遍。
-  if (!shell::IsContextMenuRegistered()) {
-    const std::wstring err = shell::RegisterContextMenu();
+  // 安装版按安装时选的范围注册，否则「所有用户」装的程序会又往 HKCU 写一份。
+  AiUI::setCurrentInstallScope(shell::InstalledScope());
+  if (!shell::IsContextMenuRegistered(shell::InstalledScope())) {
+    const std::wstring err = shell::RegisterContextMenu(shell::InstalledScope());
     if (!err.empty()) {
       AiUI::MessageBoxParams params;
       params.title = L"AIZip";

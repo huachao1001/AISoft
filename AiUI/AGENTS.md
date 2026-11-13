@@ -46,6 +46,7 @@ src/os/linux/          预留（尚未实现）
 | `Platform`（`platform.h`） | `window_windows.cpp` 转发到 `platform_windows.cpp` |
 | `ShellVerb` / `registerShellVerbs` | `platform_windows.cpp` |
 | `ShellMenuHandler` / `aiuiBuildShellMenu` | `shell_menu_windows.cpp`、`shell_menu_register.cpp` |
+| `InstallScope` / `installFiles` / `writeInstallMarker` | `install_windows.cpp` |
 | `TrayIcon` | `platform_windows.cpp` |
 | `titleBarDefaults()` | `title_bar_windows.cpp` |
 

@@ -9,6 +9,7 @@
 
 #include "AiUI/events.h"
 #include "AiUI/icon.h"
+#include "AiUI/install.h"
 #include "AiUI/menu.h"
 #include "AiUI/painter.h"
 #include "AiUI/shell.h"
@@ -550,6 +551,54 @@ class Platform {
     (void)handler;
     return false;
   }
+
+  // ── 安装与卸载 ──
+  // 默认全部不支持；各平台后端按自己的目录约定与权限模型实现。
+  virtual bool isRunningElevated() { return true; }
+  virtual bool relaunchElevated() { return false; }
+  virtual std::wstring defaultInstallDir(InstallScope scope) {
+    (void)scope;
+    return {};
+  }
+  virtual std::wstring installFiles(const std::wstring& targetDir,
+                                    const std::vector<InstallFile>& files) {
+    (void)targetDir;
+    (void)files;
+    return L"当前平台不支持";
+  }
+  virtual std::wstring removeInstalledFiles(const std::wstring& targetDir,
+                                            const std::vector<InstallFile>& files) {
+    (void)targetDir;
+    (void)files;
+    return L"当前平台不支持";
+  }
+  virtual std::wstring writeInstallMarker(const std::wstring& targetDir,
+                                          const std::wstring& marker,
+                                          const std::string& content) {
+    (void)targetDir;
+    (void)marker;
+    (void)content;
+    return L"当前平台不支持";
+  }
+  virtual std::wstring createShortcuts(const std::wstring& targetDir, const std::wstring& exeName,
+                                       const std::wstring& displayName, InstallScope scope) {
+    (void)targetDir;
+    (void)exeName;
+    (void)displayName;
+    (void)scope;
+    return {};
+  }
+  virtual std::wstring removeShortcuts(const std::wstring& displayName, InstallScope scope) {
+    (void)displayName;
+    (void)scope;
+    return {};
+  }
+  virtual int runAndWait(const std::wstring& exePath, const std::wstring& arguments) {
+    (void)exePath;
+    (void)arguments;
+    return -1;
+  }
+
 
   // 创建托盘宿主；不支持托盘的平台返回 nullptr
   virtual std::unique_ptr<PlatformTray> createTrayIcon(PlatformTrayHost& host) {

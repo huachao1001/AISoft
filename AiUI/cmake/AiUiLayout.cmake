@@ -83,31 +83,46 @@ endfunction()
 # AIUI_ADD_THEMES：把主题 XML 在构建期编译成命名调色板并加入目标
 #
 # 用法：
-#   aiui_add_themes(<target> <themes.xml>)
+#   aiui_add_themes(<target> [OUTPUT_DIR <dir>] <themes.xml>)
 #
 # themes.xml 里写若干个 <Theme name="light" body="#f3f4f6" .../>，
 # 生成代码在静态初始化阶段把它们登记进 ThemeRegistry，运行时即可用
 # Window::setAppTheme(&ThemeRegistry::getOr(L"dark", kLightTheme)) 切换。
 # 未在 XML 里写出的颜色沿用浅色主题，只覆盖需要改的字段即可。
+#
+# 同一构建目录里多个目标共用一个 themes.xml 时必须各给一个 OUTPUT_DIR，
+# 否则它们会争抢同一个输出文件。
 function(aiui_add_themes target)
-  if(NOT ARGN)
+  set(options)
+  set(oneValueArgs OUTPUT_DIR)
+  set(multiValueArgs)
+  cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+  if(NOT ARG_UNPARSED_ARGUMENTS)
     message(FATAL_ERROR "aiui_add_themes(${target} ...) 至少需要一个 XML 文件")
   endif()
 
-  get_filename_component(xml_abs "${ARGN}" ABSOLUTE)
+  get_filename_component(xml_abs "${ARG_UNPARSED_ARGUMENTS}" ABSOLUTE)
   if(NOT EXISTS "${xml_abs}")
-    message(FATAL_ERROR "主题文件不存在：${ARGN}")
+    message(FATAL_ERROR "主题文件不存在：${ARG_UNPARSED_ARGUMENTS}")
   endif()
 
-  set(out "${CMAKE_CURRENT_BINARY_DIR}/aiui_generated/aiui_themes.cpp")
+  if(ARG_OUTPUT_DIR)
+    set(out_dir "${ARG_OUTPUT_DIR}")
+  else()
+    set(out_dir "${CMAKE_CURRENT_BINARY_DIR}/aiui_generated")
+  endif()
+  file(MAKE_DIRECTORY "${out_dir}")
+
+  set(out "${out_dir}/aiui_themes.cpp")
   add_custom_command(
     OUTPUT "${out}"
     COMMAND $<TARGET_FILE:AiUI::layoutgen> --themes "${xml_abs}" "${out}"
     DEPENDS "${xml_abs}" AiUI::layoutgen
-    COMMENT "生成主题配色 ${ARGN}"
+    COMMENT "生成主题配色 ${ARG_UNPARSED_ARGUMENTS}"
     VERBATIM
   )
   target_sources(${target} PRIVATE "${out}")
-  target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/aiui_generated")
+  target_include_directories(${target} PRIVATE "${out_dir}")
   set_source_files_properties("${out}" PROPERTIES GENERATED TRUE)
 endfunction()
