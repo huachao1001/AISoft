@@ -731,52 +731,92 @@ bool regReadString(const std::wstring& subKey, const wchar_t* name, std::wstring
   return true;
 }
 
+bool regDeleteValue(const std::wstring& subKey, const wchar_t* name) {
+  HKEY key = nullptr;
+  if (::RegOpenKeyExW(HKEY_CURRENT_USER, subKey.c_str(), 0, KEY_WRITE, &key) != ERROR_SUCCESS) {
+    // 值不存在等同于已清理
+    return true;
+  }
+  const LONG r = ::RegDeleteValueW(key, name);
+  ::RegCloseKey(key);
+  return r == ERROR_SUCCESS || r == ERROR_FILE_NOT_FOUND;
+}
+
 bool regDeleteTree(const std::wstring& subKey) {
   const LONG r = ::RegDeleteTreeW(HKEY_CURRENT_USER, subKey.c_str());
   if (r == ERROR_FILE_NOT_FOUND || r == ERROR_PATH_NOT_FOUND) return true;
   return r == ERROR_SUCCESS;
 }
 
-// 通配符后缀 → 注册表里挂动词的位置。Windows 的约定：
+// 生效对象 → 注册表里挂动词的位置。Windows 的约定：
 //   "*"        所有文件
 //   "Directory" 所有目录
 //   ".zip"     该后缀的文件
-std::vector<std::wstring> classRootsFor(const std::vector<std::wstring>& extensions) {
+std::vector<std::wstring> classRootsFor(const std::vector<std::wstring>& targets) {
   std::vector<std::wstring> roots;
-  if (extensions.empty()) {
+  if (targets.empty()) {
     roots.push_back(L"*");
     roots.push_back(L"Directory");
     return roots;
   }
-  for (const auto& ext : extensions) {
-    if (ext == L"*") roots.push_back(L"*");
-    else if (ext == L"Directory") roots.push_back(L"Directory");
-    else roots.push_back(L"SystemFileAssociations\\" + ext);
+  for (const auto& target : targets) {
+    if (target == L"*") roots.push_back(L"*");
+    else if (target == L"Directory") roots.push_back(L"Directory");
+    else roots.push_back(L"SystemFileAssociations\\" + target);
   }
   return roots;
 }
 
-std::wstring registerContextMenuImpl(const std::vector<ContextMenuEntry>& entries) {
+// 排除后缀 → AQS 条件表达式。Windows 的通配符动词没法"减去某几类"，
+// 只能靠 AppliesTo 在弹出时过滤；空串表示不加条件。
+//   NOT (System.FileExtension:=".zip" OR System.FileExtension:=".7z")
+std::wstring appliesToFor(const ShellVerb& verb, const std::wstring& root) {
+  // 条件只对通配符类有意义：指定后缀的位置本来就不会命中排除项
+  if (verb.excludeTargets.empty() || root != L"*") return {};
+  std::wstring expr = L"NOT (";
+  for (size_t i = 0; i < verb.excludeTargets.size(); ++i) {
+    if (i > 0) expr += L" OR ";
+    expr += L"System.FileExtension:=\"" + verb.excludeTargets[i] + L"\"";
+  }
+  expr += L")";
+  return expr;
+}
+
+std::wstring registerShellVerbsImpl(const std::vector<ShellVerb>& verbs) {
   const std::wstring exe = executablePathImpl();
   if (exe.empty()) return L"无法取得程序路径";
 
-  for (const auto& entry : entries) {
-    for (const auto& root : classRootsFor(entry.extensions)) {
-      const std::wstring base =
-          L"Software\\Classes\\" + root + L"\\shell\\" + entry.verb;
+  for (const auto& verb : verbs) {
+    for (const auto& root : classRootsFor(verb.targets)) {
+      const std::wstring base = L"Software\\Classes\\" + root + L"\\shell\\" + verb.id;
       const std::wstring cmdKey = base + L"\\command";
 
-      if (!regSetString(base, nullptr, entry.label)) return L"写入菜单文字失败：" + base;
+      if (!regSetString(base, nullptr, verb.label)) return L"写入菜单文字失败：" + base;
       if (!regSetString(base, L"Icon", exe)) return L"写入图标失败：" + base;
-      if (entry.topLevel && !regSetString(base, L"Position", L"Top")) {
-        return L"写入菜单位置失败：" + base;
+      // 位置显式对齐：旧版本写过的 Top 必须清掉，否则菜单顺序和当前配置对不上
+      if (verb.topLevel) {
+        if (!regSetString(base, L"Position", L"Top")) return L"写入菜单位置失败：" + base;
+      } else if (!regDeleteValue(base, L"Position")) {
+        return L"清理菜单位置失败：" + base;
+      }
+      // 同理：排除项变化后旧的 AppliesTo 必须重写或清掉，否则过滤条件还停在旧值
+      const std::wstring appliesTo = appliesToFor(verb, root);
+      if (appliesTo.empty()) {
+        if (!regDeleteValue(base, L"AppliesTo")) return L"清理菜单条件失败：" + base;
+      } else if (!regSetString(base, L"AppliesTo", appliesTo)) {
+        return L"写入菜单条件失败：" + base;
       }
       // 静态动词只认 %1，没有 %*。多选时系统会为每个选中项各起一次进程，
       // 各带一个 %1，聚合交给程序内的单实例逻辑。
-      if (!regSetString(base, L"MultiSelectModel", L"Player")) {
+      // Single 表示多选时不显示这一项；Player 才会在多选时出现。
+      const wchar_t* multiSelect = verb.singleSelectionOnly ? L"Single" : L"Player";
+      if (!regSetString(base, L"MultiSelectModel", multiSelect)) {
         return L"写入多选模式失败：" + base;
       }
-      const std::wstring cmd = L"\"" + exe + L"\" " + entry.command + L" \"%1\"";
+      // command 为空表示"只把路径传给自己"，用于交给程序自己决定怎么处理
+      std::wstring cmd = L"\"" + exe + L"\"";
+      if (!verb.command.empty()) cmd += L" " + verb.command;
+      cmd += L" \"%1\"";
       if (!regSetString(cmdKey, nullptr, cmd)) return L"写入命令行失败：" + cmdKey;
     }
   }
@@ -786,29 +826,47 @@ std::wstring registerContextMenuImpl(const std::vector<ContextMenuEntry>& entrie
   return L"";
 }
 
-std::wstring unregisterContextMenuImpl(const std::vector<ContextMenuEntry>& entries) {
-  for (const auto& entry : entries) {
-    for (const auto& root : classRootsFor(entry.extensions)) {
-      regDeleteTree(L"Software\\Classes\\" + root + L"\\shell\\" + entry.verb);
+std::wstring unregisterShellVerbsImpl(const std::vector<ShellVerb>& verbs) {
+  for (const auto& verb : verbs) {
+    for (const auto& root : classRootsFor(verb.targets)) {
+      regDeleteTree(L"Software\\Classes\\" + root + L"\\shell\\" + verb.id);
     }
   }
   ::SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
   return L"";
 }
 
-bool isContextMenuRegisteredImpl(const std::vector<ContextMenuEntry>& entries) {
+bool areShellVerbsRegisteredImpl(const std::vector<ShellVerb>& verbs) {
   const std::wstring exe = executablePathImpl();
   if (exe.empty()) return false;
 
-  for (const auto& entry : entries) {
-    for (const auto& root : classRootsFor(entry.extensions)) {
+  for (const auto& verb : verbs) {
+    for (const auto& root : classRootsFor(verb.targets)) {
+      const std::wstring base = L"Software\\Classes\\" + root + L"\\shell\\" + verb.id;
       std::wstring cmd;
-      const std::wstring key = L"Software\\Classes\\" + root + L"\\shell\\" + entry.verb +
-                               L"\\command";
-      if (!regReadString(key, nullptr, cmd)) return false;
-      // 程序换位置后旧路径失效，视为未注册
-      if (cmd.find(L"\"" + exe + L"\"") == std::wstring::npos) return false;
-      if (cmd.find(L"\"%1\"") == std::wstring::npos) return false;
+      if (!regReadString(base + L"\\command", nullptr, cmd)) return false;
+      // 程序换位置后旧路径失效、动作参数变化后旧命令失效，都视为未注册
+      std::wstring expectedCmd = L"\"" + exe + L"\"";
+      if (!verb.command.empty()) expectedCmd += L" " + verb.command;
+      expectedCmd += L" \"%1\"";
+      if (cmd != expectedCmd) return false;
+
+      // 位置与当前配置不一致（例如旧版留下的 Top）也视为未注册，交给注册流程纠正
+      std::wstring position;
+      const bool hasPosition = regReadString(base, L"Position", position);
+      if (hasPosition != verb.topLevel) return false;
+      if (hasPosition && position != L"Top") return false;
+
+      // 排除条件同理：不一致就重写，免得菜单过滤还停在旧的后缀表
+      const std::wstring expected = appliesToFor(verb, root);
+      std::wstring actual;
+      if (regReadString(base, L"AppliesTo", actual) != !expected.empty()) return false;
+      if (!expected.empty() && actual != expected) return false;
+
+      // 多选模式也要校对：旧版一律写 Player，改配置后必须重写
+      std::wstring multiSelect;
+      if (!regReadString(base, L"MultiSelectModel", multiSelect)) return false;
+      if (multiSelect != (verb.singleSelectionOnly ? L"Single" : L"Player")) return false;
     }
   }
   return true;
@@ -918,6 +976,146 @@ bool forwardToRunningInstanceImpl(const std::wstring& appId, const std::wstring&
   if (::IsIconic(target)) ::ShowWindow(target, SW_RESTORE);
   ::SetForegroundWindow(target);
   return true;
+}
+
+// ───────────────────────── 托盘图标 ─────────────────────────
+
+namespace {
+
+constexpr UINT kTrayCallbackMessage = WM_APP + 200;
+constexpr UINT kTrayIconId = 1;
+constexpr const wchar_t* kTrayClassName = L"AiUI.TrayHost";
+// 托盘依附一个隐藏窗口：Shell_NotifyIcon 的回调消息必须有个窗口接收，
+// 而这个窗口不需要可见，也就不进任务栏。
+class WindowsTray final : public PlatformTray {
+ public:
+  WindowsTray(PlatformTrayHost& host, HINSTANCE instance) : host_(host), instance_(instance) {}
+
+  ~WindowsTray() override {
+    hide();
+    if (hwnd_) ::DestroyWindow(hwnd_);
+  }
+
+  bool ensureWindow() {
+    if (hwnd_) return true;
+
+    WNDCLASSEXW wc{};
+    wc.cbSize = sizeof(wc);
+    wc.lpfnWndProc = &WindowsTray::proc;
+    wc.hInstance = instance_;
+    wc.lpszClassName = kTrayClassName;
+    // 类可能已被别的托盘实例注册过，重复注册失败不算错误
+    ::RegisterClassExW(&wc);
+
+    hwnd_ = ::CreateWindowExW(0, kTrayClassName, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr,
+                              instance_, this);
+    return hwnd_ != nullptr;
+  }
+
+  bool show(const std::wstring& tooltip) override {
+    if (!ensureWindow()) return false;
+    tooltip_ = tooltip;
+
+    NOTIFYICONDATAW data{};
+    data.cbSize = sizeof(data);
+    data.hWnd = hwnd_;
+    data.uID = kTrayIconId;
+    data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+    data.uCallbackMessage = kTrayCallbackMessage;
+    // 图标沿用窗口后端那一套取图逻辑，避免托盘和任务栏图标不一致
+    data.hIcon = os::windows::loadAppIcon(::GetSystemMetrics(SM_CXSMICON));
+    wcsncpy_s(data.szTip, tooltip.c_str(), _TRUNCATE);
+
+    if (!::Shell_NotifyIconW(visible_ ? NIM_MODIFY : NIM_ADD, &data)) {
+      if (data.hIcon) ::DestroyIcon(data.hIcon);
+      return false;
+    }
+    if (data.hIcon) ::DestroyIcon(data.hIcon);
+    visible_ = true;
+    return true;
+  }
+
+  void hide() override {
+    if (!visible_ || !hwnd_) return;
+    NOTIFYICONDATAW data{};
+    data.cbSize = sizeof(data);
+    data.hWnd = hwnd_;
+    data.uID = kTrayIconId;
+    ::Shell_NotifyIconW(NIM_DELETE, &data);
+    visible_ = false;
+  }
+
+  void setTooltip(const std::wstring& tooltip) override {
+    if (!visible_) {
+      tooltip_ = tooltip;
+      return;
+    }
+    tooltip_ = tooltip;
+    NOTIFYICONDATAW data{};
+    data.cbSize = sizeof(data);
+    data.hWnd = hwnd_;
+    data.uID = kTrayIconId;
+    data.uFlags = NIF_TIP;
+    wcsncpy_s(data.szTip, tooltip.c_str(), _TRUNCATE);
+    ::Shell_NotifyIconW(NIM_MODIFY, &data);
+  }
+
+ private:
+  static LRESULT CALLBACK proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    if (msg == WM_NCCREATE) {
+      auto* self = static_cast<WindowsTray*>(
+          reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams);
+      ::SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
+      self->hwnd_ = hwnd;
+    }
+    auto* self = reinterpret_cast<WindowsTray*>(::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (self && msg == kTrayCallbackMessage) {
+      self->onCallback(LOWORD(lParam));
+      return 0;
+    }
+    return ::DefWindowProcW(hwnd, msg, wParam, lParam);
+  }
+
+  void onCallback(UINT event) {
+    switch (event) {
+      case WM_LBUTTONUP:
+      case WM_LBUTTONDBLCLK:
+        host_.onTrayActivate();
+        break;
+      case WM_RBUTTONUP:
+      case WM_CONTEXTMENU:
+        openMenu();
+        break;
+      default:
+        break;
+    }
+  }
+
+  // 菜单每次现取：应用改条目不用重新注册图标
+  void openMenu() {
+    const std::vector<MenuItem> items = host_.trayMenu();
+    if (items.empty()) return;
+
+    POINT cursor{};
+    ::GetCursorPos(&cursor);
+    // 菜单结束后要点别处才消失，先把自己提到前台
+    HWND owner = ::GetForegroundWindow();
+    if (!owner) owner = hwnd_;
+    const int index = showPopupMenuImpl(owner, Point{cursor.x, cursor.y}, items);
+    if (index >= 0) host_.onTrayMenuCommand(index);
+  }
+
+  PlatformTrayHost& host_;
+  HINSTANCE instance_ = nullptr;
+  HWND hwnd_ = nullptr;
+  bool visible_ = false;
+  std::wstring tooltip_;
+};
+
+}  // namespace
+
+std::unique_ptr<PlatformTray> createTrayIconImpl(PlatformTrayHost& host) {
+  return std::make_unique<WindowsTray>(host, ::GetModuleHandleW(nullptr));
 }
 
 }  // namespace windows

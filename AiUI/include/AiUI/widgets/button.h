@@ -15,6 +15,9 @@ enum class ButtonStyle {
   kOutline,  // 圆角描边 + 白底（工具条）
   kSubtle,   // 无边框，仅悬停底色
   kFlat,     // 完全平铺
+  // 幽灵按钮：任何状态都不带背景，只有内容颜色变化。
+  // 叠在彩色区域（进度条、图片）上的图标按钮用这个。
+  kGhost,
   // 主行动：强调色填充 + 深色文字。一个界面里最多放一个，
   // 两个同等分量的实心按钮会让人不知道该点哪个。
   kPrimary,
@@ -54,7 +57,7 @@ struct ButtonSpec {
 
 class Button : public View {
  public:
-  Button() = default;
+  Button() { setClaimsPointer(true); }
 
   void setSpec(const ButtonSpec& spec);
   const ButtonSpec& spec() const { return spec_; }

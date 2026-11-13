@@ -293,6 +293,8 @@ std::string iconExpr(const std::string& name) {
       {"chevronDown", "IconId::kChevronDown"},{"home", "IconId::kHome"},
       {"folder", "IconId::kFolder"},          {"file", "IconId::kFile"},
       {"search", "IconId::kSearch"},
+      {"close", "IconId::kClose"},          {"minimize", "IconId::kMinimize"},
+      {"maximize", "IconId::kMaximize"},    {"restore", "IconId::kRestore"},
   };
   auto it = kIcons.find(name);
   return it == kIcons.end() ? "IconId::kNone" : it->second;
@@ -341,9 +343,13 @@ std::string colorExpr(const XmlNode& node, const char* key, const std::string& f
   } else {
     return fallback;
   }
-  char buffer[80];
-  std::snprintf(buffer, sizeof(buffer), "makeColor(0x%02x, 0x%02x, 0x%02x%s)", r, g, b,
-                a == 255 ? "" : (", 0x" + std::to_string(a)).c_str());
+  char buffer[96];
+  if (a == 255) {
+    std::snprintf(buffer, sizeof(buffer), "makeColor(0x%02x, 0x%02x, 0x%02x)", r, g, b);
+  } else {
+    // alpha 必须按十六进制输出：十进制拼上 0x 前缀会变成另一个数（242 → 0x242）
+    std::snprintf(buffer, sizeof(buffer), "makeColor(0x%02x, 0x%02x, 0x%02x, 0x%02x)", r, g, b, a);
+  }
   return buffer;
 }
 
@@ -677,6 +683,7 @@ class Generator {
       const std::string style = get(node, "style");
       if (style == "subtle") line(2, "spec.style = ButtonStyle::kSubtle;");
       else if (style == "flat") line(2, "spec.style = ButtonStyle::kFlat;");
+      else if (style == "ghost") line(2, "spec.style = ButtonStyle::kGhost;");
       else if (style == "primary") line(2, "spec.style = ButtonStyle::kPrimary;");
 
       if (has(node, "width")) line(2, "spec.width = " + get(node, "width", "0") + ";");
@@ -729,6 +736,8 @@ class Generator {
       if (has(node, "align")) line(2, "style.align = " + alignExpr(get(node, "align")) + ";");
       if (getBool(node, "bold", false)) line(2, "style.bold = true;");
       if (getBool(node, "small", false)) line(2, "style.smallFont = true;");
+      if (getBool(node, "large", false)) line(2, "style.largeFont = true;");
+      if (getBool(node, "huge", false)) line(2, "style.hugeFont = true;");
       if (has(node, "ellipsis") && !getBool(node, "ellipsis", true)) {
         line(2, "style.ellipsis = false;");
       }
@@ -878,6 +887,13 @@ class Generator {
       }
       if (has(node, "trackColor")) {
         line(2, "spec.track = " + colorExpr(node, "trackColor", "kNoColor") + ";");
+      }
+      // 渐变填充：两个色值都给出时才生效，缺一退回纯色 fillColor
+      if (has(node, "fillTopColor")) {
+        line(2, "spec.fillTop = " + colorExpr(node, "fillTopColor", "kNoColor") + ";");
+      }
+      if (has(node, "fillBottomColor")) {
+        line(2, "spec.fillBottom = " + colorExpr(node, "fillBottomColor", "kNoColor") + ";");
       }
       line(2, variable + "->setSpec(spec);");
       line(1, "}");

@@ -205,6 +205,10 @@ class View {
   // 双击时切换最大化（系统标题栏的默认行为）。
   void setDragWindow(bool enabled) { dragWindow_ = enabled; }
   bool isDragWindow() const { return dragWindow_; }
+  // 该视图要真实接收鼠标事件。拖窗容器里只有它能把命中留在客户区，
+  // 否则按钮会被当成标题栏，点击直接变成拖窗口。
+  void setClaimsPointer(bool claims) { claimsPointer_ = claims; }
+  bool claimsPointer() const { return claimsPointer_; }
   virtual void setEnabled(bool enabled);
   bool isEnabled() const { return enabled_; }
   void setFocus();
@@ -303,6 +307,12 @@ class View {
     return dragWindow_ ? HitTarget::kCaption : HitTarget::kClient;
   }
 
+  // 该点（窗口坐标）是否落在需要鼠标的视图上。拖窗容器靠它决定
+  // 要不要把这一块留成客户区。
+  virtual bool claimsPointerAt(const Point& windowPoint) {
+    return claimsPointer_ && isVisible() && absoluteBounds().contains(windowPoint);
+  }
+
   // 默认背景色；不想铺底就返回 kNoColor
   virtual Color backgroundColor() const;
   // 自身或最近上级的底色：圆角外露出的四角用它填
@@ -353,6 +363,7 @@ class View {
   bool enabled_ = true;
   bool focusable_ = false;
   bool dragWindow_ = false;
+  bool claimsPointer_ = false;
   CursorShape cursorShape_ = CursorShape::kArrow;
   // nullptr 表示跟随父链，不自己持有主题
   const Theme* theme_ = nullptr;

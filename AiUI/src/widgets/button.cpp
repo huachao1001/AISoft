@@ -64,6 +64,11 @@ void Button::resolvePalette(Color& background, Color& border, Color& ink) const 
         background = pressed_ ? t.btnDownBg : (hot_ ? t.hover : kNoColor);
         ink = t.ink;
         break;
+      case ButtonStyle::kGhost:
+        // 叠在彩色区域上：任何状态都不铺底，只让内容换色
+        background = kNoColor;
+        ink = t.ink;
+        break;
     }
   }
   // 显式指定的颜色优先

@@ -76,6 +76,9 @@ struct ProgressSpec {
   // kNoColor 表示跟随主题
   Color track = kNoColor;
   Color fill = kNoColor;
+  // 同时设置时用竖向渐变替代纯色填充，用来给进度条一点体积感
+  Color fillTop = kNoColor;
+  Color fillBottom = kNoColor;
 };
 
 class ProgressBar : public View {

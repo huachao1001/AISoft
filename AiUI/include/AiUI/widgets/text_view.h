@@ -17,6 +17,10 @@ struct TextStyle {
   bool ellipsis = true;  // 超宽时显示省略号
   bool bold = false;
   bool smallFont = false;  // 用小字号
+  // 放大一档：进度条这类需要一眼看清的场合用
+  bool largeFont = false;
+  // 再放大一档：单行信息窗口的主标题
+  bool hugeFont = false;
   int paddingLeft = 0;
   int paddingTop = 0;
   int paddingRight = 0;

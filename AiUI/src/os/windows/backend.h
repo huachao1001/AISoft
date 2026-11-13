@@ -113,9 +113,11 @@ int showPopupMenuImpl(NativeHandle owner, const Point& position,
 Point cursorPositionImpl();
 void bringToFrontImpl(NativeHandle window);
 
-std::wstring registerContextMenuImpl(const std::vector<ContextMenuEntry>& entries);
-std::wstring unregisterContextMenuImpl(const std::vector<ContextMenuEntry>& entries);
-bool isContextMenuRegisteredImpl(const std::vector<ContextMenuEntry>& entries);
+std::wstring registerShellVerbsImpl(const std::vector<ShellVerb>& verbs);
+std::wstring unregisterShellVerbsImpl(const std::vector<ShellVerb>& verbs);
+bool areShellVerbsRegisteredImpl(const std::vector<ShellVerb>& verbs);
+
+std::unique_ptr<PlatformTray> createTrayIconImpl(PlatformTrayHost& host);
 
 bool isUiThreadImpl();
 void sleepMillisImpl(int ms);

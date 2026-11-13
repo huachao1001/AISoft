@@ -189,11 +189,17 @@ class WindowsWindow : public PlatformWindow {
   void setBounds(const Rect& bounds) override {
     if (!hwnd_) return;
     if (style_.topLevel) {
-      // 顶层窗口的 bounds 指客户区，Reverse 后换算成整窗尺寸
-      RECT rc{bounds.left, bounds.top, bounds.right, bounds.bottom};
-      ::AdjustWindowRectExForDpi(&rc, ::GetWindowLongW(hwnd_, GWL_STYLE), FALSE,
+      // 顶层窗口的 bounds 指客户区。客户区顶被划给了自绘标题栏
+      // （见 WM_NCCALCSIZE），系统算的顶部非客户区实际上不存在，
+      // 所以整窗高度按「客户区高 + 底边边距」反推，不能直接用
+      // AdjustWindowRectExForDpi 的结果，否则会多出一条标题栏的高度。
+      RECT probe{bounds.left, bounds.top, bounds.right, bounds.bottom};
+      ::AdjustWindowRectExForDpi(&probe, ::GetWindowLongW(hwnd_, GWL_STYLE), FALSE,
                                  ::GetWindowLongW(hwnd_, GWL_EXSTYLE), dpi_);
-      ::SetWindowPos(hwnd_, nullptr, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top,
+      const int outerWidth = probe.right - probe.left;
+      const int bottomMargin = probe.bottom - bounds.bottom;
+      const int outerHeight = bounds.height() + bottomMargin;
+      ::SetWindowPos(hwnd_, nullptr, probe.left, probe.top, outerWidth, outerHeight,
                      SWP_NOZORDER | SWP_NOACTIVATE);
       return;
     }
@@ -1068,14 +1074,18 @@ class WindowsPlatform : public Platform {
   Point cursorPosition() override { return os::windows::cursorPositionImpl(); }
   void bringToFront(NativeHandle window) override { os::windows::bringToFrontImpl(window); }
 
-  std::wstring registerContextMenu(const std::vector<ContextMenuEntry>& entries) override {
-    return os::windows::registerContextMenuImpl(entries);
+  std::wstring registerShellVerbs(const std::vector<ShellVerb>& verbs) override {
+    return os::windows::registerShellVerbsImpl(verbs);
   }
-  std::wstring unregisterContextMenu(const std::vector<ContextMenuEntry>& entries) override {
-    return os::windows::unregisterContextMenuImpl(entries);
+  std::wstring unregisterShellVerbs(const std::vector<ShellVerb>& verbs) override {
+    return os::windows::unregisterShellVerbsImpl(verbs);
   }
-  bool isContextMenuRegistered(const std::vector<ContextMenuEntry>& entries) override {
-    return os::windows::isContextMenuRegisteredImpl(entries);
+  bool areShellVerbsRegistered(const std::vector<ShellVerb>& verbs) override {
+    return os::windows::areShellVerbsRegisteredImpl(verbs);
+  }
+
+  std::unique_ptr<PlatformTray> createTrayIcon(PlatformTrayHost& host) override {
+    return os::windows::createTrayIconImpl(host);
   }
 
   bool isUiThread() override { return os::windows::isUiThreadImpl(); }

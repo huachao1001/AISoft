@@ -12,6 +12,12 @@ class FontSet {
   Font ui;       // 正文：列表、按钮
   Font uiBold;   // 加粗：标题
   Font uiSmall;  // 小字：状态栏、页签
+  // 大字：进度条这类需要一眼看清的场合
+  Font uiLarge;
+  Font uiLargeBold;
+  // 超大：单行信息窗口（如进度条）的主标题
+  Font uiHuge;
+  Font uiHugeBold;
 
   void create(int dpi);
   void destroy();

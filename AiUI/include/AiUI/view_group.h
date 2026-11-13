@@ -66,6 +66,8 @@ class ViewGroup : public View {
   void onDrawChildren(Painter& painter, const Rect& dirty) override;
   // 把非客户区命中分发给覆盖该点的子视图
   HitTarget onHitTest(const Point& windowPoint) override;
+  // 子孙里是否有需要鼠标的视图覆盖该点
+  bool claimsPointerAt(const Point& windowPoint) override;
 
   // 子树挂载/卸载：只由 View 的递归挂载调用
   void attachChildren();

@@ -69,12 +69,10 @@ Window::Window() : root_(std::make_unique<Root>()) {
 }
 
 Window::~Window() {
-  // 先断开平台窗口，再销毁视图树
-  if (window_) {
-    window_->setBlinkTimer(false);
-    platform()->destroyWindow(window_);
-    window_ = nullptr;
-  }
+  // 平台窗口归 ViewRoot 管：由它销毁才能同时清掉视图树里的指针，
+  // 这里直接 destroyWindow 会让 ViewRoot 留着悬空指针二次使用。
+  if (root_ && root_->root()) root_->root()->destroyWindow();
+  window_ = nullptr;
   content_ = nullptr;
   titleBar_ = nullptr;
   // root_ 析构时会删掉标题栏与内容
@@ -226,13 +224,11 @@ void Window::showModal(NativeHandle owner) {
   if (!window_) return;
   window_->setFocus();
   runModalLoop(window_->handle(), owner);
-  // 用户可能点关闭按钮（窗口已销毁），也可能调用方自己收尾；
-  // 这里主动回收平台窗口，避免对象留在后端表里
-  if (window_) {
-    window_->setBlinkTimer(false);
-    platform()->destroyWindow(window_);
-    window_ = nullptr;
-  }
+  // 用户可能点关闭按钮（窗口已销毁），也可能调用方自己收尾。
+  // 必须经 ViewRoot 回收：它持有同一平台窗口，只有它知道该把指针置空，
+  // 否则它析构时会拿悬空指针再做一次虚调用。
+  if (root_ && root_->root()) root_->root()->destroyWindow();
+  window_ = nullptr;
 }
 
 NativeHandle Window::handle() const { return window_ ? window_->handle() : nullptr; }

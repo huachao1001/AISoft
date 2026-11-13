@@ -9,7 +9,9 @@
 
 #include "AiUI/events.h"
 #include "AiUI/icon.h"
+#include "AiUI/menu.h"
 #include "AiUI/painter.h"
+#include "AiUI/shell.h"
 #include "AiUI/types.h"
 
 #include <cstdint>
@@ -90,28 +92,30 @@ class FileStream {
   virtual bool setSize(uint64_t size) = 0;
 };
 
-// ── 右键菜单项 ──
-// 资源管理器/访达里挂到文件上的动作。命令行的拼接方式由后端决定。
-struct ContextMenuEntry {
-  std::wstring verb;   // 唯一标识，如 "AIZip.Extract"
-  std::wstring label;  // 显示文字
-  std::wstring command;  // 命令行开关，如 "-extract"
-  // 挂到哪些类型：通配符后缀（"*" 为所有文件）；空表示所有文件与目录
-  std::vector<std::wstring> extensions;
-  bool topLevel = false;
+// ── 托盘图标 ──
+// 平台侧只负责"把图标挂到系统托盘、把点击转成回调"，菜单每次都现取，
+// 应用改菜单不用重新注册。生命周期由应用持有的 TrayIcon 管理。
+class PlatformTrayHost {
+ public:
+  virtual ~PlatformTrayHost() = default;
+  // 左键单击或双击
+  virtual void onTrayActivate() = 0;
+  // 托盘菜单被选中；index 是菜单列表里的下标
+  virtual void onTrayMenuCommand(int index) = 0;
+  // 右键菜单内容由宿主现场提供
+  virtual std::vector<MenuItem> trayMenu() = 0;
 };
 
-// ── 弹出菜单 ──
-struct MenuItem {
-  std::wstring label;
-  bool enabled = true;
-  // 分隔线；此时 label 被忽略
-  bool separator = false;
-  // 左侧显示勾选标记；下拉框用它标出当前项
-  bool checked = false;
+class PlatformTray {
+ public:
+  virtual ~PlatformTray() = default;
+  // 挂上图标；tooltip 为悬停提示。返回是否成功
+  virtual bool show(const std::wstring& tooltip) = 0;
+  virtual void hide() = 0;
+  virtual void setTooltip(const std::wstring& tooltip) = 0;
 };
 
-// ── 消息框 ──
+// ── 平台后端 ──
 
 enum class MessageBoxIcon { kNone, kInfo, kWarning, kError, kQuestion };
 
@@ -518,19 +522,25 @@ class Platform {
   virtual void bringToFront(NativeHandle window) { (void)window; }
 
   // ── 系统集成 ──
-  // 把动作挂到系统右键菜单；返回空串表示成功，否则是可读错误
-  virtual std::wstring registerContextMenu(const std::vector<ContextMenuEntry>& entries) {
-    (void)entries;
+  // 文件管理器右键菜单。参数是中性描述，后端负责落到各自的系统机制。
+  virtual std::wstring registerShellVerbs(const std::vector<ShellVerb>& verbs) {
+    (void)verbs;
     return L"当前平台不支持";
   }
-  virtual std::wstring unregisterContextMenu(const std::vector<ContextMenuEntry>& entries) {
-    (void)entries;
+  virtual std::wstring unregisterShellVerbs(const std::vector<ShellVerb>& verbs) {
+    (void)verbs;
     return L"当前平台不支持";
   }
   // 列出的动作是否都已挂好且指向当前可执行文件
-  virtual bool isContextMenuRegistered(const std::vector<ContextMenuEntry>& entries) {
-    (void)entries;
+  virtual bool areShellVerbsRegistered(const std::vector<ShellVerb>& verbs) {
+    (void)verbs;
     return false;
+  }
+
+  // 创建托盘宿主；不支持托盘的平台返回 nullptr
+  virtual std::unique_ptr<PlatformTray> createTrayIcon(PlatformTrayHost& host) {
+    (void)host;
+    return nullptr;
   }
 
   // ── 进程与线程 ──

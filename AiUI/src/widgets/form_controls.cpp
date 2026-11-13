@@ -180,7 +180,18 @@ void ProgressBar::onPaint(Painter& painter, const Rect& rect) {
   const int fillWidth = static_cast<int>(rect.width() * progress_);
   if (fillWidth <= 0) return;
   const Rect region{rect.left, rect.top, rect.left + fillWidth, rect.bottom};
-  painter.fillRoundRect(region, fill, radius);
+
+  // 渐变优先级：显式 fillTop/Bottom > 显式 fill 纯色 > 按主题 accent 自动生成。
+  // 自动生成省得每个主题各写一份色值，深浅色都能跟着 accent 走。
+  const bool hasGradient = spec_.fillTop != kNoColor && spec_.fillBottom != kNoColor;
+  if (hasGradient) {
+    painter.drawGradientRoundRect(region, spec_.fillTop, spec_.fillBottom, radius);
+  } else if (spec_.fill != kNoColor) {
+    painter.fillRoundRect(region, spec_.fill, radius);
+  } else {
+    painter.drawGradientRoundRect(region, blendColor(fill, makeColor(0xff, 0xff, 0xff), 0.18f),
+                                  t.accentDown, radius);
+  }
 }
 
 // ───────────────────────── GroupBox ─────────────────────────

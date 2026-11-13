@@ -194,6 +194,13 @@ void ViewGroup::onDrawChildren(Painter& painter, const Rect& dirty) {
 // ───────────────────────── 命中 ─────────────────────────
 
 HitTarget ViewGroup::onHitTest(const Point& windowPoint) {
+  // 先看有没有真正需要鼠标的子视图（含子孙）：拖窗容器里得把它们
+  // 留在客户区，否则落在按钮上的点击会被当成拖窗口。
+  for (auto it = children_.rbegin(); it != children_.rend(); ++it) {
+    View* child = *it;
+    if (child->claimsPointerAt(windowPoint)) return HitTarget::kClient;
+  }
+  // 再看子视图自己声明的非客户区（如标题栏的最大化按钮）
   for (auto it = children_.rbegin(); it != children_.rend(); ++it) {
     View* child = *it;
     if (!child->isVisible()) continue;
@@ -201,7 +208,16 @@ HitTarget ViewGroup::onHitTest(const Point& windowPoint) {
     const HitTarget target = child->onHitTest(windowPoint);
     if (target != HitTarget::kClient) return target;
   }
-  return HitTarget::kClient;
+  // 没人认领才回落到容器自身：开了 dragWindow 就是可拖动区域
+  return View::onHitTest(windowPoint);
+}
+
+bool ViewGroup::claimsPointerAt(const Point& windowPoint) {
+  if (!isVisible() || !absoluteBounds().contains(windowPoint)) return false;
+  for (View* child : children_) {
+    if (child->claimsPointerAt(windowPoint)) return true;
+  }
+  return View::claimsPointerAt(windowPoint);
 }
 
 View* ViewGroup::hitTest(Point localPoint) const {

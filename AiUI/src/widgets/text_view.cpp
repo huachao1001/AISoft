@@ -10,6 +10,8 @@ namespace AiUI {
 void TextView::setText(const std::wstring& text) {
   if (text_ == text) return;
   text_ = text;
+  // 宽度可能随文字变化（wrap 布局），必须重排，否则按旧宽度被裁掉
+  requestLayout();
   invalidate();
 }
 
@@ -35,7 +37,11 @@ void TextView::onPaint(Painter& painter, const Rect& rect) {
   const Rect inner =
       rect.inset(style_.paddingLeft * d / 96, style_.paddingTop * d / 96,
                  style_.paddingRight * d / 96, style_.paddingBottom * d / 96);
-  const Font& font = style_.smallFont ? fonts.uiSmall : (style_.bold ? fonts.uiBold : fonts.ui);
+  const Font& font = style_.hugeFont
+                         ? (style_.bold ? fonts.uiHugeBold : fonts.uiHuge)
+                         : style_.largeFont ? (style_.bold ? fonts.uiLargeBold : fonts.uiLarge)
+                                            : style_.smallFont ? fonts.uiSmall
+                                                               : (style_.bold ? fonts.uiBold : fonts.ui);
   // 主题角色优先：换主题后文字自动改色，宿主不用重新下发样式
   const Color color = style_.colorRole ? theme().*(style_.colorRole) : style_.color;
 
@@ -49,7 +55,11 @@ void TextView::onPaint(Painter& painter, const Rect& rect) {
 Size TextView::onMeasure(const Size& available) {
   (void)available;
   const int d = dpi();
-  const Font& font = style_.smallFont ? fonts.uiSmall : (style_.bold ? fonts.uiBold : fonts.ui);
+  const Font& font = style_.hugeFont
+                         ? (style_.bold ? fonts.uiHugeBold : fonts.uiHuge)
+                         : style_.largeFont ? (style_.bold ? fonts.uiLargeBold : fonts.uiLarge)
+                                            : style_.smallFont ? fonts.uiSmall
+                                                               : (style_.bold ? fonts.uiBold : fonts.ui);
 
   // 文字宽度由平台后端直接测量；控件还没建窗时也能算准
   int textWidth = platform()->measureText(text_, font);
