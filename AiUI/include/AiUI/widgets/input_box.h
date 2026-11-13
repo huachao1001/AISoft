@@ -18,10 +18,15 @@ struct InputSpec {
   IconId leadIcon = IconId::kSearch;
   int leadIconSize = 14;
   int leadIconGap = 5;
+  // 尾部图标：密码显隐这类行内按钮。与前端图标一样参与文字区宽度计算，
+  // 否则文字会压到图标上，点击热区也会与正文重叠。
+  bool hasTailIcon = false;
+  IconId tailIcon = IconId::kNone;
+  int tailIconSize = 16;
+  int tailIconGap = 6;
   int padX = 11;
   int radius = 7;
-  // 插入点竖线宽度（96 DPI 设计值），按 DPI 四舍五入到物理像素：
-  // 写死物理像素在 200% 屏上会变成发丝线
+  // 插入点竖线宽度（96 DPI 设计值）。实际绘制固定 1px，见 caretBarWidth()
   int caretWidth = 1;
   // 密码模式：显示为圆点，但仍可选中与复制
   bool password = false;
@@ -33,6 +38,7 @@ struct InputSpec {
   Color text = kNoColor;
   Color cueColor = kNoColor;
   Color leadIconColor = kNoColor;
+  Color tailIconColor = kNoColor;
   Color selBg = kNoColor;
   Color caret = kNoColor;
 };
@@ -45,7 +51,8 @@ class InputBox : public View {
   using SubmitHandler = std::function<void(bool committed)>;
   using BlurHandler = std::function<void()>;
 
-  void setSpec(const InputSpec& spec);
+  // 虚函数：PasswordBox 覆盖它，保证 XML 注入 spec 之后掩码与图标仍与状态一致
+  virtual void setSpec(const InputSpec& spec);
   const InputSpec& spec() const { return spec_; }
 
   const std::wstring& text() const { return text_; }
@@ -56,6 +63,9 @@ class InputBox : public View {
   // 回车提交 / Esc 取消
   void setOnSubmit(SubmitHandler fn) { onSubmit_ = std::move(fn); }
   void setOnBlur(BlurHandler fn) { onBlur_ = std::move(fn); }
+  // 尾部图标点击（密码显隐）。未挂回调时图标只是装饰
+  void setOnTailIcon(ChangeHandler fn) { onTailIcon_ = std::move(fn); }
+  void setTailIcon(IconId icon);
 
   void selectAll();
 
@@ -74,6 +84,9 @@ class InputBox : public View {
   void onTimer() override;
   // 拿到真实宽度后重新校正滚动：setText 常在布局前调用，那时 clientRect 为空
   void onLayout(const Rect& frame) override;
+  // 尾部图标的矩形；没有尾部图标时返回空矩形。
+  // 放在 protected：子类可能要贴着图标排布自己的标记
+  Rect tailIconRect() const;
 
  private:
   Rect textRect() const;
@@ -127,6 +140,9 @@ class InputBox : public View {
   ChangeHandler onChange_;
   SubmitHandler onSubmit_;
   BlurHandler onBlur_;
+  ChangeHandler onTailIcon_;
+  // 尾部图标按下态：点击才生效，按下即切换会误触
+  bool tailPressed_ = false;
 };
 
 }  // namespace AiUI

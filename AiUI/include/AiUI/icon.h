@@ -30,6 +30,8 @@ enum class IconId {
   kFile,
   kSearch,
   kCheck,  // 复选项打勾
+  kEye,    // 显示密码（明文）
+  kEyeOff, // 隐藏密码（掩码）
   // 标题栏系统按钮
   kMinimize,
   kMaximize,

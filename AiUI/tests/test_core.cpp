@@ -14,6 +14,7 @@
 #include "AiUI/widgets/button.h"
 #include "AiUI/widgets/form_controls.h"
 #include "AiUI/widgets/input_box.h"
+#include "AiUI/widgets/password_box.h"
 #include "AiUI/widgets/list_view.h"
 #include "AiUI/widgets/option_view.h"
 #include "AiUI/widgets/tree_view.h"
@@ -1583,4 +1584,67 @@ AIUI_TEST(mouse_up_stays_with_intercepting_container) {
   AIUI_CHECK(leaf->log.empty());
   AIUI_CHECK_EQ(root->log.size(), static_cast<size_t>(3));
   AIUI_CHECK(root->log[2] == L"up");
+}
+
+// ───────────────────────── PasswordBox ─────────────────────────
+
+// 点击眼睛只切换显隐，不能顺带移动插入点：光标被甩到别处是最难忍的手感问题
+AIUI_TEST(password_box_tail_icon_toggles_without_moving_caret) {
+  TestEnv env;
+  auto root = std::make_unique<LinearLayout>(Orientation::kVertical);
+  auto* box = new PasswordBox();
+  root->addView(box, LayoutParams{}.withSize(240, 34));
+  AIUI_CHECK(root->create(nullptr, Rect{0, 0, 400, 300}));
+  root->root()->requestFocus(box);
+
+  box->setText(L"abcdef");
+  AIUI_CHECK(!box->revealed());
+
+  // 先把光标放到第 2 个字符之后，再看点击图标是否动它
+  const int textLeft = 11;
+  const int charWidth = env.fake.platform().charWidth();
+  const int caretX = textLeft + charWidth;
+  box->dispatchMouseDown(mouseAt(caretX, box->bounds().center().y, MouseButton::kLeft));
+  box->dispatchMouseUp(mouseAt(caretX, box->bounds().center().y, MouseButton::kLeft));
+
+  auto caretRight = [&] {
+    root->root()->onExpose(Rect{0, 0, 400, 300});
+    int right = -1;
+    for (const FillCall& fill : env.fake.platform().lastWindow()->lastFills()) {
+      if (fill.rect.width() <= 2 && fill.rect.height() > 10) right = fill.rect.right;
+    }
+    return right;
+  };
+  const int before = caretRight();
+  AIUI_CHECK(before > 0);
+
+  // 尾部图标在右侧内边距之前，点在它的中心
+  const int iconX = 240 - (11 + 2) - 8;
+  box->dispatchMouseDown(mouseAt(iconX, box->bounds().center().y, MouseButton::kLeft));
+  box->dispatchMouseUp(mouseAt(iconX, box->bounds().center().y, MouseButton::kLeft));
+
+  AIUI_CHECK(box->revealed());
+  // 光标仍在原处：点击图标不该被当成「点到文本尾部」
+  AIUI_CHECK_EQ(caretRight(), before);
+}
+
+// 掩码与图标必须是同一份状态：显示明文时是睁眼，掩码时是眼睛加斜线
+AIUI_TEST(password_box_masks_text_and_swaps_icon) {
+  TestEnv env;
+  auto box = std::make_unique<PasswordBox>();
+  box->layout(Rect{0, 0, 240, 34});
+  box->setText(L"secret");
+
+  // setSpec 走的是 XML 注入路径，不能把掩码状态冲掉
+  InputSpec spec;
+  spec.cue = L"不加密";
+  box->setSpec(spec);
+  AIUI_CHECK(!box->revealed());
+  AIUI_CHECK(box->spec().password);
+  AIUI_CHECK(box->spec().hasTailIcon);
+  AIUI_CHECK(box->spec().tailIcon == IconId::kEyeOff);
+
+  box->setRevealed(true);
+  AIUI_CHECK(!box->spec().password);
+  AIUI_CHECK(box->spec().tailIcon == IconId::kEye);
 }

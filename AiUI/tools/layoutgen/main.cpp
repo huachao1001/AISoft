@@ -309,6 +309,7 @@ const std::set<std::string>& themeRoles() {
       "rowHover",    "hover",        "activeInk",     "btnHoverBg",
       "btnDownBg",   "btnDisBg",     "tagBg",         "tagInk",
       "dialogBg",    "inputBg",      "inputFocus",    "controlBorder",
+      "accent",      "accentHover",  "accentDown",    "accentInk",
       "titleBg",
       "titleBgInactive", "titleText", "titleTextInactive", "titleButtonHover",
       "titleButtonDown", "closeHover", "closeDown",   "closeInk",
@@ -388,6 +389,7 @@ std::string headerFor(const std::string& tag) {
       {"TextView", "AiUI/widgets/text_view.h"},
       {"ImageView", "AiUI/widgets/image_view.h"},
       {"InputBox", "AiUI/widgets/input_box.h"},
+      {"PasswordBox", "AiUI/widgets/password_box.h"},
       {"TreeView", "AiUI/widgets/tree_view.h"},
       {"ListView", "AiUI/widgets/list_view.h"},
       {"BreadcrumbBar", "AiUI/widgets/breadcrumb_bar.h"},
@@ -650,6 +652,7 @@ class Generator {
       const std::string style = get(node, "style");
       if (style == "subtle") line(2, "spec.style = ButtonStyle::kSubtle;");
       else if (style == "flat") line(2, "spec.style = ButtonStyle::kFlat;");
+      else if (style == "primary") line(2, "spec.style = ButtonStyle::kPrimary;");
 
       if (has(node, "width")) line(2, "spec.width = " + get(node, "width", "0") + ";");
       if (has(node, "height")) line(2, "spec.height = " + get(node, "height", "32") + ";");
@@ -767,7 +770,7 @@ class Generator {
       return;
     }
 
-    if (tag == "InputBox") {
+    if (tag == "InputBox" || tag == "PasswordBox") {
       line(1, "{");
       line(2, "InputSpec spec;");
       const std::string cue = get(node, "cue");
@@ -994,6 +997,7 @@ std::string themeSource(const XmlNode& root) {
       "rowHover",       "hover",          "activeInk",      "btnHoverBg",
       "btnDownBg",      "btnDisBg",       "tagBg",          "tagInk",
       "dialogBg",       "inputBg",        "inputFocus",     "controlBorder",
+      "accent",         "accentHover",    "accentDown",     "accentInk",
       "titleBg",
       "titleBgInactive","titleText",      "titleTextInactive", "titleButtonHover",
       "titleButtonDown","closeHover",     "closeDown",      "closeInk",

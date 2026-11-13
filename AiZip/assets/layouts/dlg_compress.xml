@@ -36,17 +36,17 @@
     <TextView text="GB" width="wrap" height="30" align="left" textColor="textMuted" marginX="5"/>
 
     <TextView text="密码" width="76" height="30" align="right" textColor="textMuted"/>
-    <InputBox id="password" height="30" width="100" marginX="8" password="true"
-              cue="不加密"/>
+    <PasswordBox id="password" height="30" width="140" marginX="8"
+                 cue="不加密"/>
   </LinearLayout>
 
   <!-- 弹簧：把按钮行顶到底部，窗口拉高时不至于浮在半空 -->
   <View weight="1" height="1"/>
 
-  <!-- 底部：右「确定 / 取消」 -->
-  <LinearLayout orientation="horizontal" height="32">
+  <!-- 底部：右「确定 / 取消」。确定用强调色实心，主行动更显眼 -->
+  <LinearLayout orientation="horizontal" height="32" marginY="12">
     <View weight="1"/>
-    <Button id="btnOk" text="确定" width="84" height="32"/>
+    <Button id="btnOk" text="确定" style="primary" width="84" height="32"/>
     <Button id="btnCancel" text="取消" style="outline" width="84" height="32" marginX="10"/>
   </LinearLayout>
 

@@ -60,6 +60,15 @@ struct Theme {
   // 各控件仍可单独覆盖，但默认外观要对齐，否则同一排控件会深浅不一。
   Color controlBorder = makeColor(0xd0, 0xd5, 0xdd);
 
+  // ── 强调色 ──
+  // 主行动（确定按钮）、输入光标、聚焦描边共用。改这一处就能整体换色，
+  // 不要让各控件各自挑一个相近的蓝，否则同一屏会出现好几种强调色。
+  Color accent = makeColor(0x25, 0x63, 0xeb);
+  Color accentHover = makeColor(0x1d, 0x4e, 0xd8);
+  Color accentDown = makeColor(0x1a, 0x43, 0xbd);
+  // 强调色底上的文字
+  Color accentInk = makeColor(0xff, 0xff, 0xff);
+
   // ── 标题栏 ──
   Color titleBg = makeColor(0xff, 0xff, 0xff);
   Color titleBgInactive = makeColor(0xff, 0xff, 0xff);
@@ -120,6 +129,12 @@ inline constexpr Theme kDarkTheme = [] {
   t.inputBg = makeColor(0x1e, 0x1e, 0x1e);
   t.inputFocus = makeColor(0x4a, 0x9e, 0xff);
   t.controlBorder = makeColor(0x4a, 0x4d, 0x52);
+
+  // 深色下强调色要提亮，否则在 #252526 上几乎看不出饱和
+  t.accent = makeColor(0x2f, 0x6f, 0xe8);
+  t.accentHover = makeColor(0x3a, 0x7d, 0xf5);
+  t.accentDown = makeColor(0x25, 0x5b, 0xc4);
+  t.accentInk = makeColor(0xff, 0xff, 0xff);
 
   t.titleBg = makeColor(0x20, 0x20, 0x20);
   t.titleBgInactive = makeColor(0x20, 0x20, 0x20);

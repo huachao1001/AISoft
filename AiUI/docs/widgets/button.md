@@ -24,7 +24,7 @@ button->setOnClick([] { /* ... */ });
 | `icon` | `kNone` | 矢量图标 |
 | `hasIcon` | `false` | **必须显式置 true 才画图标** |
 | `placement` | `kLeft` | 图标位置，见下 |
-| `style` | `kOutline` | 描边 / 弱化 / 平铺 |
+| `style` | `kOutline` | 描边 / 弱化 / 平铺 / 强调 |
 | `width` | `0` | 0 表示按内容自适应 |
 | `height` | `32` | 按钮高度 |
 | `iconSize` | `18` | 图标边长 |
@@ -53,6 +53,10 @@ button->setOnClick([] { /* ... */ });
 | `ButtonStyle::kOutline` | 白底 + 派生描边 | 浅蓝底 + 略深描边 | 深蓝底 |
 | `ButtonStyle::kSubtle` | 无底无边框 | 浅灰底 | 深蓝底 |
 | `ButtonStyle::kFlat` | 无底无边框 | 浅灰底 | 深蓝底 |
+| `ButtonStyle::kPrimary` | 强调色实心 | 强调色提亮 | 强调色加深 |
+
+`kPrimary` 用主题的 `accent` / `accentHover` / `accentDown`，文字取 `accentInk`。
+一个界面只应有一个 `kPrimary`：两个同等分量的实心按钮会让人不知道点哪个。
 
 `kSubtle` 与 `kFlat` 当前绘制效果相同，区别只在语义。
 

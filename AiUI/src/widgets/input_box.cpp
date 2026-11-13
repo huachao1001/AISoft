@@ -51,12 +51,27 @@ int InputBox::textLeft() const {
          (spec_.hasLeadIcon ? (spec_.leadIconSize + spec_.leadIconGap) * d / 96 : 0);
 }
 
+// 尾部图标在客户区里的矩形
+Rect InputBox::tailIconRect() const {
+  if (!spec_.hasTailIcon) return Rect{};
+  const int d = dpi();
+  const Rect rc = clientRect();
+  const int size = spec_.tailIconSize * d / 96;
+  // 图标右缘不贴边框：与左内边距对称留一档，视觉上才不显得被挤在边上
+  const int pad = (spec_.padX + 2) * d / 96;
+  const int right = rc.right - pad;
+  return Rect{right - size, rc.center().y - size / 2, right, rc.center().y + size / 2};
+}
+
 // 文本可视区的右边界（物理像素）。滚动量、裁剪、绘制宽度都以它为界，
 // 不能各处各减一次边距——差几像素就会出现「滚动量够了但末字仍被切」。
 int InputBox::textRight() const {
   const int d = dpi();
   const Rect rc = clientRect();
-  return rc.right - spec_.padX * d / 96;
+  const int pad = spec_.padX * d / 96;
+  // 有尾部图标时文本要让出「图标 + 间距」，否则字会压到眼睛上
+  const int tail = spec_.hasTailIcon ? (spec_.tailIconSize + spec_.tailIconGap) * d / 96 : 0;
+  return rc.right - pad - tail;
 }
 
 // 插入点竖线宽度（物理像素）。
@@ -323,7 +338,9 @@ void InputBox::onPaint(Painter& painter, const Rect& rect) {
   const Color cueColor = spec_.cueColor != kNoColor ? spec_.cueColor : t.textFaint;
   const Color iconColor = spec_.leadIconColor != kNoColor ? spec_.leadIconColor : t.textFaint;
   const Color selBg = spec_.selBg != kNoColor ? spec_.selBg : t.selBg;
-  const Color caretColor = spec_.caret != kNoColor ? spec_.caret : t.text;
+  // 插入点用主题强调色：与聚焦描边同族，视觉上属于「当前编辑位置」；
+  // 用正文色会和字形混在一起，看不出是光标
+  const Color caretColor = spec_.caret != kNoColor ? spec_.caret : t.accent;
 
   painter.fillRoundRect(rect, background, radius);
   painter.strokeRoundRect(rect, focused_ ? focusBorder : border, radius);
@@ -336,7 +353,9 @@ void InputBox::onPaint(Painter& painter, const Rect& rect) {
     painter.drawIcon(spec_.leadIcon, iconRect, iconColor);
   }
 
-  // 文本裁剪到输入区，滚动时不会溢出圆角
+  // 文本裁剪到输入区，滚动时不会溢出圆角。
+  // 用 save/restore 包住：尾部图标与描边不在文本流里，不能被这条裁剪切掉
+  painter.save();
   painter.clipRect(Rect{rect.left + spec_.padX * d / 96, rect.top, textRight(), rect.bottom});
 
   if (text_.empty()) {
@@ -368,10 +387,32 @@ void InputBox::onPaint(Painter& painter, const Rect& rect) {
     const int x = xForPosition(caret_);
     painter.fillRect(Rect{x, textArea.top, x + caretW, textArea.bottom}, caretColor);
   }
+
+  painter.restore();
+
+  // 尾部图标画在裁剪区之外：它不在文本流里，不该被文字裁剪影响
+  if (spec_.hasTailIcon) {
+    const Rect iconRect = tailIconRect();
+    const Color color = spec_.tailIconColor != kNoColor ? spec_.tailIconColor : t.textMuted;
+    painter.drawIcon(spec_.tailIcon, iconRect, color);
+  }
+}
+
+void InputBox::setTailIcon(IconId icon) {
+  spec_.tailIcon = icon;
+  spec_.hasTailIcon = icon != IconId::kNone;
+  invalidate();
 }
 
 bool InputBox::onMouseDown(const MouseEvent& e) {
   if (e.button != MouseButton::kLeft) return false;
+  // 尾图标是行内按钮：命中它就只切换图标，不移动插入点，
+  // 否则点眼睛会把光标甩到行尾
+  if (spec_.hasTailIcon && tailIconRect().contains(e.position)) {
+    tailPressed_ = true;
+    captureMouse();
+    return true;
+  }
   setFocus();
   dragging_ = true;
   captureMouse();
@@ -380,7 +421,12 @@ bool InputBox::onMouseDown(const MouseEvent& e) {
 }
 
 void InputBox::onMouseUp(const MouseEvent& e) {
-  (void)e;
+  if (tailPressed_) {
+    tailPressed_ = false;
+    releaseMouse();
+    if (tailIconRect().contains(e.position) && onTailIcon_) onTailIcon_();
+    return;
+  }
   if (dragging_) {
     dragging_ = false;
     releaseMouse();

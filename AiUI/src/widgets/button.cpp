@@ -40,13 +40,24 @@ void Button::resolvePalette(Color& background, Color& border, Color& ink) const 
   // 免得调用方拿到上一个控件残留的 color
   border = kNoColor;
   if (!isEnabled()) {
-    background = spec_.style == ButtonStyle::kOutline ? t.btnDisBg : kNoColor;
-    ink = t.textFaint;
+    // 主行动禁用时保留底色，只是褪成浅色调；完全透明会让人以为按钮消失了
+    if (spec_.style == ButtonStyle::kPrimary) {
+      background = blendColor(t.accent, t.pane, 0.72);
+      ink = t.textFaint;
+    } else {
+      background = spec_.style == ButtonStyle::kOutline ? t.btnDisBg : kNoColor;
+      ink = t.textFaint;
+    }
   } else {
     switch (spec_.style) {
       case ButtonStyle::kOutline:
         background = pressed_ ? t.btnDownBg : (hot_ ? t.btnHoverBg : t.pane);
         ink = t.ink;
+        break;
+      case ButtonStyle::kPrimary:
+        // 强调色三档：常态 / 悬停 / 按下，文字固定用强调色底上的墨色
+        background = pressed_ ? t.accentDown : (hot_ ? t.accentHover : t.accent);
+        ink = t.accentInk;
         break;
       case ButtonStyle::kSubtle:
       case ButtonStyle::kFlat:

@@ -136,8 +136,8 @@ class DlgCompress : public DialogActivity {
 void DlgCompress::onCreate() {
   setEscapeCloses(true);
   setTitle(L"压缩文件");
-  // 级别 / 分卷 / 密码挤在一行，行数比原来少一行，高度相应收紧
-  setMinSize(660, 210);
+  // 级别 / 分卷 / 密码挤在一行；底部按钮贴着下边距，窗口比内容多留一档
+  setMinSize(660, 270);
 
   // ── 初始状态：从设置恢复格式、档位、固实 ──
   // 旧设置里可能是已下线的 TAR.BZ2：查不到就退回 ZIP，
@@ -407,7 +407,7 @@ void ShowCompressDialog(AiUI::NativeHandle owner, const std::vector<std::wstring
   }
 
   DlgCompress dialog(sources);
-  const bool accepted = dialog.runModal(owner, 660, 210);
+  const bool accepted = dialog.runModal(owner, 660, 270);
   if (accepted && dialog.hasTask()) runCompressTask(owner, dialog.task());
 }
 

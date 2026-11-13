@@ -22,7 +22,7 @@ include/AiUI/
   window.h       Window：标题栏 + 内容区的窗口组件（模态/非模态）
   layout_inflater.h 按 XML 文件名取构建期生成的布局类
   layouts/       FrameLayout / LinearLayout
-  widgets/       Button / ButtonBar / BreadcrumbBar / InputBox /
+  widgets/       Button / ButtonBar / BreadcrumbBar / InputBox / PasswordBox /
                  ListView / TreeView / StatusBar / TextView / ImageView /
                  TitleBar
 src/

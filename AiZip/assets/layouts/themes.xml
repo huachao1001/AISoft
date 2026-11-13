@@ -8,7 +8,8 @@
 -->
 <themes>
 
-  <Theme name="light" controlBorder="#d0d5dd"/>
+  <Theme name="light" controlBorder="#d0d5dd"
+         accent="#2563eb" accentHover="#1d4ed8" accentDown="#1a43bd" accentInk="#ffffff"/>
 
   <Theme name="dark"
          body="#1e1e1e"
@@ -39,6 +40,10 @@
          inputBg="#1e1e1e"
          inputFocus="#4a9eff"
          controlBorder="#4a4d52"
+         accent="#2f6fe8"
+         accentHover="#3a7df5"
+         accentDown="#255bc4"
+         accentInk="#ffffff"
          titleBg="#202020"
          titleBgInactive="#202020"
          titleText="#d4d4d4"

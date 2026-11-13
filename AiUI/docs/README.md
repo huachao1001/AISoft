@@ -83,6 +83,7 @@ XML 里的 `id` 在构建期经 `AiUI::makeId` 折成 32 位整数（FNV-1a）�
 | [ButtonBar](widgets/button_bar.md) | 横向按钮条，支持分组分隔 |
 | [BreadcrumbBar](widgets/breadcrumb_bar.md) | 后退 + 路径节点 + 搜索框 |
 | [InputBox](widgets/input_box.md) | 圆角输入框，含选区与 IME |
+| [PasswordBox](widgets/input_box.md) | 密码输入框，带眼睛图标的显隐开关 |
 | [ListView](widgets/list_view.md) | 虚拟列表，适配器按需供数 |
 | [TreeView](widgets/tree_view.md) | 懒加载树，扁平行渲染 |
 | [StatusBar](widgets/status_bar.md) | 路径 + 格式标签 + 统计 |

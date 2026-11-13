@@ -27,8 +27,13 @@ box->setOnSubmit([](bool committed) {
 | `hasLeadIcon` | `false` | 是否画前置图标 |
 | `leadIcon` | `kSearch` | 前置图标 |
 | `leadIconSize` / `leadIconGap` | 14 / 5 | 图标尺寸与右间距 |
+| `hasTailIcon` | `false` | 是否画尾部图标（密码显隐这类行内按钮） |
+| `tailIcon` / `tailIconSize` / `tailIconGap` | `kNone` / 16 / 6 | 尾部图标与尺寸、与正文的间距 |
 | `padX` | 11 | 左右内边距 |
 | `radius` | 7 | 圆角半径 |
+
+尾部图标参与文字区宽度计算：有它时文本右边界自动让出「图标 + 间距」，
+文字不会压到图标上。点击它也走独立分支，不移动插入点。
 
 圆角外的区域不填色：控件不上报背景色，四角自然透出所在容器的底色。所以
 放到任意底色上都成立，不需要再手工传宿主底色。
@@ -99,6 +104,25 @@ IME 组合串通过 `onCompositionStart/Update/End` 处理，中文输入法下�
 | `icon` | 前置图标名，写了就自动开 `hasLeadIcon` |
 | `radius` | 圆角半径 |
 | `padding` | 左右内边距，对应 `spec.padX` |
+
+## PasswordBox
+
+`PasswordBox` 是 `InputBox` 的子类，只多一个「是否显示明文」的状态：
+
+```xml
+<PasswordBox id="password" cue="不加密" height="30" width="140"/>
+```
+
+| 方法 | 说明 |
+| --- | --- |
+| `revealed()` | 当前是否显示明文 |
+| `setRevealed(bool)` | 切换明文 / 掩码 |
+
+尾部眼睛图标即开关，点击即切换，不需要宿主接线。图标画的是当前状态：睁眼 =
+明文可见，眼睛加斜线 = 已掩码。文本、光标、选区、剪贴板全部继承自 `InputBox`。
+
+`setSpec` 在 `PasswordBox` 里被覆写：XML 注入的 spec 不带掩码信息，无论构造
+顺序如何都以 `revealed()` 为准，避免明文漏显示。
 
 ## 注意
 
