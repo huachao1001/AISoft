@@ -50,7 +50,7 @@ std::wstring fromUtf8(const std::string& text);
 struct Settings {
   std::wstring lastDir;
   std::wstring extractDir;
-  std::wstring compressFormat = L"ZIP";   // 压缩格式显示名（如 L"ZIP" / L"TAR.GZ"）
+  std::wstring compressFormat = L"ZIP";  // 压缩格式显示名，须与 z7::Formats() 里的 name 一致
   int compressLevel = 5;
   bool solid = true;
   bool openAfterExtract = true;

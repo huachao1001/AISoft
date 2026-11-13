@@ -58,7 +58,7 @@ static int TestVolumes(const std::wstring& dir) {
   return failures;
 }
 
-// 格式表自检：确认可创建格式只剩约定的 6 项，且表中每一项都真的能压出来。
+// 格式表自检：确认可创建格式只剩约定的 3 项，且表中每一项都真的能压出来。
 // 这条守的是「别把做不到的格式放回界面」——7-Zip 只有 RAR 解码器没有编码器，
 // 一旦有人把 RAR 加进表里，用户点确定只会收到「压缩失败」。
 static int TestFormats(const std::wstring& dir) {
@@ -68,14 +68,15 @@ static int TestFormats(const std::wstring& dir) {
     if (!cond) failures++;
   };
 
-  const wchar_t* kExpected[] = {L"ZIP", L"7Z", L"TAR.GZ", L"TAR.BZ2", L"TAR", L"GZIP"};
+  const wchar_t* kExpected[] = {L"ZIP", L"7Z", L"TAR", L"GZIP", L"TAR.GZ"};
   const int expectedCount = static_cast<int>(sizeof(kExpected) / sizeof(kExpected[0]));
   expect(z7::FormatCount() == expectedCount, "format table has exactly the agreed entries");
   for (int i = 0; i < expectedCount && i < z7::FormatCount(); ++i) {
     expect(z7::Formats()[i].name == std::wstring(kExpected[i]), "format order matches");
   }
-  // RAR 必须在表外
+  // 已下线的格式不能回到表里：界面上没有它们的位置
   expect(z7::FormatIndexByName(L"RAR") < 0, "RAR is not offered");
+  expect(z7::FormatIndexByName(L"TAR.BZ2") < 0, "TAR.BZ2 is not offered");
 
   // 每种格式各压一次：单文件格式用一个文件，其余用同一个文件即可
   const std::wstring src = util::JoinPath(dir, L"fmt-src.txt");

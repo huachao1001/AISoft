@@ -13,20 +13,17 @@
     <Button id="btnBrowse" text="浏览..." style="outline" width="76" height="30"/>
   </LinearLayout>
 
-  <!-- 压缩格式：ZIP / 7Z 直接选，其余格式收进下拉 -->
+  <!-- 压缩格式：五项平铺单选，不再用下拉承载 -->
   <LinearLayout orientation="horizontal" height="30" alignY="center">
     <TextView text="压缩格式" width="84" height="30" align="right" textColor="textMuted"/>
-    <LinearLayout orientation="horizontal" weight="1" height="30" marginX="10">
-      <RadioGroup id="formatGroup" width="wrap" height="30" orientation="horizontal"
-                  rowGap="16">
-        <RadioButton id="fmtZip">ZIP</RadioButton>
-        <RadioButton id="fmt7z">7Z</RadioButton>
-        <!-- 第三项没有文字：它代表「其他格式」，具体格式由右侧下拉框承载 -->
-        <RadioButton id="fmtOther"></RadioButton>
-      </RadioGroup>
-      <ComboBox id="otherFormat" weight="1" height="30" marginX="16"
-                cue="其他格式"/>
-    </LinearLayout>
+    <RadioGroup id="formatGroup" width="wrap" height="30" orientation="horizontal"
+                rowGap="16" marginX="10">
+      <RadioButton id="fmtZip">ZIP</RadioButton>
+      <RadioButton id="fmt7z">7Z</RadioButton>
+      <RadioButton id="fmtTar">TAR</RadioButton>
+      <RadioButton id="fmtGzip">GZIP</RadioButton>
+      <RadioButton id="fmtTarGz">TAR.GZ</RadioButton>
+    </RadioGroup>
   </LinearLayout>
 
   <!-- 压缩级别 -->

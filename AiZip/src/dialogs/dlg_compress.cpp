@@ -33,9 +33,6 @@ constexpr int kLevelDefault = 0;  // 索引，对应「标准」
 // 分卷下限：更小的卷没有实用价值，卷数还会爆炸
 constexpr uint64_t kMinVolumeBytes = 100ull * 1024ull * 1024ull;
 
-// 格式表前两项是 ZIP / 7Z，各自占一个单选；第 3 项起都归「其他格式」下拉
-constexpr int kOtherFormatBase = 2;
-
 // 压缩任务：对话框关闭后再跑，避免把进度框的模态循环嵌进 onAccept
 struct CompressTask {
   std::wstring outPath;
@@ -45,24 +42,35 @@ struct CompressTask {
 
 std::wstring extFor(int formatIndex) {
   const int n = z7::FormatCount();
-  if (formatIndex < 0 || formatIndex >= n) return L".zip";
+  // 越界时用首项兜底，不要写死某个具体格式：格式表会变，写死就会与界面对不上
+  if (formatIndex < 0 || formatIndex >= n) formatIndex = 0;
   return z7::Formats()[formatIndex].ext;
 }
 
 std::wstring nameFor(int formatIndex) {
   const int n = z7::FormatCount();
-  if (formatIndex < 0 || formatIndex >= n) return L"ZIP";
+  if (formatIndex < 0 || formatIndex >= n) formatIndex = 0;
   return z7::Formats()[formatIndex].name;
 }
+
+// 扩展名替换时要剥掉的归档后缀。
+// 不能只依赖格式表：ZIP / 7Z / TAR.BZ2 已不在可创建列表里，但用户仍可能
+// 拿一个 xxx.zip 来改格式，不剥就会叠成 xxx.zip.tar.gz。
+// 按长度降序排列，保证 .tar.bz2 先于 .bz2 命中。
+const wchar_t* kStrippableExts[] = {
+    L".tar.bz2", L".tar.gz", L".tar.xz", L".tar.zst", L".tbz2", L".tgz",
+    L".txz",     L".zip",    L".7z",     L".rar",     L".gz",   L".bz2",
+    L".xz",      L".zst",    L".tar",
+};
 
 // 取不含归档扩展名的文件名（.tar.gz 这类两段扩展要整段剥掉）。
 std::wstring stripArchiveExt(const std::wstring& path) {
   const std::wstring base = util::BaseName(path);
-  for (int i = 0; i < z7::FormatCount(); ++i) {
-    const std::wstring ext = z7::Formats()[i].ext;
-    if (base.size() > ext.size() &&
-        AiUI::platform()->equalsPath(base.substr(base.size() - ext.size()), ext)) {
-      return base.substr(0, base.size() - ext.size());
+  for (const wchar_t* ext : kStrippableExts) {
+    const std::wstring e = ext;
+    if (base.size() > e.size() &&
+        AiUI::platform()->equalsPath(base.substr(base.size() - e.size()), e)) {
+      return base.substr(0, base.size() - e.size());
     }
   }
   const size_t dot = base.find_last_of(L'.');
@@ -99,7 +107,7 @@ class DlgCompress : public DialogActivity {
   uint64_t selectedVolumeSize() const;
   // 换算后的原始字节数，不套下限；用于在拒绝时给出提示
   uint64_t rawVolumeBytes() const;
-  // 状态 → 界面：单选项、下拉可用性、扩展名联动
+  // 状态 → 界面：单选项、档位可用性、扩展名联动
   void applyFormat(int formatIndex);
   void syncExtension(int formatIndex);
   void refreshFormatUi();
@@ -115,12 +123,11 @@ class DlgCompress : public DialogActivity {
   CompressTask task_;
   bool hasTask_ = false;
 
-  // 界面当前显示的格式；下拉框只承载第 3 项及以后
+  // 界面当前显示的格式，索引对应 z7::Formats()
   int formatIndex_ = 0;
 
   AiUI::InputBox* path_ = nullptr;
   AiUI::RadioGroup* formatGroup_ = nullptr;
-  AiUI::ComboBox* otherFormat_ = nullptr;
   AiUI::ComboBox* level_ = nullptr;
   AiUI::InputBox* volume_ = nullptr;
   AiUI::ComboBox* volumeUnit_ = nullptr;
@@ -130,13 +137,17 @@ class DlgCompress : public DialogActivity {
 void DlgCompress::onCreate() {
   setEscapeCloses(true);
   setTitle(L"压缩文件");
-  // 高度按「格式下拉展开」留足：那个列表有 8 项，展开约 360px，
-  // 太矮会直接顶出窗口。再高则在列表与按钮之间留大片空白。
+  // 三个格式单选平铺一行，不再有展开的下拉列表，高度按五行表单收紧
   setMinSize(520, 300);
 
   // ── 初始状态：从设置恢复格式、档位、固实 ──
+  // 旧设置里可能是已下线的 TAR.BZ2：查不到就退回 ZIP，
+  // 不能退到索引 0 之外的值
   int format = z7::FormatIndexByName(g_app.settings.compressFormat.c_str());
-  if (format < 0 || format >= z7::FormatCount()) format = 0;
+  if (format < 0 || format >= z7::FormatCount()) {
+    format = z7::FormatIndexByName(L"ZIP");
+    if (format < 0) format = 0;
+  }
   formatIndex_ = format;
 
   // 旧设置里的档位值可能已被移除（7 / 3 / 0 等），取不到就退回「标准」
@@ -150,7 +161,6 @@ void DlgCompress::onCreate() {
 
   path_ = findView<AiUI::InputBox>("path");
   formatGroup_ = findView<AiUI::RadioGroup>("formatGroup");
-  otherFormat_ = findView<AiUI::ComboBox>("otherFormat");
   level_ = findView<AiUI::ComboBox>("level");
   volume_ = findView<AiUI::InputBox>("volume");
   volumeUnit_ = findView<AiUI::ComboBox>("volumeUnit");
@@ -158,36 +168,12 @@ void DlgCompress::onCreate() {
 
   if (path_) path_->setText(defaultArchivePath(sources_, formatIndex_));
 
-  // 下拉框承载「其他格式」，即格式表第 3 项及以后
-  if (otherFormat_) {
-    std::vector<std::wstring> items;
-    for (int i = kOtherFormatBase; i < z7::FormatCount(); ++i) {
-      items.emplace_back(z7::Formats()[i].name);
-    }
-    otherFormat_->setItems(items);
-    otherFormat_->setOnChange([this](int index) {
-      if (index < 0 || syncingFormat_) return;
-      // 选了下拉项就等于选了「其他」那一项
-      applyFormat(kOtherFormatBase + index);
-      refreshFormatUi();
-    });
-  }
-
+  // 三项格式各占一个单选，索引即 z7::Formats() 的下标
   if (formatGroup_) {
     formatGroup_->setOnChange([this](int index) {
       if (syncingFormat_) return;
-      if (index < kOtherFormatBase) {
-        // 选 ZIP / 7Z 时清空「其他格式」，两处不能同时显示不同格式
-        applyFormat(index);
-      } else {
-        // 选「其他」时下拉框必须有个具体值，否则没有实际格式可选
-        const int current = otherFormat_ ? otherFormat_->selectedIndex() : -1;
-        if (current < 0 && otherFormat_ && otherFormat_->itemCount() > 0) {
-          applyFormat(kOtherFormatBase);
-        } else {
-          refreshFormatUi();
-        }
-      }
+      applyFormat(index);
+      refreshFormatUi();
     });
   }
 
@@ -224,14 +210,9 @@ void DlgCompress::onCreate() {
 }
 
 int DlgCompress::selectedFormat() const {
-  // 单选有选中项就用它；「其他」的实际格式由下拉框决定
+  // 单选索引就是格式表下标；未选中（理论上不会发生）时退回第一项
   const int radio = formatGroup_ ? formatGroup_->checkedIndex() : -1;
-  if (radio >= 0 && radio < kOtherFormatBase) return radio;
-  const int index = otherFormat_ ? otherFormat_->selectedIndex() : -1;
-  // 下拉框也没选（两个单选都未选中、下拉为空）时退回 ZIP
-  if (index < 0) return 0;
-  const int target = kOtherFormatBase + index;
-  return target < z7::FormatCount() ? target : 0;
+  return (radio >= 0 && radio < z7::FormatCount()) ? radio : 0;
 }
 
 int DlgCompress::selectedLevel() const {
@@ -271,15 +252,7 @@ void DlgCompress::applyFormat(int formatIndex) {
 
   // 回写界面期间屏蔽单选组的 onChange，避免它又调回 applyFormat
   syncingFormat_ = true;
-  // ZIP / 7Z 对应前两个单选；其余格式归到「其他」那一项
-  if (formatGroup_) {
-    formatGroup_->setCheckedIndex(formatIndex < kOtherFormatBase ? formatIndex : kOtherFormatBase);
-  }
-  if (otherFormat_) {
-    // 选 ZIP / 7Z 时下拉框保持空提示，避免同时显示两个格式
-    otherFormat_->setSelectedIndex(
-        formatIndex >= kOtherFormatBase ? formatIndex - kOtherFormatBase : -1, false);
-  }
+  if (formatGroup_) formatGroup_->setCheckedIndex(formatIndex);
   syncingFormat_ = false;
 
   if (changed) syncExtension(formatIndex);
@@ -314,8 +287,7 @@ void DlgCompress::browse() {
       window()->handle(), L"选择压缩文件名", util::DirName(initial), util::BaseName(initial),
       extFor(formatIndex_),
       {L"ZIP 压缩文件", L"*.zip", L"7Z 压缩文件", L"*.7z", L"TAR.GZ 压缩文件", L"*.tar.gz",
-       L"TAR.BZ2 压缩文件", L"*.tar.bz2", L"GZIP 文件", L"*.gz", L"TAR 归档", L"*.tar",
-       L"所有文件", L"*.*"});
+       L"GZIP 文件", L"*.gz", L"TAR 归档", L"*.tar", L"所有文件", L"*.*"});
   if (!picked.empty() && path_) path_->setText(picked);
 }
 

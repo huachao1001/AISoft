@@ -57,9 +57,9 @@ const wchar_t* FormatNameFromExtension(const std::wstring& extIn) {
 }
 
 // ── 可创建格式表 ──
-// 前两项 ZIP / 7Z 各占一个单选，其余按顺序进「其他格式」下拉。
-// 7-Zip 的 gzip/bzip2/xz handler 只接受单文件，多文件必须走 tar 包裹，
-// 这就是 TAR.GZ / TAR.BZ2 两个组合格式存在的原因。
+// 界面上每项各占一个单选，顺序与这里一致。
+// 7-Zip 的 gzip handler 只接受单文件，多文件必须先用 tar 包裹，
+// 这就是 TAR.GZ 存在的原因。
 //
 // 表里只放真正能压出来的格式。RAR 不在此列：7-Zip 只有 RAR 解码器、
 // 没有编码器，放进来只会让用户点确定后收到「压缩失败」。
@@ -67,10 +67,12 @@ namespace {
 const FormatInfo kFormats[] = {
     {L"ZIP", L".zip", kClsidZip, false, false, false, 9},
     {L"7Z", L".7z", kClsid7z, false, false, true, 9},
-    {L"TAR.GZ", L".tar.gz", kClsidGZip, true, true, false, 9},
-    {L"TAR.BZ2", L".tar.bz2", kClsidBZip2, true, true, false, 9},
+    // TAR：只打包不压缩，没有档位
     {L"TAR", L".tar", kClsidTar, false, false, false, 0},
+    // GZIP：单文件压缩，多文件由对话框拦下并提示改用 TAR.GZ
     {L"GZIP", L".gz", kClsidGZip, true, false, false, 9},
+    // TAR.GZ：先打 tar 再压，因此能容纳任意数量文件
+    {L"TAR.GZ", L".tar.gz", kClsidGZip, false, true, false, 9},
 };
 }  // namespace
 
