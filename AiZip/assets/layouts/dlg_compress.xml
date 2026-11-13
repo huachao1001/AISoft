@@ -21,7 +21,7 @@
       <RadioButton id="fmtZip">ZIP</RadioButton>
       <RadioButton id="fmt7z">7Z</RadioButton>
       <RadioButton id="fmtTar">TAR</RadioButton>
-      <RadioButton id="fmtGzip">GZIP</RadioButton>
+      <RadioButton id="fmtGzip">GZ</RadioButton>
       <RadioButton id="fmtTarGz">TAR.GZ</RadioButton>
     </RadioGroup>
   </LinearLayout>

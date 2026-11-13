@@ -69,8 +69,8 @@ const FormatInfo kFormats[] = {
     {L"7Z", L".7z", kClsid7z, false, false, true, 9},
     // TAR：只打包不压缩，没有档位
     {L"TAR", L".tar", kClsidTar, false, false, false, 0},
-    // GZIP：单文件压缩，多文件由对话框拦下并提示改用 TAR.GZ
-    {L"GZIP", L".gz", kClsidGZip, true, false, false, 9},
+    // GZ：单文件压缩，多文件由对话框拦下并提示改用 TAR.GZ
+    {L"GZ", L".gz", kClsidGZip, true, false, false, 9},
     // TAR.GZ：先打 tar 再压，因此能容纳任意数量文件
     {L"TAR.GZ", L".tar.gz", kClsidGZip, false, true, false, 9},
 };
@@ -83,6 +83,11 @@ int FormatIndexByName(const wchar_t* name) {
   if (!name) return -1;
   for (int i = 0; i < FormatCount(); ++i) {
     if (::CompareStringOrdinal(kFormats[i].name, -1, name, -1, TRUE) == CSTR_EQUAL) return i;
+  }
+  // 旧名兼容：格式显示名改过之后，用户设置里存的还是旧名。
+  // 不做这层映射，升级后打开对话框会退回默认格式，用户会以为自己选错了。
+  if (::CompareStringOrdinal(L"GZIP", -1, name, -1, TRUE) == CSTR_EQUAL) {
+    return FormatIndexByName(L"GZ");
   }
   return -1;
 }

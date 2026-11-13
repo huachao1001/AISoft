@@ -287,7 +287,7 @@ void DlgCompress::browse() {
       window()->handle(), L"选择压缩文件名", util::DirName(initial), util::BaseName(initial),
       extFor(formatIndex_),
       {L"ZIP 压缩文件", L"*.zip", L"7Z 压缩文件", L"*.7z", L"TAR.GZ 压缩文件", L"*.tar.gz",
-       L"GZIP 文件", L"*.gz", L"TAR 归档", L"*.tar", L"所有文件", L"*.*"});
+       L"GZ 文件", L"*.gz", L"TAR 归档", L"*.tar", L"所有文件", L"*.*"});
   if (!picked.empty() && path_) path_->setText(picked);
 }
 

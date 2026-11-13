@@ -68,7 +68,7 @@ static int TestFormats(const std::wstring& dir) {
     if (!cond) failures++;
   };
 
-  const wchar_t* kExpected[] = {L"ZIP", L"7Z", L"TAR", L"GZIP", L"TAR.GZ"};
+  const wchar_t* kExpected[] = {L"ZIP", L"7Z", L"TAR", L"GZ", L"TAR.GZ"};
   const int expectedCount = static_cast<int>(sizeof(kExpected) / sizeof(kExpected[0]));
   expect(z7::FormatCount() == expectedCount, "format table has exactly the agreed entries");
   for (int i = 0; i < expectedCount && i < z7::FormatCount(); ++i) {
