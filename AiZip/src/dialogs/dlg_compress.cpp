@@ -136,8 +136,8 @@ class DlgCompress : public DialogActivity {
 void DlgCompress::onCreate() {
   setEscapeCloses(true);
   setTitle(L"压缩文件");
-  // 三个格式单选平铺一行，不再有展开的下拉列表，高度按五行表单收紧
-  setMinSize(520, 300);
+  // 级别 / 分卷 / 密码挤在一行，行数比原来少一行，高度相应收紧
+  setMinSize(660, 210);
 
   // ── 初始状态：从设置恢复格式、档位、固实 ──
   // 旧设置里可能是已下线的 TAR.BZ2：查不到就退回 ZIP，
@@ -274,7 +274,7 @@ void DlgCompress::refreshFormatUi() {
 void DlgCompress::browse() {
   const std::wstring initial = defaultArchivePath(sources_, formatIndex_);
   const std::wstring picked = AiUI::platform()->pickSaveFile(
-      window()->handle(), L"选择压缩文件名", util::DirName(initial), util::BaseName(initial),
+      window()->handle(), L"选择输出路径", util::DirName(initial), util::BaseName(initial),
       extFor(formatIndex_),
       {L"ZIP 压缩文件", L"*.zip", L"7Z 压缩文件", L"*.7z", L"TAR.GZ 压缩文件", L"*.tar.gz",
        L"GZ 文件", L"*.gz", L"TAR 归档", L"*.tar", L"所有文件", L"*.*"});
@@ -286,7 +286,7 @@ bool DlgCompress::onAccept() {
   if (outPath.empty()) {
     AiUI::MessageBoxParams params;
     params.title = L"AIZip";
-    params.message = L"请填写压缩文件名。";
+    params.message = L"请填写输出路径。";
     params.icon = AiUI::MessageBoxIcon::kInfo;
     AiUI::platform()->showMessageBox(window()->handle(), params);
     return false;
@@ -407,7 +407,7 @@ void ShowCompressDialog(AiUI::NativeHandle owner, const std::vector<std::wstring
   }
 
   DlgCompress dialog(sources);
-  const bool accepted = dialog.runModal(owner, 520, 300);
+  const bool accepted = dialog.runModal(owner, 660, 210);
   if (accepted && dialog.hasTask()) runCompressTask(owner, dialog.task());
 }
 

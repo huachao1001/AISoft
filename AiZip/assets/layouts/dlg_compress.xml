@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  压缩对话框：表单式排布，左侧固定宽度标签右对齐，右侧控件拉伸。
+  压缩对话框：表单式排布，左侧标签右对齐，右侧控件拉伸。
 
   行为（默认文件名、格式联动、分卷换算）在 DlgCompress 里。
 -->
 <LinearLayout orientation="vertical" padding="18" spacing="10" background="dialogBg">
 
-  <!-- 压缩文件名 -->
+  <!-- 输出路径 -->
   <LinearLayout orientation="horizontal" height="30">
-    <TextView text="压缩文件名" width="84" height="30" align="right" textColor="textMuted"/>
+    <TextView text="输出路径" width="84" height="30" align="right" textColor="textMuted"/>
     <InputBox id="path" weight="1" height="30" padding="8" marginX="10"/>
     <Button id="btnBrowse" text="浏览..." style="outline" width="76" height="30"/>
   </LinearLayout>
@@ -26,25 +26,18 @@
     </RadioGroup>
   </LinearLayout>
 
-  <!-- 压缩级别 -->
+  <!-- 级别 / 分卷 / 密码：挤在一行，避免三行把对话框撑高 -->
   <LinearLayout orientation="horizontal" height="30" alignY="center">
     <TextView text="压缩级别" width="84" height="30" align="right" textColor="textMuted"/>
-    <ComboBox id="level" height="30" width="140" marginX="10"/>
-  </LinearLayout>
+    <ComboBox id="level" height="30" width="100" marginX="8"/>
 
-  <!-- 压缩分卷：留空表示不分卷，单位固定 GB -->
-  <LinearLayout orientation="horizontal" height="30" alignY="center">
-    <TextView text="分卷大小" width="84" height="30" align="right" textColor="textMuted"/>
-    <InputBox id="volume" height="30" width="140" marginX="10"
-              cue="留空不分卷"/>
-    <TextView text="GB" width="wrap" height="30" align="left" textColor="textMuted" marginX="6"/>
-  </LinearLayout>
+    <TextView text="分卷大小" width="76" height="30" align="right" textColor="textMuted"/>
+    <InputBox id="volume" height="30" width="80" marginX="8" cue="不分卷"/>
+    <TextView text="GB" width="wrap" height="30" align="left" textColor="textMuted" marginX="5"/>
 
-  <!-- 密码 -->
-  <LinearLayout orientation="horizontal" height="30" alignY="center">
-    <TextView text="压缩密码" width="84" height="30" align="right" textColor="textMuted"/>
-    <InputBox id="password" height="30" width="140" marginX="10" password="true"
-              cue="留空表示不加密"/>
+    <TextView text="密码" width="76" height="30" align="right" textColor="textMuted"/>
+    <InputBox id="password" height="30" width="100" marginX="8" password="true"
+              cue="不加密"/>
   </LinearLayout>
 
   <!-- 弹簧：把按钮行顶到底部，窗口拉高时不至于浮在半空 -->
