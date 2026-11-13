@@ -13,6 +13,12 @@
 #include <vector>
 
 namespace AiUI {
+// 正在运行的模态循环层数：对话框销毁时不能投递退出消息，
+// 否则紧随其后的模态循环（如进度框）会立刻结束。
+namespace {
+int g_modalDepth = 0;
+}  // namespace
+
 namespace os {
 namespace windows {
 namespace {
@@ -645,8 +651,10 @@ class WindowsWindow : public PlatformWindow {
           ::KillTimer(hwnd_, kDelayTimerId);
           delayTimer_ = 0;
         }
-        // 主窗口销毁即整个程序结束；对话框有 owner，不能顺带退出消息循环
-        if (style_.topLevel && !owned_) ::PostQuitMessage(0);
+        // 主窗口销毁即整个程序结束。用「模态循环是否在跑」判断而不是只看 owner：
+        // 右键菜单启动时没有主窗口，对话框自己就是顶层且无 owner，销毁它若投递
+        // WM_QUIT，紧随其后的进度框模态循环会立刻退出并把任务取消。
+        if (style_.topLevel && !owned_ && g_modalDepth == 0) ::PostQuitMessage(0);
         return 0;
 
       case WM_NCDESTROY:
@@ -1198,11 +1206,13 @@ void runModalLoop(NativeHandle modal, NativeHandle owner) {
   }
   if (ownerWnd) ::EnableWindow(ownerWnd, FALSE);
 
+  ++g_modalDepth;
   MSG msg;
   while (::IsWindow(dialog) && ::GetMessageW(&msg, nullptr, 0, 0) > 0) {
     ::TranslateMessage(&msg);
     ::DispatchMessageW(&msg);
   }
+  --g_modalDepth;
 
   if (ownerWnd) {
     ::EnableWindow(ownerWnd, TRUE);
