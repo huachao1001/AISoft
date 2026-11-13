@@ -1,17 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  进度对话框：一行说明、当前文件、进度条、百分比，右下角取消。
-  进度与文件名由 ProgressDialog 在收到工作线程快照后刷新。
+  进度窗口：整个窗口就是一条大进度条。
+
+  没有标题栏。底层 ProgressBar 撑满整个客户区当轨道与填充，文字与关闭按钮
+  叠在它上面。轨道与填充都是极浅的蓝，靠深藏青标题拉开对比（见 onCreate）。
+  根节点 dragWindow 在 onCreate 里打开，整条都能拖动；关闭按钮自己声明
+  要鼠标事件，命中测试会把它留成客户区。
 -->
-<LinearLayout orientation="vertical" padding="16" background="dialogBg">
+<FrameLayout>
 
-  <TextView id="title" text="正在处理，请稍候…" height="20" textColor="textHead"/>
-  <TextView id="file" height="20" marginY="6" textColor="textMuted"/>
-  <ProgressBar id="bar" height="12" marginY="6"/>
-  <TextView id="detail" height="18" textColor="textMuted"/>
+  <!-- 铺满整窗的进度条。轨道与填充色都在 onCreate 里按参考配色设 -->
+  <ProgressBar id="bar" width="match" height="match" barHeight="176" radius="0"/>
 
-  <LinearLayout orientation="horizontal" height="32" align="end" marginY="10">
-    <Button id="btnCancel" text="取消" style="outline" width="76" height="30"/>
+  <!-- 叠在进度条上的内容：左侧文字撑满余量，右侧关闭按钮 -->
+  <LinearLayout orientation="horizontal" width="match" height="match" paddingLeft="34">
+
+    <LinearLayout orientation="vertical" weight="1" height="wrap" alignY="center"
+                  paddingRight="12">
+      <!-- 主行：动作 + 文件名，超大加粗深藏青 -->
+      <TextView id="file" width="match" height="46" bold="true" huge="true"/>
+      <!-- 副行：百分比与大小，放大一档的灰蓝 -->
+      <TextView id="detail" width="match" height="34" marginTop="8" large="true"/>
+    </LinearLayout>
+
+    <!-- 关闭：幽灵样式，只改图标颜色、不铺背景 -->
+    <Button id="btnCancel" icon="close" iconPlacement="only" style="ghost"
+            width="58" height="52" iconSize="16" radius="0" padX="0" alignY="start"/>
   </LinearLayout>
 
-</LinearLayout>
+</FrameLayout>

@@ -1,6 +1,8 @@
 ﻿// 解压对话框
 //
-// 只负责收集选项；真正的解压放在进度对话框里跑，因为它可能耗时很久。
+// 只收集目标路径；真正的解压放在进度对话框里跑，因为它可能耗时很久。
+// 密码不在这里配置：打开压缩包时若发现需要密码，由 OpenArchiveWithPassword
+// 当场询问，解压阶段仍缺密码时再由 Extract 的取密码回调补问。
 #include "dlg_extract.h"
 
 #include "app.h"
@@ -9,9 +11,7 @@
 #include "dlg_progress.h"
 #include "util.h"
 #include "AiUI/widgets/button.h"
-#include "AiUI/widgets/form_controls.h"
 #include "AiUI/widgets/input_box.h"
-#include "AiUI/widgets/option_view.h"
 #include "AiUI/widgets/text_view.h"
 #include "dialog_activity.h"
 
@@ -33,8 +33,9 @@ std::wstring defaultTargetDir() {
 // 解压任务：对话框关闭后再跑，避免把模态循环嵌套在 onAccept 里
 struct ExtractTask {
   std::wstring target;
+  // 输入包路径：进度窗口主行要显示「正在解压：包名」
+  std::wstring archivePath;
   bool openAfter = true;
-  bool deleteAfter = false;
   arc::ExtractOptions options;
   std::vector<uint32_t> indices;
 };
@@ -55,56 +56,30 @@ class DlgExtract : public DialogActivity {
 
  private:
   void browseTarget();
-  void createFolder();
-  void editPassword();
-  void saveAsDefault();
   // 收集要解压的成员下标；空表示整包
   std::vector<uint32_t> collectIndices() const;
 
   std::vector<int> selected_;
   std::wstring prefix_;
-  std::wstring password_;
 
   ExtractTask task_;
   bool hasTask_ = false;
 
   AiUI::InputBox* target_ = nullptr;
-  AiUI::RadioGroup* updateGroup_ = nullptr;
-  AiUI::RadioGroup* overwriteGroup_ = nullptr;
-  AiUI::CheckBox* optOpen_ = nullptr;
-  AiUI::CheckBox* optDelete_ = nullptr;
 };
 
 void DlgExtract::onCreate() {
   setEscapeCloses(true);
-  setTitle(L"解压");
-  setMinSize(520, 620);
+  // 标题带上目标包名，多开几个解压窗口时才分得清谁是谁
+  const std::wstring name = util::BaseName(g_app.archivePath);
+  setTitle(name.empty() ? L"解压" : L"解压 - " + name);
+  setMinSize(460, 164);
 
   target_ = findView<AiUI::InputBox>("target");
   if (target_) target_->setText(defaultTargetDir());
 
-  updateGroup_ = findView<AiUI::RadioGroup>("updateGroup");
-  overwriteGroup_ = findView<AiUI::RadioGroup>("overwriteGroup");
-  if (overwriteGroup_) {
-    // 原版默认「直接覆盖」，这里保持一致
-    overwriteGroup_->setCheckedIndex(1);
-  }
-
-  optOpen_ = findView<AiUI::CheckBox>("optOpen");
-  if (optOpen_) optOpen_->setChecked(g_app.settings.openAfterExtract);
-  optDelete_ = findView<AiUI::CheckBox>("optDelete");
-
   if (auto* browse = findView<AiUI::Button>("btnBrowse")) {
     browse->setOnClick([this] { browseTarget(); });
-  }
-  if (auto* folder = findView<AiUI::Button>("btnNewFolder")) {
-    folder->setOnClick([this] { createFolder(); });
-  }
-  if (auto* pwd = findView<AiUI::Button>("btnPassword")) {
-    pwd->setOnClick([this] { editPassword(); });
-  }
-  if (auto* save = findView<AiUI::Button>("btnSaveDefault")) {
-    save->setOnClick([this] { saveAsDefault(); });
   }
   if (auto* ok = findView<AiUI::Button>("btnOk")) {
     ok->setOnClick([this] {
@@ -125,40 +100,6 @@ void DlgExtract::browseTarget() {
   const std::wstring picked = AiUI::platform()->pickFolder(window()->handle(),
                                                            L"选择解压目标文件夹", current);
   if (!picked.empty() && target_) target_->setText(picked);
-}
-
-void DlgExtract::createFolder() {
-  const std::wstring base = target_ ? target_->text() : std::wstring();
-  std::wstring name;
-  if (!PromptText(window()->handle(), L"新建文件夹", L"文件夹名称：", name)) return;
-  if (name.empty()) return;
-
-  const std::wstring path = util::JoinPath(base, name);
-  if (!util::EnsureDirectory(path)) {
-    AiUI::MessageBoxParams params;
-    params.title = L"AIZip";
-    params.message = L"无法创建文件夹。";
-    params.icon = AiUI::MessageBoxIcon::kError;
-    AiUI::platform()->showMessageBox(window()->handle(), params);
-    return;
-  }
-  if (target_) target_->setText(path);
-}
-
-void DlgExtract::editPassword() {
-  std::wstring pwd = password_;
-  if (PromptText(window()->handle(), L"输入密码", L"密码：", pwd, true)) password_ = pwd;
-}
-
-void DlgExtract::saveAsDefault() {
-  if (target_) g_app.settings.extractDir = target_->text();
-  util::SaveSettings(g_app.settings);
-
-  AiUI::MessageBoxParams params;
-  params.title = L"AIZip";
-  params.message = L"已保存为默认设置。";
-  params.icon = AiUI::MessageBoxIcon::kInfo;
-  AiUI::platform()->showMessageBox(window()->handle(), params);
 }
 
 std::vector<uint32_t> DlgExtract::collectIndices() const {
@@ -212,34 +153,13 @@ bool DlgExtract::onAccept() {
   }
 
   task_.target = target;
+  task_.archivePath = g_app.archivePath;
   task_.options.targetDir = target;
-  task_.options.password = password_;
-  // 原版「解压并更新」与「解压并替换」都落成 kExtractReplace，只有「仅更新」不同
-  task_.options.update = (updateGroup_ && updateGroup_->checkedIndex() == 2)
-                            ? arc::ExtractOptions::Update::kNewerOnly
-                            : arc::ExtractOptions::Update::kExtractReplace;
-
-  switch (overwriteGroup_ ? overwriteGroup_->checkedIndex() : 1) {
-    case 0:
-      task_.options.overwrite = arc::ExtractOptions::Overwrite::kAsk;
-      break;
-    case 2:
-      task_.options.overwrite = arc::ExtractOptions::Overwrite::kSkip;
-      break;
-    case 3:
-      task_.options.overwrite = arc::ExtractOptions::Overwrite::kRename;
-      break;
-    default:
-      task_.options.overwrite = arc::ExtractOptions::Overwrite::kOverwrite;
-      break;
-  }
-
-  task_.openAfter = optOpen_ && optOpen_->isChecked();
-  task_.deleteAfter = optDelete_ && optDelete_->isChecked();
+  // 「解压后打开目标文件夹」选项已移除，按原默认行为固定为打开
+  task_.openAfter = true;
   task_.indices = collectIndices();
 
   g_app.settings.extractDir = target;
-  g_app.settings.openAfterExtract = task_.openAfter;
   hasTask_ = true;
   return true;
 }
@@ -247,7 +167,8 @@ bool DlgExtract::onAccept() {
 // 对话框已关闭，owner 退回主窗口
 void runExtractTask(AiUI::NativeHandle owner, const ExtractTask& task) {
   std::wstring error;
-  const bool ok = ShowProgressDialog(owner, L"正在解压", [&](const arc::ProgressFn& prog) {
+  const bool ok = ShowProgressDialog(owner, L"正在解压", task.archivePath,
+                                     [&](const arc::ProgressFn& prog) {
     return g_app.archive.Extract(
         task.indices, task.options, prog,
         [owner](const std::wstring& path) -> int {
@@ -287,19 +208,7 @@ void runExtractTask(AiUI::NativeHandle owner, const ExtractTask& task) {
     return;
   }
 
-  if (task.deleteAfter && !g_app.archivePath.empty()) {
-    const std::wstring archivePath = g_app.archivePath;
-    g_app.archive.Close();
-    AiUI::platform()->deleteFile(archivePath);
-    if (g_app.archiveMode) {
-      g_app.archiveMode = false;
-      g_app.archivePath.clear();
-      AppNavigateTo(util::DirName(archivePath));
-    }
-  } else if (g_app.mainWnd) {
-    AppRefreshView();
-  }
-
+  if (g_app.mainWnd) AppRefreshView();
   if (task.openAfter) AiUI::platform()->openWithSystem(task.target);
 }
 
@@ -308,7 +217,9 @@ void runExtractTask(AiUI::NativeHandle owner, const ExtractTask& task) {
 void ShowExtractDialog(AiUI::NativeHandle owner, const std::vector<int>& selected,
                        const std::wstring& prefix) {
   DlgExtract dialog(selected, prefix);
-  const bool accepted = dialog.runModal(owner, 560, 660);
+  // 内容高度 140：上下内边距 32 + 标签 18 + 输入行 38 + 按钮行 52。
+  // 窗口留 24 的余量，否则任何一处度量微调都会吃掉底部按钮。
+  const bool accepted = dialog.runModal(owner, 560, 164);
   // 解压放到模态循环退出之后：进度框需要自己的模态循环
   if (accepted && dialog.hasTask()) runExtractTask(owner, dialog.task());
 }

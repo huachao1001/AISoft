@@ -52,7 +52,6 @@ struct Settings {
   std::wstring extractDir;
   // 压缩格式与档位不持久化：对话框每次打开都从 ZIP + 标准起步
   bool solid = true;
-  bool openAfterExtract = true;
   int listSortColumn = 0;
   bool listSortAsc = true;
   // 用户在列表里拖过的列宽（物理像素，0 = 用设计值）

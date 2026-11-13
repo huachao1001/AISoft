@@ -1,50 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  解压对话框：目标路径、更新方式、覆盖方式、其他选项。
-  语义与原版一致；控件装配与校验在 DlgExtract 里。
+  解压对话框：只保留目标路径。更新方式、覆盖方式、其他选项已移除，
+  密码在识别到加密时才单独询问，因此这里的控件装配很薄。
+
+  内容高度约 116（160 DPI 设计值），窗口按 164 开，多出的余量由
+  按钮行上方的弹性空白吸收，按钮永远贴着底部而不是被挤出客户区。
 -->
 <LinearLayout orientation="vertical" padding="16" background="dialogBg">
 
   <TextView text="目标路径(T)" height="18" textColor="textHead"/>
 
-  <!-- 路径输入 + 右侧两个动作按钮 -->
+  <!-- 路径输入 + 右侧浏览按钮 -->
   <LinearLayout orientation="horizontal" height="30" marginY="4">
     <InputBox id="target" weight="1" height="30" padding="8"/>
     <Button id="btnBrowse" text="浏览(B)..." style="outline" width="96" height="30" marginX="8"/>
-    <Button id="btnNewFolder" text="新建文件夹" style="outline" width="96" height="30"/>
   </LinearLayout>
 
-  <GroupBox id="groupUpdate" title="更新方式" marginY="6">
-    <RadioGroup id="updateGroup" rowGap="6">
-      <RadioButton id="updateReplace">解压并替换文件(R)</RadioButton>
-      <RadioButton id="updateNewer">解压并更新文件(U)</RadioButton>
-      <RadioButton id="updateOnly">仅更新已存在的文件(E)</RadioButton>
-    </RadioGroup>
-  </GroupBox>
+  <!-- 弹性空白：多余高度留在这里，按钮贴底 -->
+  <View weight="1"/>
 
-  <GroupBox id="groupOverwrite" title="覆盖方式" marginY="6">
-    <RadioGroup id="overwriteGroup" rowGap="6">
-      <RadioButton id="overAsk">覆盖前询问(A)</RadioButton>
-      <RadioButton id="overWrite">直接覆盖，不询问(W)</RadioButton>
-      <RadioButton id="overSkip">跳过已存在的文件(S)</RadioButton>
-      <RadioButton id="overRename">自动重命名已存在的文件(R)</RadioButton>
-    </RadioGroup>
-  </GroupBox>
-
-  <GroupBox id="groupOther" title="其他选项" marginY="6">
-    <LinearLayout orientation="vertical">
-      <CheckBox id="optOpen">解压完成后打开目标文件夹(O)</CheckBox>
-      <CheckBox id="optDelete" marginY="8">解压完成后删除压缩包(D)</CheckBox>
-      <Button id="btnPassword" text="密码(P)..." style="outline" width="96" height="28" marginY="8"/>
-    </LinearLayout>
-  </GroupBox>
-
-  <!-- 底部：左「保存为默认」，右「确定 / 取消」 -->
-  <LinearLayout orientation="horizontal" height="32" marginY="6">
-    <Button id="btnSaveDefault" text="保存为默认(S)" style="outline" width="116" height="30"/>
+  <!-- 底部：右「确定 / 取消」 -->
+  <LinearLayout orientation="horizontal" height="32" marginY="10">
     <View weight="1"/>
-    <Button id="btnOk" text="确定" width="80" height="30"/>
-    <Button id="btnCancel" text="取消" style="outline" width="80" height="30" marginX="8"/>
+    <Button id="btnOk" text="确定" style="primary" width="84" height="32"/>
+    <Button id="btnCancel" text="取消" style="outline" width="84" height="32" marginX="8"/>
   </LinearLayout>
 
 </LinearLayout>

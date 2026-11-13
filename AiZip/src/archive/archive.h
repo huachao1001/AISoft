@@ -29,6 +29,8 @@ struct Entry {
 struct OpenResult {
   bool ok = false;
   std::wstring error;
+  // 打开失败是因为内核要口令（而不是文件损坏/格式不支持）
+  bool needsPassword = false;
 };
 
 // 进度回调：返回 false 表示取消
@@ -38,14 +40,13 @@ using OverwriteFn = std::function<int(const std::wstring& path)>;
 // 口令询问
 using PasswordFn = std::function<bool(std::wstring& out)>;
 
-// 解压选项：更新方式 / 覆盖方式
+// 解压选项。更新方式与覆盖方式已从界面移除：存在同名文件时一律
+// 交给 askOverwrite 询问，调用方不提供回调则直接覆盖。
 struct ExtractOptions {
-  enum class Overwrite { kAsk, kOverwrite, kSkip, kRename };
-  enum class Update { kExtractReplace, kExtractUpdate, kNewerOnly };
   std::wstring targetDir;
-  Overwrite overwrite = Overwrite::kAsk;
-  Update update = Update::kExtractReplace;
   std::wstring password;
+  // 落地时去掉包内这层公共目录前缀（用于"外层已建同名目录"的场景）
+  std::wstring stripTopDir;
 };
 
 struct CompressOptions {
@@ -79,6 +80,10 @@ class Archive {
                const PasswordFn& askPassword, std::wstring& error);
 
   static bool IsArchiveFile(const std::wstring& path);
+
+  // 所有条目都在同一个顶层目录下时返回该目录名，否则返回空。
+  // 解压时可以用它避免多套一层同名目录。
+  static std::wstring SingleTopLevelDir(const std::vector<Entry>& entries);
 
  private:
   void* stream_ = nullptr;  // z7::IInStream*

@@ -109,11 +109,81 @@ static int TestFormats(const std::wstring& dir) {
   return failures;
 }
 
+// 进度自检：7-Zip 的 zip 编码器分多趟走，收尾趟会把完成量从 0 重新计数。
+// 这里验证上报给界面的进度只增不减，否则进度条会从 100% 掉回去。
+static int TestProgress(const std::wstring& dir) {
+  int failures = 0;
+  auto expect = [&](bool cond, const char* what) {
+    printf("%s %s\n", cond ? "ok  " : "FAIL", what);
+    if (!cond) failures++;
+  };
+
+  // 64 MB 随机数据：够跨过多个编码块，能稳定复现多趟计数
+  const std::wstring src = util::JoinPath(dir, L"prog-src.bin");
+  {
+    FILE* f = nullptr;
+    if (_wfopen_s(&f, src.c_str(), L"wb") != 0) {
+      printf("FAIL cannot create %ls\n", src.c_str());
+      return 1;
+    }
+    std::vector<char> chunk(1 << 20);
+    unsigned seed = 12345;
+    for (int i = 0; i < 64; ++i) {
+      for (size_t k = 0; k < chunk.size(); ++k) {
+        seed = seed * 1103515245u + 12345u;
+        chunk[k] = static_cast<char>(seed >> 16);
+      }
+      fwrite(chunk.data(), 1, chunk.size(), f);
+    }
+    fclose(f);
+  }
+
+  const std::wstring out = util::JoinPath(dir, L"prog-out.zip");
+  AiUI::platform()->deleteFile(out);
+
+  arc::CompressOptions o;
+  o.archivePath = out;
+  o.formatName = L"ZIP";
+  o.level = 5;
+  std::wstring err;
+
+  uint64_t lastCompleted = 0;
+  uint64_t lastTotal = 0;
+  int calls = 0;
+  int regressions = 0;
+  const bool ok = arc::Compress(
+      {src}, o,
+      [&](uint64_t completed, uint64_t total, const std::wstring&) {
+        calls++;
+        if (completed < lastCompleted) {
+          regressions++;
+          printf("  REGRESS call %d: %llu -> %llu (total %llu)\n", calls,
+                 (unsigned long long)lastCompleted, (unsigned long long)completed,
+                 (unsigned long long)total);
+        }
+        lastCompleted = completed;
+        lastTotal = total;
+        return true;
+      },
+      err);
+
+  printf("  calls=%d lastCompleted=%llu lastTotal=%llu err=%ls\n", calls,
+         (unsigned long long)lastCompleted, (unsigned long long)lastTotal, err.c_str());
+  expect(ok, "compress succeeds with progress reporting");
+  expect(calls > 10, "progress callback fires repeatedly");
+  expect(regressions == 0, "reported progress never goes backwards");
+  expect(lastTotal > 0 && lastCompleted == lastTotal, "final progress reaches total");
+
+  AiUI::platform()->deleteFile(out);
+  AiUI::platform()->deleteFile(src);
+  return failures;
+}
+
 int wmain(int argc, wchar_t** argv) {
   // err 里是中文，printf %ls 在 C locale 下遇到非 ASCII 会静默丢失
   setlocale(LC_ALL, ".UTF-8");
   if (argc < 3) {
-    printf("usage: test_arc <open|extract|compress|volumes> ...\n");
+    printf("usage: test_arc <open|extract|compress|volumes|formats|progress> ...\n");
     return 2;
   }
   const std::wstring mode = argv[1];
@@ -126,12 +196,16 @@ int wmain(int argc, wchar_t** argv) {
     return TestFormats(argv[2]) == 0 ? 0 : 1;
   }
 
+  if (mode == L"progress") {
+    return TestProgress(argv[2]) == 0 ? 0 : 1;
+  }
+
   // open / extract 支持可选密码：test_arc open <file> [password]
   if (mode == L"open") {
     arc::Archive a;
     const std::wstring pwd = argc > 3 ? argv[3] : L"";
     auto r = a.Open(argv[2], pwd);
-    printf("open=%d fmt=%ls err=%ls\n", r.ok,
+    printf("open=%d needsPwd=%d fmt=%ls err=%ls\n", r.ok, r.needsPassword,
            z7::FormatNameFromExtension(util::FileExtension(argv[2])), r.error.c_str());
     if (r.ok) Dump(a);
     return r.ok ? 0 : 1;

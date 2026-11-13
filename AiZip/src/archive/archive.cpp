@@ -1,4 +1,4 @@
-﻿#include "archive.h"
+#include "archive.h"
 
 #include "sevenzip_loader.h"
 #include "util.h"
@@ -39,8 +39,12 @@ struct PasswordState {
   std::wstring password;
   PasswordFn ask;
   bool asked = false;
+  // 内核确实来要过口令（不代表用户真给了）：用于区分「需要密码」
+  // 与「文件损坏/格式不支持」
+  bool requested = false;
 
   const std::wstring& Get() {
+    requested = true;
     if (password.empty() && !asked && ask) {
       asked = true;
       ask(password);
@@ -155,6 +159,9 @@ class PasswordSource {
     }
     return false;
   }
+
+  // 内核是否来索取过口令
+  bool PasswordRequested() const { return state_.requested; }
 
  private:
   PasswordState state_;
@@ -414,7 +421,10 @@ class ExtractCallback final : public z7::IArchiveExtractCallback {
 
   HRESULT STDMETHODCALLTYPE SetCompleted(const uint64_t* complete) override {
     if (canceled_) return E_ABORT;
-    if (progress_ && complete && !progress_(*complete, total_, currentPath_)) {
+    // 部分格式（多卷、自解压）会分趟调用并把完成量重新从 0 计，
+    // 只保留最大值，避免进度条在中途倒退。
+    if (complete && *complete > done_) done_ = *complete;
+    if (progress_ && complete && !progress_(done_, total_, currentPath_)) {
       canceled_ = true;
       return E_ABORT;
     }
@@ -438,6 +448,23 @@ class ExtractCallback final : public z7::IArchiveExtractCallback {
     }
     while (!rel.empty() && rel.front() == L'\\') rel.erase(rel.begin());
     if (rel.empty() || rel.find(L"..") != std::wstring::npos) return E_FAIL;
+
+    // 去掉调用方指定的公共顶层目录；整条路径就是该目录本身时跳过
+    if (!opts_.stripTopDir.empty()) {
+      const size_t n = opts_.stripTopDir.size();
+      if (rel.size() >= n &&
+          ::CompareStringOrdinal(rel.c_str(), static_cast<int>(n), opts_.stripTopDir.c_str(),
+                                 static_cast<int>(n), TRUE) == CSTR_EQUAL &&
+          (rel.size() == n || rel[n] == L'\\')) {
+        rel.erase(0, n);
+        while (!rel.empty() && rel.front() == L'\\') rel.erase(rel.begin());
+        if (rel.empty()) {
+          currentSkip_ = true;
+          currentEntry_ = nullptr;
+          return S_OK;
+        }
+      }
+    }
     currentPath_ = e.path;
 
     std::wstring target = util::JoinPath(opts_.targetDir, rel);
@@ -452,41 +479,18 @@ class ExtractCallback final : public z7::IArchiveExtractCallback {
     util::EnsureDirectory(util::DirName(target));
 
     const bool exists = util::PathExists(target);
-    if (exists && opts_.update == ExtractOptions::Update::kNewerOnly && e.hasMtime) {
-      // 归档里的时间已经是 Unix 毫秒，直接和现有文件的修改时间比
-      const int64_t existing = AiUI::platform()->modifiedTime(target);
-      if (existing > 0 && existing >= e.modifiedMillis) {
-        currentSkip_ = true;
-        currentEntry_ = nullptr;
-        return S_OK;
-      }
-    }
-
     if (exists) {
-      int action;
+      int action = 1;
       if (overwriteAll_ != 0) {
         action = overwriteAll_ > 0 ? 1 : 0;
-      } else {
-        switch (opts_.overwrite) {
-          case ExtractOptions::Overwrite::kSkip:
-            action = 0;
-            break;
-          case ExtractOptions::Overwrite::kOverwrite:
-            action = 1;
-            break;
-          case ExtractOptions::Overwrite::kRename:
-            action = 2;
-            break;
-          default:
-            action = askOverwrite_ ? askOverwrite_(target) : 1;
-            if (action == 3) {
-              overwriteAll_ = 1;
-              action = 1;
-            } else if (action == 4) {
-              overwriteAll_ = -1;
-              action = 0;
-            }
-            break;
+      } else if (askOverwrite_) {
+        action = askOverwrite_(target);
+        if (action == 3) {
+          overwriteAll_ = 1;
+          action = 1;
+        } else if (action == 4) {
+          overwriteAll_ = -1;
+          action = 0;
         }
       }
       if (action == 0) {
@@ -546,6 +550,8 @@ class ExtractCallback final : public z7::IArchiveExtractCallback {
   OverwriteFn askOverwrite_;
   PasswordSource* pwd_;
   uint64_t total_ = 0;
+  // 已上报的最大完成量：分趟解压时防止进度回退
+  uint64_t done_ = 0;
   std::atomic<ULONG> refs_{1};
   z7::IOutStream* outStream_ = nullptr;
   std::wstring currentPath_;
@@ -597,7 +603,10 @@ class UpdateCallback final : public z7::IArchiveUpdateCallback {
 
   HRESULT STDMETHODCALLTYPE SetCompleted(const uint64_t* complete) override {
     if (canceled_) return E_ABORT;
-    if (progress_ && complete && !progress_(*complete, total_, currentPath_)) {
+    // zip 编码器分多趟走：压缩趟结束时报满，随后收尾趟会把完成量从 0 重新
+    // 计数。直接透传会让进度条从 100% 掉回个位数，所以只许前进不许后退。
+    if (complete && *complete > done_) done_ = *complete;
+    if (progress_ && complete && !progress_(done_, total_, currentPath_)) {
       canceled_ = true;
       return E_ABORT;
     }
@@ -692,6 +701,8 @@ class UpdateCallback final : public z7::IArchiveUpdateCallback {
   ProgressFn progress_;
   PasswordSource* pwd_;
   uint64_t total_ = 0;
+  // 已上报的最大完成量：编码器分趟计数时防止进度回退
+  uint64_t done_ = 0;
   std::atomic<ULONG> refs_{1};
   z7::IInStream* inStream_ = nullptr;
   std::wstring currentPath_;
@@ -784,10 +795,13 @@ OpenResult Archive::Open(const std::wstring& filePath, const std::wstring& passw
     a->Release();
   }
   cb->Release();
+  // 只有内核确实来要过口令，才算「需要密码」；否则是格式或数据问题
+  const bool passwordRequested = pwd->PasswordRequested();
   delete pwd;
 
   if (!opened) {
     inStream->Release();
+    r.needsPassword = passwordRequested;
     r.error = L"不支持的压缩格式，或文件已损坏";
     return r;
   }
@@ -881,11 +895,37 @@ bool Archive::IsArchiveFile(const std::wstring& path) {
   static const wchar_t* kExts[] = {L".zip",  L".7z",   L".rar",  L".tar", L".gz",
                                    L".tgz",  L".bz2",  L".tbz2", L".xz",  L".txz",
                                    L".cab",  L".iso",  L".wim",  L".jar", L".apk",
-                                   L".epub", L".lzh",  L".arj",  L".z",   L".001"};
+                                   L".aar",  L".epub", L".lzh",  L".arj", L".z",
+                                   L".001"};
   for (const wchar_t* e : kExts) {
     if (::CompareStringOrdinal(ext.c_str(), -1, e, -1, TRUE) == CSTR_EQUAL) return true;
   }
   return false;
+}
+
+std::wstring Archive::SingleTopLevelDir(const std::vector<Entry>& entries) {
+  std::wstring top;
+  for (const Entry& e : entries) {
+    // 归一化分隔符后取第一段；空条目（如包根标记）跳过
+    std::wstring p = e.path;
+    for (wchar_t& c : p) {
+      if (c == L'/') c = L'\\';
+    }
+    while (!p.empty() && p.front() == L'\\') p.erase(p.begin());
+    if (p.empty()) continue;
+    const size_t sep = p.find(L'\\');
+    const std::wstring head = (sep == std::wstring::npos) ? p : p.substr(0, sep);
+    if (head.empty()) continue;
+
+    // 顶层是普通文件（没有分隔符且不是目录条目）就说明包内不带公共目录
+    if (sep == std::wstring::npos && !e.isDir) return {};
+    if (top.empty()) {
+      top = head;
+    } else if (::CompareStringOrdinal(top.c_str(), -1, head.c_str(), -1, TRUE) != CSTR_EQUAL) {
+      return {};
+    }
+  }
+  return top;
 }
 
 // ───────────────────────── 压缩 ─────────────────────────

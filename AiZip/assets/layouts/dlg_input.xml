@@ -9,6 +9,9 @@
 
   <InputBox id="edit" height="30" marginY="8" padding="8"/>
 
+  <!-- 弹性空白：多余高度留在这里，按钮贴底而不是被挤出客户区 -->
+  <View weight="1"/>
+
   <!-- 右对齐的按钮行 -->
   <LinearLayout orientation="horizontal" height="30" align="end">
     <Button id="btnOk" text="确定" width="76" height="30"/>

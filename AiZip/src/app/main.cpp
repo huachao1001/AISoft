@@ -3,6 +3,7 @@
 // 不出现任何平台 API：DPI、公共控件、消息循环、窗口状态都走 AiUI::Platform。
 #include "app.h"
 #include "main_activity.h"
+#include "dlg_progress.h"
 #include "shell_menu.h"
 #include "single_instance.h"
 #include "ui_main.h"
@@ -50,8 +51,9 @@ int AiUI::runApp() {
 
   LaunchRequest req = ParseLaunchArgs();
 
-  // 右键菜单发起的压缩类动作：静态动词没有 %*，多选时系统为每个文件各起
+  // 右键菜单发起的动作：静态动词没有 %*，多选时系统为每个文件各起
   // 一个进程。先在收集窗口里把同批进程合并成一次操作，再往下走。
+  // 「解压到当前目录」同样要合并，否则多个包会叠出多个进度框。
   if (req.explicitAction && req.action != LaunchRequest::Action::kExtract) {
     LaunchRequest merged;
     if (!inst::Collect(req, merged)) {  // 已转交给先启动的实例
@@ -67,11 +69,10 @@ int AiUI::runApp() {
     AiUI::fonts.destroy();
     return 0;
   }
-
   // 浏览模式：已有主窗口时把路径转过去。用平台层的单实例锁判断，
   // 避免两个进程几乎同时启动时都在对方建窗之前查不到窗口。
   const std::wstring targetPath = req.paths.empty() ? L"" : req.paths[0];
-  if (!AiUI::platform()->claimSingleInstance(L"AIZip.Browser.v1")) {
+  if (!AiUI::platform()->claimSingleInstance(inst::kBrowserInstanceId)) {
     // 先启动的进程可能还没建完窗口，短暂等一下再转发
     bool forwarded = false;
     for (int i = 0; i < 20 && !forwarded; ++i) {

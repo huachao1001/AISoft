@@ -373,7 +373,8 @@ void runCompressTask(AiUI::NativeHandle owner, const CompressTask& task) {
   options.archivePath = task.outPath;
 
   std::wstring error;
-  const bool ok = ShowProgressDialog(owner, L"正在压缩", [&](const arc::ProgressFn& prog) {
+  const bool ok = ShowProgressDialog(owner, L"正在压缩", task.outPath,
+                                     [&](const arc::ProgressFn& prog) {
     return arc::Compress(task.sources, options, prog, error);
   });
 

@@ -31,6 +31,8 @@ std::wstring LowerExt(const std::wstring& extIn) {
 GUID FormatFromExtension(const std::wstring& extIn) {
   const std::wstring e = LowerExt(extIn);
   if (e == L".zip") return kClsidZip;
+  // 这几个后缀本质是 ZIP 容器：先试 ZIP handler，比先落到 7z 再失败重试快
+  if (e == L".aar" || e == L".apk" || e == L".jar" || e == L".epub") return kClsidZip;
   if (e == L".7z") return kClsid7z;
   if (e == L".tar") return kClsidTar;
   if (e == L".gz" || e == L".tgz") return kClsidGZip;
@@ -44,6 +46,8 @@ GUID FormatFromExtension(const std::wstring& extIn) {
 const wchar_t* FormatNameFromExtension(const std::wstring& extIn) {
   const std::wstring e = LowerExt(extIn);
   if (e == L".zip") return L"ZIP";
+  // AAR/APK/JAR/EPUB 都是 ZIP 容器，按真实格式显示而不是笼统的 7Z
+  if (e == L".aar" || e == L".apk" || e == L".jar" || e == L".epub") return L"ZIP";
   if (e == L".7z") return L"7Z";
   if (e == L".tar") return L"TAR";
   if (e == L".gz" || e == L".tgz") return L"GZ";

@@ -6,6 +6,7 @@
 #include "app.h"
 #include "dlg_compress.h"
 #include "main_activity.h"
+#include "single_instance.h"
 #include "util.h"
 #include "AiUI/platform.h"
 #include "AiUI/window.h"
@@ -13,8 +14,8 @@
 namespace ui {
 namespace {
 
-// 单实例转发用的应用标识，与 single_instance 里保持一致
-constexpr const wchar_t* kInstanceId = L"AIZip.Instance.v2";
+// 单实例转发用的应用标识，与 main.cpp 里 claimSingleInstance 的保持一致
+constexpr const wchar_t* kInstanceId = inst::kBrowserInstanceId;
 
 // 另一个实例传来的路径：目录就导航过去，压缩包就打开
 void applyForwardedPath(const std::wstring& arg) {
