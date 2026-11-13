@@ -32,12 +32,12 @@
     <ComboBox id="level" height="30" width="140" marginX="10"/>
   </LinearLayout>
 
-  <!-- 压缩分卷：留空表示不分卷 -->
+  <!-- 压缩分卷：留空表示不分卷，单位固定 GB -->
   <LinearLayout orientation="horizontal" height="30" alignY="center">
     <TextView text="分卷大小" width="84" height="30" align="right" textColor="textMuted"/>
     <InputBox id="volume" height="30" width="140" marginX="10"
               cue="留空不分卷"/>
-    <ComboBox id="volumeUnit" width="72" height="30" marginX="8"/>
+    <TextView text="GB" width="wrap" height="30" align="left" textColor="textMuted" marginX="6"/>
   </LinearLayout>
 
   <!-- 密码 -->

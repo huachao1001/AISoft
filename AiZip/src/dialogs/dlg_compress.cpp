@@ -130,7 +130,6 @@ class DlgCompress : public DialogActivity {
   AiUI::RadioGroup* formatGroup_ = nullptr;
   AiUI::ComboBox* level_ = nullptr;
   AiUI::InputBox* volume_ = nullptr;
-  AiUI::ComboBox* volumeUnit_ = nullptr;
   AiUI::InputBox* passwordBox_ = nullptr;
 };
 
@@ -163,7 +162,6 @@ void DlgCompress::onCreate() {
   formatGroup_ = findView<AiUI::RadioGroup>("formatGroup");
   level_ = findView<AiUI::ComboBox>("level");
   volume_ = findView<AiUI::InputBox>("volume");
-  volumeUnit_ = findView<AiUI::ComboBox>("volumeUnit");
   passwordBox_ = findView<AiUI::InputBox>("password");
 
   if (path_) path_->setText(defaultArchivePath(sources_, formatIndex_));
@@ -182,11 +180,6 @@ void DlgCompress::onCreate() {
     for (int i = 0; i < kLevelCount; ++i) items.emplace_back(kLevelNames[i]);
     level_->setItems(items);
     level_->setSelectedIndex(levelIndex);
-  }
-
-  if (volumeUnit_) {
-    volumeUnit_->setItems({L"MB", L"GB"});
-    volumeUnit_->setSelectedIndex(0);
   }
 
   applyFormat(formatIndex_);
@@ -225,23 +218,20 @@ uint64_t DlgCompress::selectedVolumeSize() const {
   return bytes >= kMinVolumeBytes ? bytes : 0;
 }
 
-// 输入框里的数值换算成字节；空、非法或非正数都返回 0
+// 输入框里的数值换算成字节；空、非法或非正数都返回 0。
+// 单位固定 GB：分卷下限 100 MB 以上，用 MB 计的单位数太大、读起来费劲。
 uint64_t DlgCompress::rawVolumeBytes() const {
   if (!volume_) return 0;
   const std::wstring text = volume_->text();
   if (text.empty()) return 0;
 
-  // 只接受十进制正数；带单位的写法（"100 MB"）在这里被拒绝，
-  // 单位由右侧下拉框决定，混在一起容易算错
+  // 只接受十进制正数；带单位的写法（"1 GB"）在这里被拒绝，
+  // 单位由输入框后的标签承载，混在一起容易算错
   wchar_t* end = nullptr;
   const double value = std::wcstod(text.c_str(), &end);
   if (end == text.c_str() || (end && *end != L'\0') || !(value > 0)) return 0;
 
-  // 下拉框的顺序是 MB / GB，按索引换算
-  const int unit = volumeUnit_ ? volumeUnit_->selectedIndex() : 0;
-  const uint64_t scale = unit == 1 ? 1024ull * 1024ull * 1024ull   // GB
-                                   : 1024ull * 1024ull;            // MB
-
+  const uint64_t scale = 1024ull * 1024ull * 1024ull;  // GB
   return static_cast<uint64_t>(value * static_cast<double>(scale));
 }
 
@@ -322,7 +312,7 @@ bool DlgCompress::onAccept() {
     if (raw > 0 && raw < kMinVolumeBytes) {
       AiUI::MessageBoxParams params;
       params.title = L"AIZip";
-      params.message = L"分卷大小不能小于 100 MB。\n\n留空表示不分卷。";
+      params.message = L"分卷大小不能小于 0.1 GB。\n\n留空表示不分卷。";
       params.icon = AiUI::MessageBoxIcon::kInfo;
       AiUI::platform()->showMessageBox(window()->handle(), params);
       return false;
