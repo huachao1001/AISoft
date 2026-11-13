@@ -528,7 +528,18 @@ class Generator {
     const int margin = getInt(node, "margin", 0);
     const int marginH = getInt(node, "marginX", margin);
     const int marginV = getInt(node, "marginY", margin);
-    if (marginH != 0 || marginV != 0) out << ".margin(" << marginH << ", " << marginV << ")";
+    // 单边属性覆盖 marginX/marginY 的两边取值，用来做「左边留间距、右边贴齐」
+    const int left = getInt(node, "marginLeft", marginH);
+    const int top = getInt(node, "marginTop", marginV);
+    const int right = getInt(node, "marginRight", marginH);
+    const int bottom = getInt(node, "marginBottom", marginV);
+    if (left != 0 || top != 0 || right != 0 || bottom != 0) {
+      if (left == right && top == bottom) {
+        out << ".margin(" << left << ", " << top << ")";
+      } else {
+        out << ".margin(" << left << ", " << top << ", " << right << ", " << bottom << ")";
+      }
+    }
 
     const float weight = getFloat(node, "weight", 0.0f);
     if (weight > 0.0f) {
@@ -586,8 +597,22 @@ class Generator {
       line(1, target + "->setOrientation(" + orientationExpr(get(node, "orientation", "vertical")) +
                      ");");
     }
-    if (has(node, "padding")) {
-      line(1, target + "->setPadding(" + get(node, "padding", "0") + ");");
+    const bool hasPad = has(node, "padding") || has(node, "paddingLeft") ||
+                        has(node, "paddingTop") || has(node, "paddingRight") ||
+                        has(node, "paddingBottom");
+    if (hasPad) {
+      // 单边 padding 覆盖 padding 的统一取值；左右不同时就走四参重载
+      const int pad = getInt(node, "padding", 0);
+      const int l = getInt(node, "paddingLeft", pad);
+      const int t = getInt(node, "paddingTop", pad);
+      const int r = getInt(node, "paddingRight", pad);
+      const int b = getInt(node, "paddingBottom", pad);
+      if (l == r && t == b) {
+        line(1, target + "->setPadding(" + std::to_string(l) + ", " + std::to_string(t) + ");");
+      } else {
+        line(1, target + "->setPadding(" + std::to_string(l) + ", " + std::to_string(t) + ", " +
+                     std::to_string(r) + ", " + std::to_string(b) + ");");
+      }
     }
   }
 

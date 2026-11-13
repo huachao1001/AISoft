@@ -84,10 +84,14 @@ content->addView(list, LayoutParams{}.withWeight(1.0f));
 | `spacing` | 子控件间距 |
 | `gravity` | `start` / `center` / `end` |
 | `padding` | 四边等宽内边距 |
+| `paddingLeft` / `paddingTop` / `paddingRight` / `paddingBottom` | 单边内边距，覆盖 `padding` |
 
 `weight`、`marginX`、`marginY`、`width`、`height` 属于 `LayoutParams`，
-写在与其它控件相同的属性位置。只有 `padding` 是容器自身的四边等宽版本；
-分别指定四边要在代码里调 `setPadding(l, t, r, b)`。
+写在与其它控件相同的属性位置。
+
+`marginLeft` / `marginTop` / `marginRight` / `marginBottom` 可单边覆盖
+`marginX` / `marginY`。行末控件常用 `marginLeft` 而不是 `marginX`：后者会把
+右边缘也推开一截，导致容器两侧留白不相等。
 
 ## 限制
 

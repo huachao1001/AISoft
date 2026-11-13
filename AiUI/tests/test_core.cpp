@@ -189,6 +189,42 @@ AIUI_TEST(linear_layout_weighted_child_margin_stays_inside) {
   AIUI_CHECK_EQ(button->bounds().right, 400);
 }
 
+AIUI_TEST(linear_layout_single_side_margin_keeps_right_edge_flush) {
+  // 行末控件只用 marginLeft：左边留间距，右边贴齐容器。
+  // 这是表单左右内边距对称的前提——marginX 会把右边缘也推开一截。
+  TestEnv env;
+  LinearLayout row(Orientation::kHorizontal);
+  auto* label = new FixedView(0, 0);
+  auto* field = new FixedView(0, 0);
+  row.addView(label, LayoutParams{}.withSize(84, 30));
+  row.addView(field, LayoutParams{}
+                          .withSize(LayoutParams::kMatchParent, 30)
+                          .margin(10, 0, 0, 0)
+                          .withWeight(1.0f));
+
+  row.layout(Rect{0, 0, 400, 30});
+
+  AIUI_CHECK_EQ(field->bounds().left, 94);
+  // 右侧没有 margin，权重区必须正好吃到容器右缘
+  AIUI_CHECK_EQ(field->bounds().right, 400);
+}
+
+AIUI_TEST(viewgroup_asymmetric_padding_keeps_content_box) {
+  // 表单根的左右 padding 可以不同：左侧标签的字形自带留白，
+  // 需要靠减小左边 padding 来让视觉边距对称
+  TestEnv env;
+  LinearLayout column(Orientation::kVertical);
+  auto* child = new FixedView(0, 0);
+  column.addView(child, LayoutParams{}.withSize(LayoutParams::kMatchParent, 30));
+  column.setPadding(12, 18, 18, 18);
+
+  column.layout(Rect{0, 0, 400, 300});
+
+  AIUI_CHECK_EQ(child->bounds().left, 12);
+  AIUI_CHECK_EQ(child->bounds().right, 382);
+  AIUI_CHECK_EQ(child->bounds().top, 18);
+}
+
 AIUI_TEST(viewgroup_rejects_second_parent) {
   TestEnv env;
   FrameLayout a;

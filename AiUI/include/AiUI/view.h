@@ -92,6 +92,14 @@ struct LayoutParams {
     marginTop = marginBottom = verticalMargin;
     return *this;
   }
+  // 四边独立：行末控件常需要「左边留间距、右边贴齐容器」
+  LayoutParams margin(int left, int top, int right, int bottom) {
+    marginLeft = left;
+    marginTop = top;
+    marginRight = right;
+    marginBottom = bottom;
+    return *this;
+  }
   LayoutParams withWeight(float w) {
     weight = w;
     return *this;

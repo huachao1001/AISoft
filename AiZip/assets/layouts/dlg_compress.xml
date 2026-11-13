@@ -3,21 +3,24 @@
   压缩对话框：表单式排布，左侧标签右对齐，右侧控件拉伸。
 
   行为（默认文件名、格式联动、分卷换算）在 DlgCompress 里。
+  左侧标签是按字形对齐的，而字形自带一小段左侧留白，所以左边实际留白
+  会比右边多出约 6px；这里把左边 padding 相应减掉，让两侧看上去一样宽。
 -->
-<LinearLayout orientation="vertical" padding="18" spacing="10" background="dialogBg">
+<LinearLayout orientation="vertical" paddingLeft="12" paddingRight="18" paddingTop="18"
+              paddingBottom="18" spacing="10" background="dialogBg">
 
   <!-- 输出路径 -->
   <LinearLayout orientation="horizontal" height="30">
-    <TextView text="输出路径" width="84" height="30" align="right" textColor="textMuted"/>
-    <InputBox id="path" weight="1" height="30" padding="8" marginX="10"/>
+    <TextView text="输出路径" width="wrap" height="30" align="right" textColor="textMuted"/>
+    <InputBox id="path" weight="1" height="30" padding="8" marginLeft="10" marginRight="10"/>
     <Button id="btnBrowse" text="浏览..." style="outline" width="76" height="30"/>
   </LinearLayout>
 
   <!-- 压缩格式：五项平铺单选，不再用下拉承载 -->
   <LinearLayout orientation="horizontal" height="30" alignY="center">
-    <TextView text="压缩格式" width="84" height="30" align="right" textColor="textMuted"/>
+    <TextView text="压缩格式" width="wrap" height="30" align="right" textColor="textMuted"/>
     <RadioGroup id="formatGroup" width="wrap" height="30" orientation="horizontal"
-                rowGap="16" marginX="10">
+                rowGap="16" marginLeft="10">
       <RadioButton id="fmtZip">ZIP</RadioButton>
       <RadioButton id="fmt7z">7Z</RadioButton>
       <RadioButton id="fmtTar">TAR</RadioButton>
@@ -26,18 +29,24 @@
     </RadioGroup>
   </LinearLayout>
 
-  <!-- 级别 / 分卷 / 密码：挤在一行，避免三行把对话框撑高 -->
+  <!-- 级别 / 分卷 / 密码：挤在一行，避免三行把对话框撑高。
+       第一列标签用 wrap 让框贴合文字：给固定宽度时右对齐会在左边留下
+       一段空白，视觉上左侧内边距就比右侧大出一截 -->
   <LinearLayout orientation="horizontal" height="30" alignY="center">
-    <TextView text="压缩级别" width="84" height="30" align="right" textColor="textMuted"/>
-    <ComboBox id="level" height="30" width="112" marginX="8"/>
+    <TextView text="压缩级别" width="wrap" height="30" align="right" textColor="textMuted"/>
+    <ComboBox id="level" height="30" width="112" marginLeft="10"/>
 
-    <TextView text="分卷大小" width="76" height="30" align="right" textColor="textMuted"/>
-    <InputBox id="volume" height="30" width="76" marginX="8" cue="不分卷"/>
-    <TextView text="GB" width="wrap" height="30" align="left" textColor="textMuted" marginX="6"/>
+    <TextView text="分卷大小" width="wrap" height="30" align="left" textColor="textMuted"
+              marginLeft="16"/>
+    <InputBox id="volume" height="30" width="76" marginLeft="10" cue="不分卷"/>
+    <TextView text="GB" width="wrap" height="30" align="left" textColor="textMuted"
+              marginLeft="6"/>
 
-    <TextView text="密码" width="60" height="30" align="right" textColor="textMuted"/>
-    <PasswordBox id="password" height="30" width="128" marginX="8"
-                 cue="不加密"/>
+    <TextView text="密码" width="wrap" height="30" align="left" textColor="textMuted"
+              marginLeft="16"/>
+    <!-- 吃掉剩余宽度：这一行内容拼起来不足以撑满，固定宽度会让右边缘缩进。
+         右侧不留 margin，才能和上面几行的右边距严格对齐 -->
+    <PasswordBox id="password" weight="1" height="30" marginLeft="10" cue="不加密"/>
   </LinearLayout>
 
   <!-- 弹簧：把按钮行顶到底部，窗口拉高时不至于浮在半空 -->
@@ -47,7 +56,7 @@
   <LinearLayout orientation="horizontal" height="32" marginY="12">
     <View weight="1"/>
     <Button id="btnOk" text="确定" style="primary" width="84" height="32"/>
-    <Button id="btnCancel" text="取消" style="outline" width="84" height="32" marginX="10"/>
+    <Button id="btnCancel" text="取消" style="outline" width="84" height="32" marginLeft="10"/>
   </LinearLayout>
 
 </LinearLayout>
