@@ -8,6 +8,9 @@
 
 namespace inst {
 
+// 浏览模式的单实例 id：主窗口持有它，转发也按它找窗口，两处必须一致
+constexpr const wchar_t* kBrowserInstanceId = L"AIZip.Browser.v1";
+
 // 收集这一批启动请求。
 // 返回 false 表示已转发给收集者、本进程应直接退出；true 表示 merged 可执行。
 bool Collect(const LaunchRequest& first, LaunchRequest& merged);
