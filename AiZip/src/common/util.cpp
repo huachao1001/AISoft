@@ -210,8 +210,6 @@ Settings LoadSettings() {
 
     if (key == L"lastDir") s.lastDir = value;
     else if (key == L"extractDir") s.extractDir = value;
-    else if (key == L"compressFormat") s.compressFormat = value;
-    else if (key == L"compressLevel") s.compressLevel = _wtoi(value.c_str());
     else if (key == L"solid") s.solid = _wtoi(value.c_str()) != 0;
     else if (key == L"openAfterExtract") s.openAfterExtract = _wtoi(value.c_str()) != 0;
     else if (key == L"listSortColumn") s.listSortColumn = _wtoi(value.c_str());
@@ -245,8 +243,7 @@ void SaveSettings(const Settings& s) {
 
   write("lastDir", s.lastDir);
   write("extractDir", s.extractDir);
-  write("compressFormat", s.compressFormat);
-  writeInt("compressLevel", s.compressLevel);
+  // 格式与档位不持久化：压缩对话框每次打开都从 ZIP + 标准起步
   writeInt("solid", s.solid ? 1 : 0);
   writeInt("openAfterExtract", s.openAfterExtract ? 1 : 0);
   writeInt("listSortColumn", s.listSortColumn);

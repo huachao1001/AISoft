@@ -466,7 +466,8 @@ void AppQuickZip(const std::vector<std::wstring>& paths) {
   arc::CompressOptions opts;
   opts.archivePath = target;
   opts.formatName = L"ZIP";
-  opts.level = g_app.settings.compressLevel;
+  // 与压缩对话框的默认档位保持一致：快速压缩不经过对话框，也不能沿用旧设置
+  opts.level = 5;
   opts.solid = g_app.settings.solid;
 
   std::wstring err;

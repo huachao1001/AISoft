@@ -50,8 +50,7 @@ std::wstring fromUtf8(const std::string& text);
 struct Settings {
   std::wstring lastDir;
   std::wstring extractDir;
-  std::wstring compressFormat = L"ZIP";  // 压缩格式显示名，须与 z7::Formats() 里的 name 一致
-  int compressLevel = 5;
+  // 压缩格式与档位不持久化：对话框每次打开都从 ZIP + 标准起步
   bool solid = true;
   bool openAfterExtract = true;
   int listSortColumn = 0;

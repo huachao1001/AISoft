@@ -30,6 +30,9 @@ const int kLevelValues[] = {5, 1, 9};
 constexpr int kLevelCount = 3;
 constexpr int kLevelDefault = 0;  // 索引，对应「标准」
 
+// 压缩对话框的固定默认组合：每次打开都从这里起步，不记忆上次选择
+constexpr const wchar_t* kDefaultFormatName = L"ZIP";
+
 // 分卷下限：更小的卷没有实用价值，卷数还会爆炸
 constexpr uint64_t kMinVolumeBytes = 100ull * 1024ull * 1024ull;
 
@@ -141,24 +144,13 @@ void DlgCompress::onCreate() {
   // 否则密码框会被右边裁掉
   setMinSize(690, 270);
 
-  // ── 初始状态：从设置恢复格式、档位、固实 ──
-  // 旧设置里可能是已下线的 TAR.BZ2：查不到就退回 ZIP，
-  // 不能退到索引 0 之外的值
-  int format = z7::FormatIndexByName(g_app.settings.compressFormat.c_str());
-  if (format < 0 || format >= z7::FormatCount()) {
-    format = z7::FormatIndexByName(L"ZIP");
-    if (format < 0) format = 0;
-  }
+  // ── 初始状态：每次打开都从 ZIP + 标准起步 ──
+  // 格式和档位不记忆上次选择：压缩对话框的默认组合是固定的，
+  // 上次临时选过的 7Z / 文件最小 不该悄悄变成下次的默认。
+  int format = z7::FormatIndexByName(kDefaultFormatName);
+  if (format < 0 || format >= z7::FormatCount()) format = 0;
   formatIndex_ = format;
-
-  // 旧设置里的档位值可能已被移除（7 / 3 / 0 等），取不到就退回「标准」
-  int levelIndex = kLevelDefault;
-  for (int i = 0; i < kLevelCount; ++i) {
-    if (kLevelValues[i] == g_app.settings.compressLevel) {
-      levelIndex = i;
-      break;
-    }
-  }
+  const int levelIndex = kLevelDefault;
 
   path_ = findView<AiUI::InputBox>("path");
   formatGroup_ = findView<AiUI::RadioGroup>("formatGroup");
@@ -356,9 +348,7 @@ bool DlgCompress::onAccept() {
   // 固实只有 7Z 支持；界面上不再提供勾选，按保存的设置与格式能力决定
   const bool solid = g_app.settings.solid && info.solidCapable;
 
-  // 记住这次选的格式与档位：「恢复默认」按钮已去掉，确定即视为记住当前选择
-  g_app.settings.compressFormat = nameFor(formatIndex);
-  g_app.settings.compressLevel = kLevelValues[levelIndex];
+  // 只持久化固实：格式与档位每次打开都重置为默认，不写回设置
   util::SaveSettings(g_app.settings);
 
   arc::CompressOptions options;
