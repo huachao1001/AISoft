@@ -3,6 +3,9 @@
 
 101 ICON "aizip.ico"
 
+// 右键菜单组件不进这里：它由 aiui_add_shell_menu_dll 生成独立的 .rc，
+// 应用侧不需要知道组件长什么样。
+
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION 1,0,0,0
  PRODUCTVERSION 1,0,0,0

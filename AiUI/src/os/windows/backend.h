@@ -117,6 +117,10 @@ std::wstring registerShellVerbsImpl(const std::vector<ShellVerb>& verbs);
 std::wstring unregisterShellVerbsImpl(const std::vector<ShellVerb>& verbs);
 bool areShellVerbsRegisteredImpl(const std::vector<ShellVerb>& verbs);
 
+std::wstring registerShellMenuHandlerImpl(const ShellMenuHandler& handler);
+std::wstring unregisterShellMenuHandlerImpl(const ShellMenuHandler& handler);
+bool isShellMenuHandlerRegisteredImpl(const ShellMenuHandler& handler);
+
 std::unique_ptr<PlatformTray> createTrayIconImpl(PlatformTrayHost& host);
 
 bool isUiThreadImpl();

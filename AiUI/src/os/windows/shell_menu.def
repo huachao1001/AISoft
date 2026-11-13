@@ -1,0 +1,6 @@
+; COM in-proc server entry points. Must be exported with undecorated names,
+; otherwise Explorer cannot find them.
+; Keep this file ASCII-only: the linker parses .def in the local code page.
+EXPORTS
+    DllGetClassObject   PRIVATE
+    DllCanUnloadNow     PRIVATE

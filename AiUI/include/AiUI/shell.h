@@ -5,6 +5,7 @@
 #pragma once
 
 #include "AiUI/menu.h"
+#include "AiUI/shell_menu.h"
 
 #include <functional>
 #include <memory>
@@ -48,6 +49,39 @@ std::wstring registerShellVerbs(const std::vector<ShellVerb>& verbs);
 std::wstring unregisterShellVerbs(const std::vector<ShellVerb>& verbs);
 // 是否已挂好且仍指向当前可执行文件
 bool areShellVerbsRegistered(const std::vector<ShellVerb>& verbs);
+
+// ── 动态菜单处理器 ──
+//
+// 静态动词的菜单文字在注册那一刻就定死了，做不出「压缩到 rnd.zip」这种按
+// 文件名算出来的文案。动态文案只能由文件管理器进程内的处理器在弹出菜单的
+// 瞬间计算，所以这里把处理器也抽象出来：
+//
+//   - 组件本体（进程内 COM 组件等）由 cmake 的 aiui_add_shell_menu_dll 构建，
+//     平台侧实现留在 src/os/<platform>/，应用不写任何系统代码；
+//   - 应用只实现 aiuiBuildShellMenu（见 AiUI/shell_menu.h）：输入选中项，
+//     输出菜单项。
+struct ShellMenuHandler {
+  // 稳定标识，如 "AIZip"。同一程序内唯一；系统里的注册位置与组件标识都由它推出，
+  // 所以发布后不能再改，否则已安装用户的菜单会失效。
+  std::wstring id;
+  // 组件的类标识文本（"{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}"）。
+  // 由构建脚本按 id 派生，应用与组件各拿一份，必须一致。
+  std::wstring clsid;
+  // 组件释放到用户目录后的文件名，如 "aicmd.dll"，也是平台约定的组件形态。
+  std::wstring componentName;
+  // 组件在本可执行文件 .rc 里的资源 id（RCDATA），由后端取出后落盘。
+  int componentResourceId = 200;
+  // 系统诊断工具里显示的组件名，只用于可读性
+  std::wstring displayName;
+  // 生效对象，语义同 ShellVerb::targets：{"*"} 所有文件、{"Directory"} 所有目录。
+  std::vector<std::wstring> targets;
+};
+
+// 释放组件并注册；成功返回空串，失败返回可读原因
+std::wstring registerShellMenuHandler(const ShellMenuHandler& handler);
+// 撤销注册。已落盘的组件文件保留，避免占用（文件管理器可能仍加载着它）。
+std::wstring unregisterShellMenuHandler(const ShellMenuHandler& handler);
+bool isShellMenuHandlerRegistered(const ShellMenuHandler& handler);
 
 // ── 托盘图标 ──
 

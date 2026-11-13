@@ -21,7 +21,7 @@ Windows 类型，也不允许 `#include <windows.h>`。
 ```
 include/AiUI/          公开接口，平台无关
 src/                   通用实现（视图树、布局、控件），不得出现系统 API
-src/os/windows/        Windows 后端：窗口、GDI+ 绘制、图标、标题栏外观
+src/os/windows/        Windows 后端：窗口、GDI+ 绘制、图标、标题栏外观、外壳集成
 src/os/macos/          预留（尚未实现）
 src/os/linux/          预留（尚未实现）
 ```
@@ -32,6 +32,37 @@ src/os/linux/          预留（尚未实现）
 - **`src/` 顶层与 `src/widgets/` 不允许 `#include <windows.h>`，也不允许调用
   任何系统 API**（剪贴板、路径比较、字体族、DPI 都要走 `Platform` 接口）。
 - `#ifdef _WIN32` 不应出现在通用实现里。
+
+### 接口在外、实现在内
+
+系统相关能力一律**先在 `include/AiUI/` 定义平台无关接口，再在
+`src/os/<platform>/` 实现**，两者同名同义。新平台只需补实现，公开接口与
+调用方一行不改。
+
+已有对应关系：
+
+| 公开接口 | Windows 实现 |
+|---|---|
+| `Platform`（`platform.h`） | `window_windows.cpp` 转发到 `platform_windows.cpp` |
+| `ShellVerb` / `registerShellVerbs` | `platform_windows.cpp` |
+| `ShellMenuHandler` / `aiuiBuildShellMenu` | `shell_menu_windows.cpp`、`shell_menu_register.cpp` |
+| `TrayIcon` | `platform_windows.cpp` |
+| `titleBarDefaults()` | `title_bar_windows.cpp` |
+
+**应用工程里不允许出现 `#include <windows.h>`、注册表、COM、`HWND` 之类的
+东西。** 应用只能：
+1. 在公开头里挑一个描述结构填参数（如 `ShellMenuHandler`），
+2. 实现一个纯逻辑函数（如 `aiuiBuildShellMenu`），
+3. 调用 `AiUI::` 命名空间下的封装函数。
+
+反例：把释放 DLL、写注册表、拼 `IContextMenu` 的代码放在
+`AiZip/src/app/shell_menu.cpp` 里——那是把后端代码写到了应用层，换平台时
+整份作废，且应用被迫链接 `shell32` / `ole32`。正确做法是只留一份
+`ShellMenuHandler` 描述加一个纯菜单模型。
+
+平台特有的构建产物（如 Windows 的进程内 COM 组件）也由 AiUI 的 CMake
+函数生成（`aiui_add_shell_menu_dll`），应用只声明源文件与标识。
+
 
 ## 标题栏由通用控件拼装
 

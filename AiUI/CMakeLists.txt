@@ -60,6 +60,7 @@ if(WIN32)
     src/os/windows/icon_windows.cpp
     src/os/windows/title_bar_windows.cpp
     src/os/windows/platform_windows.cpp
+    src/os/windows/shell_menu_register.cpp
   )
 elseif(APPLE)
   message(FATAL_ERROR "AiUI 的 macOS 后端尚未实现")
@@ -95,6 +96,8 @@ target_link_libraries(AiUI PUBLIC gdiplus imm32 shell32 shlwapi ole32 oleaut32 u
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/AiUiLayout.cmake)
 # 平台入口：aiui_add_app_entry(<target>)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/AiUiEntry.cmake)
+# 右键菜单动态组件：aiui_add_shell_menu_dll(<target> ...)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/AiUiShellMenu.cmake)
 
 # 独立构建时顺带验证生成器可用，并编出单元测试
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)

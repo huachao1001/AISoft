@@ -29,6 +29,7 @@ add_executable(AiZip WIN32
   src/app/main.cpp
   src/app/app.cpp
   src/app/shell_menu.cpp
+  src/app/shell_menu_model.cpp
   src/app/single_instance.cpp
   src/archive/archive.cpp
   src/archive/sevenzip_loader.cpp
@@ -100,6 +101,15 @@ add_custom_command(TARGET AiZip POST_BUILD
           -Config "${CMAKE_BINARY_DIR}"
   COMMENT "同步 dist"
   VERBATIM
+)
+
+# 右键菜单的动态组件：静态动词做不出「压缩到 rnd.zip」，只能交给进程内组件。
+# 组件形态、COM 注册、资源内嵌全在 AiUI 里，应用只给一份纯菜单逻辑。
+aiui_add_shell_menu_dll(aicmd
+  APP AiZip
+  APP_NAME "AiZip.exe"
+  CLSID "{7B1F2C3A-5D4E-4F60-9A8B-1C2D3E4F5A6B}"
+  SOURCES src/app/shell_menu_model.cpp
 )
 
 # 内核功能回归工具（非发布产物）：命令行驱动压缩/解压，便于端到端校验

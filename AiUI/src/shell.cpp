@@ -17,6 +17,18 @@ bool areShellVerbsRegistered(const std::vector<ShellVerb>& verbs) {
   return platform()->areShellVerbsRegistered(verbs);
 }
 
+std::wstring registerShellMenuHandler(const ShellMenuHandler& handler) {
+  return platform()->registerShellMenuHandler(handler);
+}
+
+std::wstring unregisterShellMenuHandler(const ShellMenuHandler& handler) {
+  return platform()->unregisterShellMenuHandler(handler);
+}
+
+bool isShellMenuHandlerRegistered(const ShellMenuHandler& handler) {
+  return platform()->isShellMenuHandlerRegistered(handler);
+}
+
 // 嵌套类可以访问 TrayIcon 的私有成员，托盘事件就能直接回到应用回调
 class TrayIcon::Host final : public PlatformTrayHost {
  public:

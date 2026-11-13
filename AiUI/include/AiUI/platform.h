@@ -537,6 +537,20 @@ class Platform {
     return false;
   }
 
+  // 动态菜单组件：释放内嵌组件并注册。默认不支持。
+  virtual std::wstring registerShellMenuHandler(const ShellMenuHandler& handler) {
+    (void)handler;
+    return L"当前平台不支持";
+  }
+  virtual std::wstring unregisterShellMenuHandler(const ShellMenuHandler& handler) {
+    (void)handler;
+    return L"当前平台不支持";
+  }
+  virtual bool isShellMenuHandlerRegistered(const ShellMenuHandler& handler) {
+    (void)handler;
+    return false;
+  }
+
   // 创建托盘宿主；不支持托盘的平台返回 nullptr
   virtual std::unique_ptr<PlatformTray> createTrayIcon(PlatformTrayHost& host) {
     (void)host;

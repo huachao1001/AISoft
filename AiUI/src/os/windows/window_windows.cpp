@@ -1084,6 +1084,16 @@ class WindowsPlatform : public Platform {
     return os::windows::areShellVerbsRegisteredImpl(verbs);
   }
 
+  std::wstring registerShellMenuHandler(const ShellMenuHandler& handler) override {
+    return os::windows::registerShellMenuHandlerImpl(handler);
+  }
+  std::wstring unregisterShellMenuHandler(const ShellMenuHandler& handler) override {
+    return os::windows::unregisterShellMenuHandlerImpl(handler);
+  }
+  bool isShellMenuHandlerRegistered(const ShellMenuHandler& handler) override {
+    return os::windows::isShellMenuHandlerRegisteredImpl(handler);
+  }
+
   std::unique_ptr<PlatformTray> createTrayIcon(PlatformTrayHost& host) override {
     return os::windows::createTrayIconImpl(host);
   }
