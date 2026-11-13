@@ -29,11 +29,19 @@ foreach ($item in $artifacts) {
     continue
   }
   $target = Join-Path $dist $item.Name
-  $srcTime = (Get-Item $item.Source).LastWriteTimeUtc
-  # 目标不存在、或源比目标新才复制：避免每次都改时间戳，
-  # 也免得覆盖正在运行的副本时白等一次文件锁
-  if ((Test-Path $target) -and (Get-Item $target).LastWriteTimeUtc -ge $srcTime) {
-    continue
+  # 按内容判断是否需要复制：只比时间戳的话，一旦某次复制因文件被占用而跳过，
+  # 源文件不再变化就永远不会补上，dist 会一直停在旧版本。
+  if (Test-Path $target) {
+    $sameBytes = $false
+    try {
+      $srcHash = (Get-FileHash $item.Source -Algorithm SHA256).Hash
+      $dstHash = (Get-FileHash $target -Algorithm SHA256).Hash
+      $sameBytes = ($srcHash -eq $dstHash)
+    } catch {
+      # 哈希读不到（例如目标被占用）就当作需要复制，交给下面的 Copy-Item 处理
+      $sameBytes = $false
+    }
+    if ($sameBytes) { continue }
   }
   try {
     Copy-Item -Force $item.Source $target
