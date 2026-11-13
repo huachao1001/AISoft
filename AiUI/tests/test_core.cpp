@@ -932,8 +932,8 @@ AIUI_TEST(input_box_click_and_caret_are_inverse) {
       if (fill.rect.width() <= 2 && fill.rect.height() > 10) caretRight = fill.rect.right;
     }
     // 点在第 i 个字符右半侧，光标落在该字符右缘。
-    // 光标条宽 1px，所以 rect.right = 插入点坐标 + 1。
-    AIUI_CHECK(caretRight == textLeft + (i + 1) * charWidth + 1);
+    // 光标条有宽度，所以 rect.right = 插入点坐标 + 光标宽（96 DPI 下是 2）
+    AIUI_CHECK(caretRight == textLeft + (i + 1) * charWidth + 2);
   }
 
   // 点在文本之后（右侧留白里）：光标必须吸附到末位，而不是越界
@@ -946,12 +946,12 @@ AIUI_TEST(input_box_click_and_caret_are_inverse) {
   for (const FillCall& fill : env.fake.platform().lastWindow()->lastFills()) {
     if (fill.rect.width() <= 2 && fill.rect.height() > 10) endCaret = fill.rect.right;
   }
-  AIUI_CHECK(endCaret == textLeft + n * charWidth + 1);
+  AIUI_CHECK(endCaret == textLeft + n * charWidth + 2);
 }
 
-// 光标本体必须恒为 1 物理像素：GDI+ 的字符单元首尾相接，字间空隙常常只有
-// 1~2 像素，2px 的竖线会把空隙填满、和相邻笔画粘成一根粗条，看着就像压字。
-AIUI_TEST(input_box_caret_bar_is_hairline) {
+// 光标的宽度由 caretBarWidth() 统一决定，随 DPI 增长但不至于宽到压字。
+// 1 物理像素在 150% 屏上细得看不出是光标，这里改成按 1.5 设计像素取整。
+AIUI_TEST(input_box_caret_bar_tracks_dpi) {
   TestEnv env;
   auto root = std::make_unique<LinearLayout>(Orientation::kVertical);
   auto* box = new InputBox();
@@ -962,12 +962,16 @@ AIUI_TEST(input_box_caret_bar_is_hairline) {
   box->setText(L"abcdef");
   root->root()->onExpose(Rect{0, 0, 400, 300});
 
-  // 文本行高 > 10 而宽度为 1 的填充只有光标杆；背景/边框/选区都更宽
+  // 文本行高 > 10、宽度窄于 3 的填充只有光标杆；背景/边框/选区都更宽
   int caretWidth = -1;
   for (const FillCall& fill : env.fake.platform().lastWindow()->lastFills()) {
-    if (fill.rect.width() == 1 && fill.rect.height() > 10) caretWidth = fill.rect.width();
+    if (fill.rect.width() <= 2 && fill.rect.height() > 10) caretWidth = fill.rect.width();
   }
-  AIUI_CHECK(caretWidth == 1);}
+  // mock 平台 DPI 为 96，1.5 设计像素取整后是 2
+  AIUI_CHECK(caretWidth == 2);
+  // 再宽就会把字间空隙填满，与相邻笔画粘成一根粗条
+  AIUI_CHECK(caretWidth < 3);
+}
 
 // ───────────────────────── 失焦与背景 ─────────────────────────
 
@@ -1647,4 +1651,24 @@ AIUI_TEST(password_box_masks_text_and_swaps_icon) {
   box->setRevealed(true);
   AIUI_CHECK(!box->spec().password);
   AIUI_CHECK(box->spec().tailIcon == IconId::kEye);
+}
+
+// 尾部图标是按钮，悬停要给手型；其余区域仍是文本插入
+AIUI_TEST(password_box_tail_icon_uses_hand_cursor) {
+  TestEnv env;
+  auto root = std::make_unique<LinearLayout>(Orientation::kVertical);
+  auto* box = new PasswordBox();
+  root->addView(box, LayoutParams{}.withSize(240, 34));
+  AIUI_CHECK(root->create(nullptr, Rect{0, 0, 400, 300}));
+  FakeWindow* window = env.fake.platform().lastWindow();
+
+  const int iconX = 240 - (11 + 2) - 7;
+  const int centerY = 17;
+
+  box->dispatchMouseMove(mouseAt(iconX, centerY));
+  AIUI_CHECK(window->cursor() == CursorShape::kHand);
+
+  // 移到文本区必须退回插入光标，不能带着手型走
+  box->dispatchMouseMove(mouseAt(40, centerY));
+  AIUI_CHECK(window->cursor() == CursorShape::kIBeam);
 }

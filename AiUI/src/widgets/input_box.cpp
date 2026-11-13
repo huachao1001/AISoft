@@ -75,12 +75,11 @@ int InputBox::textRight() const {
 }
 
 // 插入点竖线宽度（物理像素）。
-// 固定 1px，不随 DPI 放大：GDI+ 的字符单元首尾相接，相邻字形之间的空隙
-// 常常只有 1~2 物理像素；2px 的竖线会把空隙填满、与相邻笔画粘成一根粗黑条，
-// 看上去就像压在字上。系统自身的光标宽度同样是固定 1px。
+// 1 物理像素在 150% 屏上细得像根发丝，看不出是光标；取 1.5 设计像素再按 DPI
+// 取整：100% 下 2px、150% 下 2px、200% 下 3px，随缩放增减但不会失形。
 int InputBox::caretBarWidth() const {
-  (void)spec_.caretWidth;
-  return 1;
+  const int width = (1.5 * dpi() / 96.0 + 0.5);
+  return width < 1 ? 1 : width;
 }
 
 Rect InputBox::textRect() const {
@@ -370,12 +369,12 @@ void InputBox::onPaint(Painter& painter, const Rect& rect) {
     // 用 drawTextRun 绘制：它与 caretOffsets / advanceText 共用同一套排版，
     // 排版原点就是 textArea.left，字符单元边界就是插入点位置。
     // 普通 drawText 会额外补 em/6 留白，光标与字形就会差几个像素。
-    // 矩形宽度取「推进量 + 1」：左对齐时各字形位置只由累计推进决定，右边
-    // 多给 1px 不会移动任何字形，却能保证落在整数边界上的末字不被排掉。
+    // 矩形宽度取「推进量 + 光标宽度」：左对齐时各字形位置只由累计推进决定，
+    // 右边多给一点不会移动任何字形，却能让末尾光标完整落在绘制范围内；
     // 溢出部分由上面的 clipRect 负责拦。
     const std::wstring shown = displayText();
     const int textWidth = platform()->advanceText(shown, fonts.ui);
-    const Rect drawRect{textArea.left, textArea.top, textArea.left + textWidth + 1,
+    const Rect drawRect{textArea.left, textArea.top, textArea.left + textWidth + caretBarWidth(),
                         textArea.bottom};
     painter.drawTextRun(drawRect, shown, textColor, fonts.ui);
   }
@@ -393,7 +392,8 @@ void InputBox::onPaint(Painter& painter, const Rect& rect) {
   // 尾部图标画在裁剪区之外：它不在文本流里，不该被文字裁剪影响
   if (spec_.hasTailIcon) {
     const Rect iconRect = tailIconRect();
-    const Color color = spec_.tailIconColor != kNoColor ? spec_.tailIconColor : t.textMuted;
+    // 图标字形线条偏细，用 textMuted 在浅底上会显得发虚，加深到正文色族
+    const Color color = spec_.tailIconColor != kNoColor ? spec_.tailIconColor : t.textHead;
     painter.drawIcon(spec_.tailIcon, iconRect, color);
   }
 }
@@ -438,7 +438,11 @@ void InputBox::onMouseMove(const MouseEvent& e) {
     moveCaret(hitTest(e.position.x), true);
     return;
   }
-  // 输入框内一律用文本光标
+  // 尾部图标是按钮：悬停在它上面给手型，其余区域是文本插入
+  if (spec_.hasTailIcon && tailIconRect().contains(e.position)) {
+    setCursor(CursorShape::kHand);
+    return;
+  }
   setCursor(CursorShape::kIBeam);
 }
 

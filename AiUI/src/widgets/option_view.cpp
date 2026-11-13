@@ -34,9 +34,12 @@ void OptionView::onPaint(Painter& painter, const Rect& rect) {
   // 强调色只用于选中态；未选中的圈/框用主题的统一描边，
   // 这样它和输入框、下拉框是同一支灰，不会一个蓝一个灰
   const Color accent = spec_.accent != kNoColor ? spec_.accent : t.inputFocus;
+  // 未选中的描边要比输入框的更重一档：输入框是整条长矩形，浅浅一条也看得出来，
+  // 而单选框只有 16pt 的小圆圈，用同一支灰在浅底上会糊成一团虚影。
+  const Color idleBorder = blendColor(t.controlBorder, t.text, 0.38);
   const Color border = spec_.boxBorder != kNoColor  ? spec_.boxBorder
                        : !isEnabled()               ? edgeOn(boxBg, 8)
-                                                    : t.controlBorder;
+                                                    : idleBorder;
   const Color checkInk = spec_.checkInk != kNoColor ? spec_.checkInk : t.pane;
 
   const Rect box = boxRect(rect);
@@ -45,6 +48,8 @@ void OptionView::onPaint(Painter& painter, const Rect& rect) {
   if (isRadio()) {
     // 外圈只描边，不铺满：选中态是"实心点 + 空心环"，
     // 填满整个圆会糊成一坨，分不清选中边界
+    // 小圆圈的 1px 描边在 150% 屏上要跟着放大一档，否则曲线段的抗锯齿会把它
+    // 摊成半透明，看着像蒙了一层雾
     const int ring = (std::max)(1, (1 * d + 48) / 96);
     const int outerRadius = box.height() / 2;
     if (spec_.checked) {

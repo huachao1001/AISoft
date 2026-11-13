@@ -22,8 +22,9 @@ struct InputSpec {
   // 否则文字会压到图标上，点击热区也会与正文重叠。
   bool hasTailIcon = false;
   IconId tailIcon = IconId::kNone;
-  int tailIconSize = 16;
-  int tailIconGap = 6;
+  // 16 在 30 高的框里偏大，且字形线条细，显得突兀；14 与前置图标同档
+  int tailIconSize = 14;
+  int tailIconGap = 8;
   int padX = 11;
   int radius = 7;
   // 插入点竖线宽度（96 DPI 设计值）。实际绘制固定 1px，见 caretBarWidth()

@@ -29,14 +29,14 @@
   <!-- 级别 / 分卷 / 密码：挤在一行，避免三行把对话框撑高 -->
   <LinearLayout orientation="horizontal" height="30" alignY="center">
     <TextView text="压缩级别" width="84" height="30" align="right" textColor="textMuted"/>
-    <ComboBox id="level" height="30" width="100" marginX="8"/>
+    <ComboBox id="level" height="30" width="112" marginX="8"/>
 
     <TextView text="分卷大小" width="76" height="30" align="right" textColor="textMuted"/>
-    <InputBox id="volume" height="30" width="80" marginX="8" cue="不分卷"/>
-    <TextView text="GB" width="wrap" height="30" align="left" textColor="textMuted" marginX="5"/>
+    <InputBox id="volume" height="30" width="76" marginX="8" cue="不分卷"/>
+    <TextView text="GB" width="wrap" height="30" align="left" textColor="textMuted" marginX="6"/>
 
-    <TextView text="密码" width="76" height="30" align="right" textColor="textMuted"/>
-    <PasswordBox id="password" height="30" width="140" marginX="8"
+    <TextView text="密码" width="60" height="30" align="right" textColor="textMuted"/>
+    <PasswordBox id="password" height="30" width="128" marginX="8"
                  cue="不加密"/>
   </LinearLayout>
 
