@@ -30,6 +30,19 @@ void AttachHostHooks() {
       });
     }
   }
+
+  // 同一个包被再次打开：另一个进程把路径递过来，这里切到该包并前置窗口
+  AiUI::platform()->setLaunchPayloadHandler([](const std::wstring& payload) {
+    if (payload.empty()) return;
+    if (arc::Archive::IsArchiveFile(payload) && util::PathExists(payload)) {
+      AppOpenArchive(payload);
+    } else if (util::IsDirectory(payload)) {
+      AppNavigateTo(payload);
+    }
+    if (AiUI::Window* win = mainActivity() ? mainActivity()->window() : nullptr) {
+      AiUI::platform()->bringToFront(win->handle());
+    }
+  });
 }
 
 }  // namespace ui

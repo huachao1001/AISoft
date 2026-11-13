@@ -194,20 +194,30 @@ void ViewGroup::onDrawChildren(Painter& painter, const Rect& dirty) {
 // ───────────────────────── 命中 ─────────────────────────
 
 HitTarget ViewGroup::onHitTest(const Point& windowPoint) {
-  // 先看有没有真正需要鼠标的子视图（含子孙）：拖窗容器里得把它们
-  // 留在客户区，否则落在按钮上的点击会被当成拖窗口。
-  for (auto it = children_.rbegin(); it != children_.rend(); ++it) {
-    View* child = *it;
-    if (child->claimsPointerAt(windowPoint)) return HitTarget::kClient;
-  }
-  // 再看子视图自己声明的非客户区（如标题栏的最大化按钮）
+  // 先取子视图自己声明的非客户区。
+  // 顺序不能反过来：Button 构造时 claimsPointer 为真，若先跑下面的
+  // 「需要鼠标就留成客户区」，最大化按钮会一律返回 kClient，
+  // 系统收不到 HTMAXBUTTON，悬停时的贴靠浮层就永远不弹。
+  HitTarget declared = HitTarget::kClient;
   for (auto it = children_.rbegin(); it != children_.rend(); ++it) {
     View* child = *it;
     if (!child->isVisible()) continue;
     if (!child->absoluteBounds().contains(windowPoint)) continue;
     const HitTarget target = child->onHitTest(windowPoint);
-    if (target != HitTarget::kClient) return target;
+    if (target != HitTarget::kClient) {
+      declared = target;
+      break;
+    }
   }
+  if (declared == HitTarget::kMaxButton) return declared;
+
+  // 其余需要鼠标的子视图（含子孙）留在客户区：
+  // 拖窗容器里不这么做，落在按钮上的点击会被当成拖窗口。
+  for (auto it = children_.rbegin(); it != children_.rend(); ++it) {
+    View* child = *it;
+    if (child->claimsPointerAt(windowPoint)) return HitTarget::kClient;
+  }
+  if (declared != HitTarget::kClient) return declared;
   // 没人认领才回落到容器自身：开了 dragWindow 就是可拖动区域
   return View::onHitTest(windowPoint);
 }

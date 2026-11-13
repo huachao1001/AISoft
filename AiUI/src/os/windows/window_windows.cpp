@@ -423,9 +423,19 @@ class WindowsWindow : public PlatformWindow {
             return ::DefWindowProcW(hwnd_, msg, wParam, lParam);
           }
 
-          // 顶部那一条已是客户区，缩放带落在内侧；宽度比其它三边大才好抓
+          // 先问视图树：标题栏按钮（尤其是最大化）在顶部区域内，
+          // 必须优先于缩放带判定，否则贴靠浮层永远弹不出来。
+          const HitTarget target = host_.onHitTest(Point{pt.x, pt.y});
+          if (target == HitTarget::kMaxButton) {
+            updateMaxButtonHover(Point{pt.x, pt.y});
+            return HTMAXBUTTON;
+          }
+
+          // 顶部那一条已是客户区，缩放带落在内侧；宽度比其它三边大才好抓。
+          // 视图树给出的 kClient/kCaption 才轮到缩放带，避免吃掉按钮。
           const int tw = topResizeWidth();
-          if (tw > 0 && pt.y >= 0 && pt.y < tw) {
+          if (tw > 0 && pt.y >= 0 && pt.y < tw &&
+              (target == HitTarget::kClient || target == HitTarget::kCaption)) {
             clearMaxButtonHover();
             const int bw = ::MulDiv(
                 style_.borderResizeWidth > 0 ? style_.borderResizeWidth : 4, dpi_, 96);
@@ -434,11 +444,6 @@ class WindowsWindow : public PlatformWindow {
             return HTTOP;
           }
 
-          const HitTarget target = host_.onHitTest(Point{pt.x, pt.y});
-          if (target == HitTarget::kMaxButton) {
-            updateMaxButtonHover(Point{pt.x, pt.y});
-            return HTMAXBUTTON;
-          }
           clearMaxButtonHover();
           return hitCode(target);
         }

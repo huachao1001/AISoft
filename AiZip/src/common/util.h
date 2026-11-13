@@ -26,6 +26,12 @@ std::wstring AbsolutePath(const std::wstring& path);
 // 同名文件生成 "name (2).ext"，用于“自动重命名”
 std::wstring MakeUniquePath(const std::wstring& path);
 
+// 小写化（ASCII + 常见全角不动），用于把 Windows 路径比较成同一份
+std::wstring ToLower(const std::wstring& text);
+
+// FNV-1a 32 位：稳定、跨平台一致，用来把路径压成实例标识
+uint32_t StableHash(const std::wstring& text);
+
 // 递归收集文件，relOut 为相对 baseDir 的路径
 struct SourceItem {
   std::wstring fullPath;

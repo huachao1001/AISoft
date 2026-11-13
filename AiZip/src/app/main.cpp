@@ -14,6 +14,24 @@
 #include "AiUI/platform.h"
 #include "AiUI/theme_registry.h"
 
+namespace {
+
+// 浏览窗口的实例标识：以压缩包的规范化路径为准。
+//   - 同一个包 → 同一个 id → 已有窗口被前置，不再开第二个
+//   - 不同包   → 不同 id → 各开一个窗口
+// 路径不区分大小写（Windows 语义），并先转成绝对路径，
+// 免得 `abc.zip` 与 `.\abc.zip` 被当成两个包。
+std::wstring BrowseInstanceId(const std::wstring& path) {
+  if (path.empty()) return L"AIZip.Browser.home";
+  const std::wstring full = util::AbsolutePath(path);
+  const uint32_t hash = util::StableHash(util::ToLower(full));
+  wchar_t suffix[16] = {};
+  swprintf_s(suffix, L"%08X", hash);
+  return std::wstring(L"AIZip.Browser.") + suffix;
+}
+
+}  // namespace
+
 int AiUI::runApp() {
   AiUI::initHostProcess();
   AiUI::startupPlatform();
@@ -89,9 +107,23 @@ int AiUI::runApp() {
     AiUI::fonts.destroy();
     return 0;
   }
-  // 浏览模式：每个进程独立建窗口，不转发到已有窗口。
-  // 用户打开两个压缩包时就是要两个窗口同时对比，把第二个塞进第一个
-  // 反而会丢掉前一个的浏览位置。
+  // 浏览模式：按「打开的是哪个压缩包」区分实例。
+  // 同一个包再次打开就复用已有窗口（用户是在找它，不是要第二份）；
+  // 不同的包各开一个窗口（用户要并排比较两个包的内容）。
+  const std::wstring browsePath = req.paths.empty() ? L"" : req.paths[0];
+  const std::wstring instanceId = BrowseInstanceId(browsePath);
+  if (!AiUI::platform()->claimSingleInstance(instanceId)) {
+    // 先启动的进程可能还没建完窗口，短暂等一下再转发
+    bool forwarded = false;
+    for (int i = 0; i < 20 && !forwarded; ++i) {
+      forwarded = AiUI::platform()->forwardToRunningInstance(instanceId, browsePath);
+      if (!forwarded) AiUI::platform()->sleepMillis(50);
+    }
+    AiUI::fonts.destroy();
+    return 0;
+  }
+  // 已接管实例：窗口收尾时释放锁，让同一个包下次还能重新打开
+  g_app.browseInstanceId = instanceId;
 
   // 初始目录：上次浏览的目录，其次用户目录，最后退回根目录
   if (!g_app.settings.lastDir.empty() && util::IsDirectory(g_app.settings.lastDir)) {

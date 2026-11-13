@@ -113,25 +113,16 @@ AiUI::ShellMenuResult aiuiBuildShellMenu(const std::vector<AiUI::ShellSelectionI
   AiUI::ShellMenuResult result;
   if (selection.empty()) return result;
 
-  bool anyArchive = false;
   bool allArchives = true;
   for (const auto& item : selection) {
     // 目录永远不算压缩包：打包一个目录才是常见诉求
-    const bool isArchive = !item.isDirectory && isArchiveName(item.path);
-    if (isArchive) anyArchive = true;
-    else allArchives = false;
+    if (item.isDirectory || !isArchiveName(item.path)) allArchives = false;
   }
 
-  // 选中了压缩包就只给解压入口：再压一层不是用户想要的
-  if (!anyArchive) {
-    // 输出名加引号，长名字或含空格时一眼能看清边界
-    result.items.push_back(
-        {L"压缩到 \"" + compressTargetName(selection) + L".zip\"", L"-compress-zip", false});
-    result.items.push_back({L"添加到压缩文件...", L"-compress", true});
-    return result;
-  }
-
-  // 解压只对单个压缩包有明确语义：多选时"解压到哪里"指向不明
+  // 解压只对单个压缩包有明确语义：多选时"解压到哪里"指向不明。
+  // 其余情况（含"压缩包 + 普通文件"混选）一律给压缩入口——
+  // 之前的写法是"只要选中里有压缩包就只给解压"，混选时解压项又不成立，
+  // 结果右键菜单整个是空的。
   if (allArchives && selection.size() == 1) {
     result.items.push_back({L"打开压缩文件", L"", false});
     // 「解压到...」是要用户自己选位置的通用入口，放在带具体目录名的那项之前
@@ -142,6 +133,12 @@ AiUI::ShellMenuResult aiuiBuildShellMenu(const std::vector<AiUI::ShellSelectionI
                             L"-extract-to-folder", false});
     // 直接摊到当前目录，不建子目录
     result.items.push_back({L"解压到当前目录", L"-extract-here", true});
+    return result;
   }
+
+  // 输出名加引号，长名字或含空格时一眼能看清边界
+  result.items.push_back(
+      {L"压缩到 \"" + compressTargetName(selection) + L".zip\"", L"-compress-zip", false});
+  result.items.push_back({L"添加到压缩文件...", L"-compress", true});
   return result;
 }

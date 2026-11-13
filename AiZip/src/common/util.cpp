@@ -158,6 +158,23 @@ std::wstring MakeUniquePath(const std::wstring& path) {
   return path;
 }
 
+std::wstring ToLower(const std::wstring& text) {
+  std::wstring out = text;
+  for (auto& c : out) {
+    if (c >= L'A' && c <= L'Z') c = static_cast<wchar_t>(c - L'A' + L'a');
+  }
+  return out;
+}
+
+uint32_t StableHash(const std::wstring& text) {
+  uint32_t hash = 2166136261u;
+  for (const wchar_t c : text) {
+    hash ^= static_cast<uint32_t>(c & 0xFFFF);
+    hash *= 16777619u;
+  }
+  return hash;
+}
+
 std::wstring FormatSize(uint64_t bytes) {
   wchar_t buf[64];
   if (bytes < 1024) {

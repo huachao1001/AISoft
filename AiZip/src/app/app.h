@@ -32,6 +32,10 @@ struct App {
   AiUI::NativeHandle mainWnd = nullptr;
   util::Settings settings;
 
+  // 本窗口接管的单实例 id（按压缩包路径推导）。
+  // 窗口销毁时据此释放，否则同一个包关掉后再也打不开。
+  std::wstring browseInstanceId;
+
   // 视图状态
   bool archiveMode = false;
   std::wstring curDir;       // 文件系统模式当前目录
