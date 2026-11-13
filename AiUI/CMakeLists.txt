@@ -52,8 +52,10 @@ set(AIUI_SOURCES
 )
 
 # ── 平台后端 ──
-# src/os/<platform> 是唯一允许接触系统 API 与系统绘图库的地方。
-# 目前只有 Windows；macOS / Linux 各加一个分支即可，通用代码不用改。
+# src/os/ 是唯一允许接触系统 API 与系统绘图库的地方。
+#   src/os/os.h               系统能力的纯接口（Backend 抽象类）
+#   src/os/<platform>/        每个平台实现一份，再接到 Platform 门面上
+# 目前只有 Windows；macOS / Linux 各加一个分支，通用代码不用改。
 if(WIN32)
   list(APPEND AIUI_SOURCES
     src/os/windows/window_windows.cpp
@@ -65,9 +67,9 @@ if(WIN32)
     src/os/windows/install_windows.cpp
   )
 elseif(APPLE)
-  message(FATAL_ERROR "AiUI 的 macOS 后端尚未实现")
+  message(FATAL_ERROR "AiUI 的 macOS 后端尚未实现（src/os/macos/macos_backend.h）")
 elseif(UNIX)
-  message(FATAL_ERROR "AiUI 的 Linux 后端尚未实现")
+  message(FATAL_ERROR "AiUI 的 Linux 后端尚未实现（src/os/ubuntu/linux_backend.h）")
 else()
   message(FATAL_ERROR "AiUI 没有适配当前操作系统")
 endif()

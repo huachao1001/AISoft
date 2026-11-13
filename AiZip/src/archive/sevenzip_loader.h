@@ -60,6 +60,7 @@ constexpr GUID kClsidMub = MakeHandlerGuid(0xE2);
 constexpr GUID kClsidHfs = MakeHandlerGuid(0xE3);
 constexpr GUID kClsidDmg = MakeHandlerGuid(0xE4);
 constexpr GUID kClsidCom = MakeHandlerGuid(0xE5);
+constexpr GUID kClsidMbr = MakeHandlerGuid(0xDB);
 constexpr GUID kClsidWim = MakeHandlerGuid(0xE6);
 constexpr GUID kClsidIso = MakeHandlerGuid(0xE7);
 constexpr GUID kClsidChm = MakeHandlerGuid(0xE9);
@@ -75,7 +76,7 @@ constexpr GUID kClsidGZip = MakeHandlerGuid(0xEF);
 constexpr GUID kAllHandlers[] = {
     kClsid7z,    kClsidZip,    kClsidRar,  kClsidRar5, kClsidTar,   kClsidGZip,
     kClsidBZip2, kClsidXz,     kClsidZstd, kClsidLzma, kClsidPpmd,  kClsidCab,
-    kClsidIso,   kClsidUdf,    kClsidWim,  kClsidLzh,  kClsidArj,   kClsidZ,
+    kClsidIso,   kClsidUdf,    kClsidWim,  kClsidMbr,  kClsidLzh,  kClsidArj,   kClsidZ,
     kClsidNsis,  kClsidChm,    kClsidHxs,  kClsidCpio, kClsidRpm,   kClsidAr,
     kClsidXar,   kClsidCom,    kClsidDmg,  kClsidHfs,  kClsidApfs,  kClsidSquashfs,
     kClsidCramfs, kClsidExt,   kClsidNtfs, kClsidFat,  kClsidGpt,   kClsidApm,

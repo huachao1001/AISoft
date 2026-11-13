@@ -16,34 +16,46 @@ Windows 类型，也不允许 `#include <windows.h>`。
 历史上 `widgets/dialog.h` 曾以"宿主接入层"为名例外暴露 `HWND`，已删除。不要再
 以任何理由开口子——一个例外就会让 macOS 移植多一道全局改动。
 
-## 分层：`src/os/<platform>/` 是唯一碰操作系统的目录
+## 分层：`src/os/` 是唯一碰操作系统的目录
 
 ```
 include/AiUI/          公开接口，平台无关
 src/                   通用实现（视图树、布局、控件），不得出现系统 API
-src/os/windows/        Windows 后端：窗口、GDI+ 绘制、图标、标题栏外观、外壳集成
-src/os/macos/          预留（尚未实现）
-src/os/linux/          预留（尚未实现）
+src/os/os.h            系统能力的纯接口：os::Backend 抽象类
+src/os/windows/        Windows 实现：WindowsBackend + 窗口、GDI+ 绘制、图标、标题栏
+src/os/macos/          macOS 实现（占位，尚未实现）
+src/os/ubuntu/         Linux 实现（占位，尚未实现）
 ```
 
-- 换平台 = 新写一份 `src/os/<platform>/`，实现 `PaintBackend`、`Platform`、
-  `PlatformWindow`、`titleBarDefaults()`，外加窗口消息到中性事件的翻译。
-  `CMakeLists.txt` 里按 `WIN32` / `APPLE` / `UNIX` 选目录。
+- **系统能力先过 `src/os/os.h`**：文件、进程、对话框、剪贴板、外壳集成、
+  安装、托盘、线程投递、单实例全部是 `os::Backend` 的纯虚函数，只用
+  `AiUI::` 中性类型。`os.h` 位于 `src/os/` 但要求与公开头相同——出现
+  `HWND` / `HKEY` / COM 就等于没抽象。
+- 换平台 = 在 `src/os/<platform>/` 实现一份 `Backend`，再补
+  `PaintBackend`、`Platform`、`PlatformWindow`、`titleBarDefaults()` 和窗口
+  消息到中性事件的翻译。`CMakeLists.txt` 里按 `WIN32` / `APPLE` / `UNIX`
+  选目录。
 - **`src/` 顶层与 `src/widgets/` 不允许 `#include <windows.h>`，也不允许调用
   任何系统 API**（剪贴板、路径比较、字体族、DPI 都要走 `Platform` 接口）。
 - `#ifdef _WIN32` 不应出现在通用实现里。
 
 ### 接口在外、实现在内
 
-系统相关能力一律**先在 `include/AiUI/` 定义平台无关接口，再在
-`src/os/<platform>/` 实现**，两者同名同义。新平台只需补实现，公开接口与
-调用方一行不改。
+分两层，缺一不可：
+
+1. **`src/os/os.h`（内部契约）**：`os::Backend` 声明系统能力，各平台在
+   `src/os/<platform>/<platform>_backend.h` 继承实现。`backend()` 返回进程内
+   唯一的实例。
+2. **`include/AiUI/platform.h`（公开门面）**：`Platform` 是应用与通用代码
+   看到的中性接口，其实现（如 `WindowsPlatform`）只做转发——
+   `os::backend().xxx(...)`。应用永远不需要知道 `os::Backend` 存在。
 
 已有对应关系：
 
 | 公开接口 | Windows 实现 |
 |---|---|
-| `Platform`（`platform.h`） | `window_windows.cpp` 转发到 `platform_windows.cpp` |
+| `Platform`（`platform.h`） | `window_windows.cpp`（`WindowsPlatform`）转发给 `os::backend()` |
+| `os::Backend`（`src/os/os.h`） | `windows_backend.h` 声明，实现在 `platform_windows.cpp` / `install_windows.cpp` / `shell_menu_register.cpp` |
 | `ShellVerb` / `registerShellVerbs` | `platform_windows.cpp` |
 | `ShellMenuHandler` / `aiuiBuildShellMenu` | `shell_menu_windows.cpp`、`shell_menu_register.cpp` |
 | `InstallScope` / `installFiles` / `writeInstallMarker` | `install_windows.cpp` |

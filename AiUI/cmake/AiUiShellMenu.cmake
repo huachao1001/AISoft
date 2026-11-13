@@ -1,7 +1,7 @@
 # aiui_add_shell_menu_dll：为应用构建"文件管理器右键菜单"组件
 #
 # 用法：
-#   aiui_add_shell_menu_dll(aicmd
+#   aiui_add_shell_menu_dll(aizip
 #     APP AiZip
 #     APP_NAME "AiZip.exe"       # 组件启动的宿主可执行文件名
 #     CLSID "{7B1F2C3A-5D4E-4F60-9A8B-1C2D3E4F5A6B}"

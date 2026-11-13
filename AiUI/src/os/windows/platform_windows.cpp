@@ -3,11 +3,13 @@
 // 这些能力与窗口绘制无关，单独成文件；window_windows.cpp 里的 WindowsPlatform
 // 只做转发，保持该文件专注窗口与消息循环。
 #include "backend.h"
+#include "windows_backend.h"
 
 #include <commctrl.h>
 #include <commdlg.h>
 #include <shellapi.h>
 #include <shlobj.h>
+#include <shlwapi.h>
 #include <shobjidl.h>
 
 #include <atomic>
@@ -159,7 +161,7 @@ HWND ensureDispatchWindow() {
   return hwnd;
 }
 
-void postToUiThreadImpl(std::function<void()> fn) {
+void postToUiThreadNow(std::function<void()> fn) {
   if (!fn) return;
   // 调用者可能在工作线程：目标窗口以主窗口所在线程为准
   HWND target = nullptr;
@@ -184,7 +186,7 @@ void postToUiThreadImpl(std::function<void()> fn) {
   ::PostMessageW(target, kMsgRunCall, 0, 0);
 }
 
-void invokeOnUiThreadImpl(std::function<void()> fn) {
+void invokeOnUiThreadNow(std::function<void()> fn) {
   if (!fn) return;
 
   HWND target = nullptr;
@@ -278,7 +280,7 @@ class WinFileStream final : public FileStream {
   HANDLE handle_ = INVALID_HANDLE_VALUE;
 };
 
-std::unique_ptr<FileStream> openFileStreamImpl(const std::wstring& path, bool openWrite) {
+std::unique_ptr<FileStream> WindowsBackend::openFileStream(const std::wstring& path, bool openWrite) {
   const DWORD access = openWrite ? GENERIC_WRITE : GENERIC_READ;
   const DWORD share = openWrite ? 0 : (FILE_SHARE_READ | FILE_SHARE_WRITE);
   const DWORD disposition = openWrite ? CREATE_ALWAYS : OPEN_EXISTING;
@@ -288,11 +290,11 @@ std::unique_ptr<FileStream> openFileStreamImpl(const std::wstring& path, bool op
   return std::make_unique<WinFileStream>(handle);
 }
 
-bool moveFileImpl(const std::wstring& from, const std::wstring& to) {
+bool WindowsBackend::moveFile(const std::wstring& from, const std::wstring& to) {
   return ::MoveFileW(from.c_str(), to.c_str()) != FALSE;
 }
 
-std::wstring absolutePathImpl(const std::wstring& path) {
+std::wstring WindowsBackend::absolutePath(const std::wstring& path) {
   wchar_t buffer[MAX_PATH * 2] = {};
   const DWORD n = ::GetFullPathNameW(path.c_str(), static_cast<DWORD>(std::size(buffer)), buffer,
                                      nullptr);
@@ -300,13 +302,13 @@ std::wstring absolutePathImpl(const std::wstring& path) {
   return std::wstring(buffer, n);
 }
 
-std::wstring executablePathImpl() {
+std::wstring WindowsBackend::executablePath() {
   wchar_t buffer[MAX_PATH * 2] = {};
   const DWORD n = ::GetModuleFileNameW(nullptr, buffer, static_cast<DWORD>(std::size(buffer)));
   return std::wstring(buffer, n);
 }
 
-std::vector<std::wstring> commandLineArgsImpl() {
+std::vector<std::wstring> WindowsBackend::commandLineArgs() {
   std::vector<std::wstring> out;
   int argc = 0;
   LPWSTR* argv = ::CommandLineToArgvW(::GetCommandLineW(), &argc);
@@ -317,16 +319,16 @@ std::vector<std::wstring> commandLineArgsImpl() {
   return out;
 }
 
-std::wstring tempDirImpl() {
+std::wstring WindowsBackend::tempDir() {
   wchar_t buffer[MAX_PATH + 1] = {};
   const DWORD n = ::GetTempPathW(static_cast<DWORD>(std::size(buffer)), buffer);
   if (n == 0 || n > std::size(buffer)) return {};
   return std::wstring(buffer, n);
 }
 
-uint32_t processIdImpl() { return ::GetCurrentProcessId(); }
+uint32_t WindowsBackend::processId() { return ::GetCurrentProcessId(); }
 
-std::wstring appDataDirImpl(const std::wstring& appName) {
+std::wstring WindowsBackend::appDataDir(const std::wstring& appName) {
   wchar_t buffer[MAX_PATH] = {};
   if (::SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, buffer) != S_OK) return {};
   std::wstring dir = std::wstring(buffer) + L"\\" + appName;
@@ -334,7 +336,7 @@ std::wstring appDataDirImpl(const std::wstring& appName) {
   return dir;
 }
 
-std::vector<DirEntry> listDirectoryImpl(const std::wstring& dir, bool skipHidden) {
+std::vector<DirEntry> WindowsBackend::listDirectory(const std::wstring& dir, bool skipHidden) {
   std::vector<DirEntry> out;
   const std::wstring pattern = trimTrailingSeparators(dir) + L"\\*";
   WIN32_FIND_DATAW find{};
@@ -361,35 +363,35 @@ std::vector<DirEntry> listDirectoryImpl(const std::wstring& dir, bool skipHidden
   return out;
 }
 
-bool pathExistsImpl(const std::wstring& path) {
+bool WindowsBackend::pathExists(const std::wstring& path) {
   return ::GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES;
 }
 
-bool isDirectoryImpl(const std::wstring& path) {
+bool WindowsBackend::isDirectory(const std::wstring& path) {
   const DWORD attrs = ::GetFileAttributesW(path.c_str());
   return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
 }
 
-bool createDirectoryImpl(const std::wstring& path) {
+bool WindowsBackend::createDirectory(const std::wstring& path) {
   if (path.empty()) return false;
   if (::CreateDirectoryW(path.c_str(), nullptr)) return true;
   return ::GetLastError() == ERROR_ALREADY_EXISTS;
 }
 
-uint64_t fileSizeImpl(const std::wstring& path) {
+uint64_t WindowsBackend::fileSize(const std::wstring& path) {
   WIN32_FILE_ATTRIBUTE_DATA data{};
   if (!::GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &data)) return 0;
   if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) return 0;
   return (static_cast<uint64_t>(data.nFileSizeHigh) << 32) | data.nFileSizeLow;
 }
 
-int64_t modifiedTimeImpl(const std::wstring& path) {
+int64_t WindowsBackend::modifiedTime(const std::wstring& path) {
   WIN32_FILE_ATTRIBUTE_DATA data{};
   if (!::GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &data)) return 0;
   return fileTimeToUnixMillis(data.ftLastWriteTime);
 }
 
-bool setModifiedTimeImpl(const std::wstring& path, int64_t millis) {
+bool WindowsBackend::setModifiedTime(const std::wstring& path, int64_t millis) {
   if (millis <= 0) return false;
   HANDLE handle = ::CreateFileW(path.c_str(), FILE_WRITE_ATTRIBUTES,
                                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
@@ -401,7 +403,7 @@ bool setModifiedTimeImpl(const std::wstring& path, int64_t millis) {
   return ok != FALSE;
 }
 
-std::string readFileImpl(const std::wstring& path, size_t maxBytes) {
+std::string WindowsBackend::readFile(const std::wstring& path, size_t maxBytes) {
   std::string out;
   HANDLE handle = ::CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
                                 OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -422,7 +424,7 @@ std::string readFileImpl(const std::wstring& path, size_t maxBytes) {
   return out;
 }
 
-bool writeFileImpl(const std::wstring& path, const std::string& data) {
+bool WindowsBackend::writeFile(const std::wstring& path, const std::string& data) {
   HANDLE handle = ::CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
                                 FILE_ATTRIBUTE_NORMAL, nullptr);
   if (handle == INVALID_HANDLE_VALUE) return false;
@@ -435,14 +437,14 @@ bool writeFileImpl(const std::wstring& path, const std::string& data) {
   return ok;
 }
 
-bool deleteFileImpl(const std::wstring& path) {
-  if (isDirectoryImpl(path)) return ::RemoveDirectoryW(path.c_str()) != FALSE;
+bool WindowsBackend::deleteFile(const std::wstring& path) {
+  if (isDirectory(path)) return ::RemoveDirectoryW(path.c_str()) != FALSE;
   return ::DeleteFileW(path.c_str()) != FALSE;
 }
 
 // 走 Shell 的回收站接口，不能退回 DeleteFileW：误删后还要能还原
-bool moveToTrashImpl(const std::wstring& path) {
-  if (!pathExistsImpl(path)) return false;
+bool WindowsBackend::moveToTrash(const std::wstring& path) {
+  if (!pathExists(path)) return false;
   std::wstring buffer = path;
   buffer.push_back(L'\0');
   buffer.push_back(L'\0');
@@ -453,7 +455,7 @@ bool moveToTrashImpl(const std::wstring& path) {
   return ::SHFileOperationW(&op) == 0;
 }
 
-std::wstring specialFolderImpl(SpecialFolder folder) {
+std::wstring WindowsBackend::specialFolder(SpecialFolder folder) {
   // 下载目录没有对应的 CSIDL 常量，统一走 KnownFolder 接口
   const KNOWNFOLDERID* id = nullptr;
   switch (folder) {
@@ -471,7 +473,7 @@ std::wstring specialFolderImpl(SpecialFolder folder) {
   return result;
 }
 
-std::vector<DriveInfo> listDrivesImpl() {
+std::vector<DriveInfo> WindowsBackend::listDrives() {
   std::vector<DriveInfo> out;
   const DWORD drives = ::GetLogicalDrives();
   for (int i = 0; i < 26; ++i) {
@@ -483,7 +485,7 @@ std::vector<DriveInfo> listDrivesImpl() {
     if (type == DRIVE_UNKNOWN || type == DRIVE_NO_ROOT_DIR) continue;
     const bool removable = (type == DRIVE_REMOVABLE || type == DRIVE_CDROM);
     // 空的读卡器槽位不该出现在树里
-    if (removable && !pathExistsImpl(root)) continue;
+    if (removable && !pathExists(root)) continue;
 
     DriveInfo info;
     info.path = root;
@@ -503,13 +505,13 @@ std::vector<DriveInfo> listDrivesImpl() {
 
 // ───────────────────────── 消息框 ─────────────────────────
 
-bool canOwnModalImpl(NativeHandle window) {
+bool WindowsBackend::canOwnModal(NativeHandle window) {
   if (!window) return false;
   auto* hwnd = static_cast<HWND>(window);
   return ::IsWindow(hwnd) != FALSE && ::IsIconic(hwnd) == FALSE;
 }
 
-MessageBoxResult showMessageBoxImpl(NativeHandle owner, const MessageBoxParams& params) {  UINT flags = 0;
+MessageBoxResult WindowsBackend::showMessageBox(NativeHandle owner, const MessageBoxParams& params) {  UINT flags = 0;
   switch (params.icon) {
     case MessageBoxIcon::kInfo: flags |= MB_ICONINFORMATION; break;
     case MessageBoxIcon::kWarning: flags |= MB_ICONWARNING; break;
@@ -539,7 +541,7 @@ MessageBoxResult showMessageBoxImpl(NativeHandle owner, const MessageBoxParams& 
 
 // ───────────────────────── 文件选择 ─────────────────────────
 
-std::wstring pickFolderImpl(NativeHandle owner, const std::wstring& title,
+std::wstring WindowsBackend::pickFolder(NativeHandle owner, const std::wstring& title,
                             const std::wstring& initialDir) {
   auto* hwnd = static_cast<HWND>(owner);
   IFileOpenDialog* dialog = nullptr;
@@ -590,7 +592,7 @@ std::wstring buildFilterString(const std::vector<std::wstring>& filters) {
 
 }  // namespace
 
-std::wstring pickSaveFileImpl(NativeHandle owner, const std::wstring& title,
+std::wstring WindowsBackend::pickSaveFile(NativeHandle owner, const std::wstring& title,
                               const std::wstring& initialDir, const std::wstring& defaultName,
                               const std::wstring& defaultExt,
                               const std::vector<std::wstring>& filters) {
@@ -617,7 +619,7 @@ std::wstring pickSaveFileImpl(NativeHandle owner, const std::wstring& title,
   return std::wstring(file);
 }
 
-std::wstring pickOpenFileImpl(NativeHandle owner, const std::wstring& title,
+std::wstring WindowsBackend::pickOpenFile(NativeHandle owner, const std::wstring& title,
                               const std::wstring& initialDir,
                               const std::vector<std::wstring>& filters) {
   wchar_t file[MAX_PATH] = {};
@@ -641,13 +643,13 @@ std::wstring pickOpenFileImpl(NativeHandle owner, const std::wstring& title,
 
 // ───────────────────────── Shell ─────────────────────────
 
-bool openWithSystemImpl(const std::wstring& path) {  const HINSTANCE result = ::ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr,
+bool WindowsBackend::openWithSystem(const std::wstring& path) {  const HINSTANCE result = ::ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr,
                                            SW_SHOWNORMAL);
   // ShellExecute 的返回值 > 32 才算成功
   return reinterpret_cast<INT_PTR>(result) > 32;
 }
 
-bool showPropertiesImpl(NativeHandle owner, const std::wstring& path) {
+bool WindowsBackend::showProperties(NativeHandle owner, const std::wstring& path) {
   SHELLEXECUTEINFOW info{};
   info.cbSize = sizeof(info);
   info.hwnd = static_cast<HWND>(owner);
@@ -659,7 +661,7 @@ bool showPropertiesImpl(NativeHandle owner, const std::wstring& path) {
 
 // ───────────────────────── 弹出菜单 ─────────────────────────
 
-int showPopupMenuImpl(NativeHandle owner, const Point& position,
+int WindowsBackend::showPopupMenu(NativeHandle owner, const Point& position,
                       const std::vector<MenuItem>& items) {
   if (items.empty()) return -1;
   HMENU menu = ::CreatePopupMenu();
@@ -688,14 +690,34 @@ int showPopupMenuImpl(NativeHandle owner, const Point& position,
   return command == 0 ? -1 : static_cast<int>(command) - 1;
 }
 
-Point cursorPositionImpl() {
+Point WindowsBackend::cursorPosition() {
   POINT pt{};
   ::GetCursorPos(&pt);
   return Point{pt.x, pt.y};
 }
 
-void bringToFrontImpl(NativeHandle window) {
-  if (auto* hwnd = static_cast<HWND>(window)) ::SetForegroundWindow(hwnd);
+void WindowsBackend::bringToFront(NativeHandle window) {
+  auto* hwnd = static_cast<HWND>(window);
+  if (!hwnd) return;
+
+  // 窗口最小化时先还原，否则 SetForegroundWindow 只会把它留在任务栏
+  if (::IsIconic(hwnd)) ::ShowWindow(hwnd, SW_RESTORE);
+
+  // SetForegroundWindow 会被系统拒绝：目标不在前台时，只有「当前前台线程
+  // 把输入权让给它」才允许。标准解法是先挂到前台线程的输入队列再调用，
+  // 否则从托盘或另一个进程拉起的窗口只会闪一下任务栏、不真正激活。
+  const DWORD foregroundThread = ::GetWindowThreadProcessId(::GetForegroundWindow(), nullptr);
+  const DWORD targetThread = ::GetWindowThreadProcessId(hwnd, nullptr);
+  const bool attached = foregroundThread != 0 && targetThread != 0 &&
+                        foregroundThread != targetThread &&
+                        ::AttachThreadInput(foregroundThread, targetThread, TRUE) != 0;
+
+  ::BringWindowToTop(hwnd);
+  ::SetForegroundWindow(hwnd);
+  ::SetActiveWindow(hwnd);
+  ::SetFocus(hwnd);
+
+  if (attached) ::AttachThreadInput(foregroundThread, targetThread, FALSE);
 }
 
 // ───────────────────────── 右键菜单注册 ─────────────────────────
@@ -782,8 +804,8 @@ std::wstring appliesToFor(const ShellVerb& verb, const std::wstring& root) {
   return expr;
 }
 
-std::wstring registerShellVerbsImpl(const std::vector<ShellVerb>& verbs) {
-  const std::wstring exe = executablePathImpl();
+std::wstring WindowsBackend::registerShellVerbs(const std::vector<ShellVerb>& verbs) {
+  const std::wstring exe = executablePath();
   if (exe.empty()) return L"无法取得程序路径";
 
   for (const auto& verb : verbs) {
@@ -826,7 +848,7 @@ std::wstring registerShellVerbsImpl(const std::vector<ShellVerb>& verbs) {
   return L"";
 }
 
-std::wstring unregisterShellVerbsImpl(const std::vector<ShellVerb>& verbs) {
+std::wstring WindowsBackend::unregisterShellVerbs(const std::vector<ShellVerb>& verbs) {
   for (const auto& verb : verbs) {
     for (const auto& root : classRootsFor(verb.targets)) {
       regDeleteTree(L"Software\\Classes\\" + root + L"\\shell\\" + verb.id);
@@ -836,8 +858,8 @@ std::wstring unregisterShellVerbsImpl(const std::vector<ShellVerb>& verbs) {
   return L"";
 }
 
-bool areShellVerbsRegisteredImpl(const std::vector<ShellVerb>& verbs) {
-  const std::wstring exe = executablePathImpl();
+bool WindowsBackend::areShellVerbsRegistered(const std::vector<ShellVerb>& verbs) {
+  const std::wstring exe = executablePath();
   if (exe.empty()) return false;
 
   for (const auto& verb : verbs) {
@@ -874,7 +896,7 @@ bool areShellVerbsRegisteredImpl(const std::vector<ShellVerb>& verbs) {
 
 // ───────────────────────── 进程与线程 ─────────────────────────
 
-bool isUiThreadImpl() {
+bool WindowsBackend::isUiThread() {
   HWND target = nullptr;
   {
     std::lock_guard<std::mutex> lock(g_queueMapMutex);
@@ -884,11 +906,11 @@ bool isUiThreadImpl() {
   return ::GetWindowThreadProcessId(target, nullptr) == ::GetCurrentThreadId();
 }
 
-void sleepMillisImpl(int ms) {
+void WindowsBackend::sleepMillis(int ms) {
   if (ms > 0) ::Sleep(static_cast<DWORD>(ms));
 }
 
-float scaleFactorImpl() {
+float WindowsBackend::scaleFactor() {
   HDC dc = ::GetDC(nullptr);
   if (!dc) return 1.0f;
   const int dpi = ::GetDeviceCaps(dc, LOGPIXELSX);
@@ -896,11 +918,82 @@ float scaleFactorImpl() {
   return dpi > 0 ? dpi / 96.0f : 1.0f;
 }
 
+// ───────────────────────── 剪贴板与路径比较 ─────────────────────────
+
+bool WindowsBackend::setClipboardText(const std::wstring& text) {
+  if (!::OpenClipboard(nullptr)) return false;
+  ::EmptyClipboard();
+  const size_t bytes = (text.size() + 1) * sizeof(wchar_t);
+  bool ok = false;
+  if (HGLOBAL memory = ::GlobalAlloc(GMEM_MOVEABLE, bytes)) {
+    if (void* dst = ::GlobalLock(memory)) {
+      memcpy(dst, text.c_str(), bytes);
+      ::GlobalUnlock(memory);
+      // 成功后所有权归剪贴板，不能再 GlobalFree
+      ok = ::SetClipboardData(CF_UNICODETEXT, memory) != nullptr;
+      if (!ok) ::GlobalFree(memory);
+    } else {
+      ::GlobalFree(memory);
+    }
+  }
+  ::CloseClipboard();
+  return ok;
+}
+
+std::wstring WindowsBackend::clipboardText() {
+  if (!::IsClipboardFormatAvailable(CF_UNICODETEXT)) return L"";
+  if (!::OpenClipboard(nullptr)) return L"";
+  std::wstring data;
+  if (HANDLE handle = ::GetClipboardData(CF_UNICODETEXT)) {
+    if (const auto* text = static_cast<const wchar_t*>(::GlobalLock(handle))) {
+      data = text;
+      ::GlobalUnlock(handle);
+    }
+  }
+  ::CloseClipboard();
+  return data;
+}
+
+bool WindowsBackend::isPathPrefix(const std::wstring& prefix, const std::wstring& path) {
+  // 按分隔符边界判断，避免 "a2" 误配 "a"
+  if (prefix.empty()) return true;
+  if (path.size() < prefix.size()) return false;
+  if (::CompareStringOrdinal(path.c_str(), static_cast<int>(prefix.size()), prefix.c_str(),
+                             static_cast<int>(prefix.size()), TRUE) != CSTR_EQUAL) {
+    return false;
+  }
+  if (path.size() == prefix.size()) return true;
+  if (prefix.back() == L'\\' || prefix.back() == L'/') return true;
+  return path[prefix.size()] == L'\\' || path[prefix.size()] == L'/';
+}
+
+wchar_t WindowsBackend::pathSeparator() { return L'\\'; }
+
+int WindowsBackend::compareText(const std::wstring& a, const std::wstring& b) {
+  // 用系统的忽略大小写比较：与资源管理器的排序观感一致
+  const int r = ::CompareStringOrdinal(a.c_str(), static_cast<int>(a.size()), b.c_str(),
+                                       static_cast<int>(b.size()), TRUE);
+  if (r == CSTR_LESS_THAN) return -1;
+  if (r == CSTR_GREATER_THAN) return 1;
+  return 0;
+}
+
+bool WindowsBackend::containsTextIgnoreCase(const std::wstring& text,
+                                            const std::wstring& needle) {
+  if (needle.empty()) return true;
+  return ::StrStrIW(text.c_str(), needle.c_str()) != nullptr;
+}
+
+bool WindowsBackend::equalsPath(const std::wstring& a, const std::wstring& b) {
+  // Windows 盘符与扩展名不区分大小写，用系统排序规则比较
+  return ::CompareStringOrdinal(a.c_str(), -1, b.c_str(), -1, TRUE) == CSTR_EQUAL;
+}
+
 // ───────────────────────── 线程投递 ─────────────────────────
 
-void prepareUiThreadDispatch() { ensureDispatchWindow(); }
+void WindowsBackend::prepareUiThreadDispatch() { ensureDispatchWindow(); }
 
-void shutdownUiThreadDispatch() {
+void WindowsBackend::shutdownUiThreadDispatch() {
   const DWORD tid = ::GetCurrentThreadId();
   HWND hwnd = nullptr;
   UiCallQueue* queue = nullptr;
@@ -922,13 +1015,15 @@ void shutdownUiThreadDispatch() {
   t_callQueue = nullptr;
 }
 
-void postToUiThread(std::function<void()> fn) { postToUiThreadImpl(std::move(fn)); }
+void WindowsBackend::postToUiThread(std::function<void()> fn) { postToUiThreadNow(std::move(fn)); }
 
-void invokeOnUiThread(std::function<void()> fn) { invokeOnUiThreadImpl(std::move(fn)); }
+void WindowsBackend::invokeOnUiThread(std::function<void()> fn) {
+  invokeOnUiThreadNow(std::move(fn));
+}
 
 // ───────────────────────── 单实例 ─────────────────────────
 
-bool claimSingleInstanceImpl(const std::wstring& appId) {
+bool WindowsBackend::claimSingleInstance(const std::wstring& appId) {
   const std::wstring mutexName = L"Local\\AiUI.SingleInstance." + appId;
   HANDLE mutex = ::CreateMutexW(nullptr, TRUE, mutexName.c_str());
   if (!mutex) return true;
@@ -958,11 +1053,11 @@ bool claimSingleInstanceImpl(const std::wstring& appId) {
   return true;
 }
 
-void setLaunchPayloadHandlerImpl(std::function<void(const std::wstring&)> fn) {
+void WindowsBackend::setLaunchPayloadHandler(std::function<void(const std::wstring&)> fn) {
   g_launchHandler = std::move(fn);
 }
 
-bool forwardToRunningInstanceImpl(const std::wstring& appId, const std::wstring& payload) {
+bool WindowsBackend::forwardToRunningInstance(const std::wstring& appId, const std::wstring& payload) {
   const std::wstring className = classNameFor(appId);
   HWND target = ::FindWindowW(className.c_str(), nullptr);
   if (!target) return false;
@@ -1101,7 +1196,7 @@ class WindowsTray final : public PlatformTray {
     // 菜单结束后要点别处才消失，先把自己提到前台
     HWND owner = ::GetForegroundWindow();
     if (!owner) owner = hwnd_;
-    const int index = showPopupMenuImpl(owner, Point{cursor.x, cursor.y}, items);
+    const int index = backend().showPopupMenu(owner, Point{cursor.x, cursor.y}, items);
     if (index >= 0) host_.onTrayMenuCommand(index);
   }
 
@@ -1114,10 +1209,17 @@ class WindowsTray final : public PlatformTray {
 
 }  // namespace
 
-std::unique_ptr<PlatformTray> createTrayIconImpl(PlatformTrayHost& host) {
+std::unique_ptr<PlatformTray> WindowsBackend::createTrayIcon(PlatformTrayHost& host) {
   return std::make_unique<WindowsTray>(host, ::GetModuleHandleW(nullptr));
 }
 
 }  // namespace windows
+
+Backend& backend() {
+  // 只在调用时构造：静态初始化期没人需要系统能力，也不该在那时接触系统
+  static windows::WindowsBackend instance;
+  return instance;
+}
+
 }  // namespace os
 }  // namespace AiUI

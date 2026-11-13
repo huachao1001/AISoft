@@ -6,6 +6,7 @@
 // 之所以内嵌而不让用户多拿一个文件：组件必须注册进系统才能被资源管理器加载，
 // 但分发时只该给一个 exe。首次运行时释放是唯一两全的做法。
 #include "backend.h"
+#include "windows_backend.h"
 
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -102,6 +103,26 @@ std::wstring placeComponent(const std::wstring& dir, const std::wstring& fileNam
   return path;
 }
 
+// 清掉不属于本次注册的组件：旧命名的 aicmd_*.dll 与旧指纹的 aizip_*.dll。
+// 资源管理器可能还加载着它们，删不掉就跳过：注册表已经指向新文件，
+// 旧文件留着不影响功能，下次重装还能再试。
+void removeLegacyComponents(const std::wstring& dir, const std::wstring& keepPath) {
+  const std::wstring patterns[] = {dir + L"\\aicmd_*.dll", dir + L"\\aizip_*.dll"};
+  for (const auto& pattern : patterns) {
+    WIN32_FIND_DATAW data{};
+    HANDLE find = ::FindFirstFileW(pattern.c_str(), &data);
+    if (find == INVALID_HANDLE_VALUE) continue;
+    do {
+      const std::wstring path = dir + L"\\" + data.cFileName;
+      if (::CompareStringOrdinal(path.c_str(), -1, keepPath.c_str(), -1, TRUE) == CSTR_EQUAL) {
+        continue;
+      }
+      ::DeleteFileW(path.c_str());
+    } while (::FindNextFileW(find, &data));
+    ::FindClose(find);
+  }
+}
+
 bool readEmbedded(int resourceId, std::vector<BYTE>& out) {
   HMODULE self = ::GetModuleHandleW(nullptr);
   HRSRC res = ::FindResourceW(self, MAKEINTRESOURCEW(resourceId), RT_RCDATA);
@@ -164,6 +185,31 @@ bool regDeleteTree(HKEY root, const std::wstring& subKey) {
   return r == ERROR_SUCCESS || r == ERROR_FILE_NOT_FOUND || r == ERROR_PATH_NOT_FOUND;
 }
 
+// 删单个值；值不存在等同于已清理
+bool regDeleteValue(HKEY root, const std::wstring& subKey, const wchar_t* name) {
+  HKEY key = nullptr;
+  if (::RegOpenKeyExW(root, subKey.c_str(), 0, KEY_WRITE, &key) != ERROR_SUCCESS) return true;
+  const LONG r = ::RegDeleteValueW(key, name);
+  ::RegCloseKey(key);
+  return r == ERROR_SUCCESS || r == ERROR_FILE_NOT_FOUND;
+}
+
+// 用户是否已为该后缀指定过默认程序。
+// Win10 起默认项的事实来源是 Explorer\FileExts\<ext>\UserChoice，它带用户
+// 意图哈希，第三方写入会被判为篡改。存在即代表用户做过选择，必须尊重。
+bool hasUserChoice(const std::wstring& ext) {
+  for (const HKEY root : {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE}) {
+    const std::wstring key =
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\" + ext + L"\\UserChoice";
+    HKEY handle = nullptr;
+    if (::RegOpenKeyExW(root, key.c_str(), 0, KEY_READ, &handle) == ERROR_SUCCESS) {
+      ::RegCloseKey(handle);
+      return true;
+    }
+  }
+  return false;
+}
+
 // 读一个字符串值；不存在或类型不对返回空
 std::wstring regGetString(HKEY root, const std::wstring& subKey, const wchar_t* name) {
   HKEY key = nullptr;
@@ -198,7 +244,7 @@ std::wstring handlerKey(const ShellMenuHandler& handler, const std::wstring& roo
 
 }  // namespace
 
-std::wstring registerShellMenuHandlerImpl(const ShellMenuHandler& handler) {
+std::wstring WindowsBackend::registerShellMenuHandler(const ShellMenuHandler& handler) {
   if (handler.id.empty() || handler.clsid.empty() || handler.componentName.empty()) {
     return L"菜单处理器描述不完整";
   }
@@ -212,8 +258,9 @@ std::wstring registerShellMenuHandlerImpl(const ShellMenuHandler& handler) {
   if (dir.empty()) return L"无法定位组件目录";
   const std::wstring dll = placeComponent(dir, handler.componentName, payload);
   if (dll.empty()) return L"无法释放右键菜单组件";
+  removeLegacyComponents(dir, dll);
 
-  const std::wstring exe = executablePathImpl();
+  const std::wstring exe = executablePath();
   if (exe.empty()) return L"无法取得程序路径";
 
   const HKEY root = classRoot(handler);
@@ -245,7 +292,7 @@ std::wstring registerShellMenuHandlerImpl(const ShellMenuHandler& handler) {
   return {};
 }
 
-std::wstring unregisterShellMenuHandlerImpl(const ShellMenuHandler& handler) {
+std::wstring WindowsBackend::unregisterShellMenuHandler(const ShellMenuHandler& handler) {
   const HKEY root = classRoot(handler);
   for (const auto& target : classRootsFor(handler.targets)) {
     regDeleteTree(root, handlerKey(handler, target));
@@ -258,7 +305,7 @@ std::wstring unregisterShellMenuHandlerImpl(const ShellMenuHandler& handler) {
   return {};
 }
 
-bool isShellMenuHandlerRegisteredImpl(const ShellMenuHandler& handler) {
+bool WindowsBackend::isShellMenuHandlerRegistered(const ShellMenuHandler& handler) {
   if (handler.clsid.empty()) return false;
 
   const HKEY root = classRoot(handler);
@@ -285,11 +332,163 @@ bool isShellMenuHandlerRegisteredImpl(const ShellMenuHandler& handler) {
   if (slash == std::wstring::npos || actualDll.substr(0, slash) != dir) return false;
   if (!fileMatches(actualDll, payload)) return false;
 
-  const std::wstring exe = executablePathImpl();
+  const std::wstring exe = WindowsBackend::executablePath();
   if (exe.empty()) return false;
   const std::wstring registeredExe =
       regGetString(root, L"Software\\Classes\\CLSID\\" + handler.clsid + L"\\AppPath", nullptr);
   return ::CompareStringOrdinal(registeredExe.c_str(), -1, exe.c_str(), -1, TRUE) == CSTR_EQUAL;
+}
+
+InstallScope WindowsBackend::detectShellMenuScope(const ShellMenuHandler& handler) {
+  if (handler.clsid.empty()) return InstallScope::kCurrentUser;
+
+  // 只认「已挂载、指向本 CLSID、且 AppPath 就是当前程序」的根键。
+  // 少一个条件都不行：同一台机器可能装着另一份（比如 D 盘的安装版与
+  // 开发构建并存），按别人的范围去校准只会让本进程去写自己没权限的根键。
+  const std::wstring mountKey = handlerKey(handler, L"*");
+  const std::wstring exe = WindowsBackend::executablePath();
+  if (exe.empty()) return InstallScope::kCurrentUser;
+
+  const std::wstring appPathKey = L"Software\\Classes\\CLSID\\" + handler.clsid + L"\\AppPath";
+  for (const HKEY root : {HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER}) {
+    const std::wstring mounted = regGetString(root, mountKey, nullptr);
+    if (mounted.empty()) continue;
+    if (::CompareStringOrdinal(mounted.c_str(), -1, handler.clsid.c_str(), -1, TRUE) != CSTR_EQUAL) {
+      continue;
+    }
+    const std::wstring registeredExe = regGetString(root, appPathKey, nullptr);
+    if (::CompareStringOrdinal(registeredExe.c_str(), -1, exe.c_str(), -1, TRUE) != CSTR_EQUAL) {
+      continue;
+    }
+    return root == HKEY_LOCAL_MACHINE ? InstallScope::kAllUsers : InstallScope::kCurrentUser;
+  }
+  return InstallScope::kCurrentUser;
+}
+
+// ── 文件类型关联 ──
+//
+// Win10 之后系统不允许程序静默抢占默认应用：默认项的最终决定权在
+// HKCU\...\FileExts\<ext>\UserChoice，且带有用户意图哈希，第三方写入会被
+// 系统判为篡改并重置。能做得正确、也够用的只有三步：
+//   1. 建 ProgID（描述 + 图标 + open 命令）；
+//   2. 把它加进该后缀的 OpenWithProgids，成为「打开方式」里的候选；
+//   3. 把本程序登记到 Applications，让它出现在「选择其他应用」列表。
+// 用户在系统弹出的选择框里点一次确认后，默认项就是本程序。
+std::wstring WindowsBackend::registerFileAssociations(const FileAssociation& association) {
+  if (association.progId.empty() || association.extensions.empty()) {
+    return L"文件关联描述不完整";
+  }
+
+  const std::wstring exe = WindowsBackend::executablePath();
+  if (exe.empty()) return L"无法取得程序路径";
+
+  const InstallScope scope = currentInstallScope();
+  const HKEY root = scope == InstallScope::kAllUsers ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;
+
+  // 1. ProgID：显示名、图标、打开命令
+  const std::wstring progKey = L"Software\\Classes\\" + association.progId;
+  if (!regSetString(root, progKey, nullptr, association.description)) {
+    return L"无法登记文件类型标识";
+  }
+  if (!regSetString(root, progKey + L"\\DefaultIcon", nullptr, exe + L",0")) {
+    return L"无法登记文件类型图标";
+  }
+  // 双击打开走程序默认行为：不带动作开关，由程序按后缀推断
+  if (!regSetString(root, progKey + L"\\shell\\open\\command", nullptr,
+                    L"\"" + exe + L"\" \"%1\"")) {
+    return L"无法登记打开命令";
+  }
+  if (!regSetString(root, progKey + L"\\shell\\open", L"FriendlyAppName",
+                    association.description)) {
+    return L"无法登记打开方式名称";
+  }
+
+  // 2. 每个后缀：登记候选打开方式
+  for (const auto& ext : association.extensions) {
+    if (!regSetString(root, L"Software\\Classes\\" + ext + L"\\OpenWithProgids",
+                      association.progId.c_str(), L"")) {
+      return L"无法登记候选打开方式：" + ext;
+    }
+  }
+
+  // 3. Applications：出现在「选择其他应用」列表，并声明支持的后缀
+  const std::wstring appKey = L"Software\\Classes\\Applications\\" + association.progId;
+  if (!regSetString(root, appKey + L"\\shell\\open\\command", nullptr,
+                    L"\"" + exe + L"\" \"%1\"")) {
+    return L"无法登记应用打开命令";
+  }
+  if (!regSetString(root, appKey, L"FriendlyAppName", association.description)) {
+    return L"无法登记应用显示名";
+  }
+  for (const auto& ext : association.extensions) {
+    if (!regSetString(root, appKey + L"\\SupportedTypes", ext.c_str(), L"")) {
+      return L"无法登记应用支持的类型：" + ext;
+    }
+  }
+
+  // 4. 填补空缺：后缀还没有任何默认程序时，直接把我们设成默认。
+  //    用户已经选过别的程序就一律不动——那是用户的决定，程序无权覆盖。
+  //    「没有默认」指该后缀既没有 UserChoice，也没有可解析的 ProgID。
+  for (const auto& ext : association.extensions) {
+    if (hasUserChoice(ext)) continue;
+    if (!regGetString(root, L"Software\\Classes\\" + ext, nullptr).empty()) continue;
+    regSetString(root, L"Software\\Classes\\" + ext, nullptr, association.progId);
+  }
+
+  // 让外壳立刻刷新缓存，否则「打开方式」列表要等资源管理器重启才更新
+  ::SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
+  return {};
+}
+
+std::wstring WindowsBackend::unregisterFileAssociations(const FileAssociation& association) {
+  if (association.progId.empty()) return {};
+
+  const InstallScope scope = currentInstallScope();
+  const HKEY root = scope == InstallScope::kAllUsers ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;
+
+  for (const auto& ext : association.extensions) {
+    regDeleteValue(root, L"Software\\Classes\\" + ext + L"\\OpenWithProgids",
+                   association.progId.c_str());
+    // 只清掉「指向我们」的默认项；用户后来选了别的程序就别动
+    const std::wstring current = regGetString(root, L"Software\\Classes\\" + ext, nullptr);
+    if (::CompareStringOrdinal(current.c_str(), -1, association.progId.c_str(), -1, TRUE) ==
+        CSTR_EQUAL) {
+      regDeleteValue(root, L"Software\\Classes\\" + ext, nullptr);
+    }
+  }
+  regDeleteTree(root, L"Software\\Classes\\" + association.progId);
+  regDeleteTree(root, L"Software\\Classes\\Applications\\" + association.progId);
+
+  ::SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
+  return {};
+}
+
+bool WindowsBackend::areFileAssociationsRegistered(const FileAssociation& association) {
+  if (association.progId.empty() || association.extensions.empty()) return false;
+
+  const std::wstring exe = WindowsBackend::executablePath();
+  if (exe.empty()) return false;
+
+  const InstallScope scope = currentInstallScope();
+  const HKEY root = scope == InstallScope::kAllUsers ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;
+
+  const std::wstring registered = regGetString(
+      root, L"Software\\Classes\\" + association.progId + L"\\shell\\open\\command", nullptr);
+  if (registered.empty()) return false;
+  // 程序换位置后旧命令会指向失效路径，必须重写
+  if (registered.find(exe) == std::wstring::npos) return false;
+
+  for (const auto& ext : association.extensions) {
+    // 候选登记用的是「值名 = ProgID、数据为空串」，所以只能查值名是否存在
+    const std::wstring probeKey = L"Software\\Classes\\" + ext + L"\\OpenWithProgids";
+    HKEY key = nullptr;
+    if (::RegOpenKeyExW(root, probeKey.c_str(), 0, KEY_READ, &key) != ERROR_SUCCESS) return false;
+    const LONG r = ::RegQueryValueExW(key, association.progId.c_str(), nullptr, nullptr, nullptr,
+                                      nullptr);
+    ::RegCloseKey(key);
+    if (r != ERROR_SUCCESS) return false;
+  }
+  return true;
 }
 
 }  // namespace windows

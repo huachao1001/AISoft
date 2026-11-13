@@ -79,7 +79,7 @@ struct ShellMenuHandler {
   // 组件的类标识文本（"{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}"）。
   // 由构建脚本按 id 派生，应用与组件各拿一份，必须一致。
   std::wstring clsid;
-  // 组件释放到用户目录后的文件名，如 "aicmd.dll"，也是平台约定的组件形态。
+  // 组件释放到用户目录后的文件名，如 "aizip.dll"，也是平台约定的组件形态。
   std::wstring componentName;
   // 组件在本可执行文件 .rc 里的资源 id（RCDATA），由后端取出后落盘。
   int componentResourceId = 200;
@@ -92,7 +92,7 @@ struct ShellMenuHandler {
   // true 表示 scope 已被显式赋值；false 时跟随后端的当前范围
   bool scopeExplicit = false;
   // 组件落地目录。留空时由后端按 scope 选默认位置；
-  // 安装好的程序用自己所在目录，卸载时才能随程序一起清掉。
+  // 应用可以显式指定，用来把组件放在自己所在目录。
   std::wstring componentDir;
 };
 
@@ -101,6 +101,38 @@ std::wstring registerShellMenuHandler(const ShellMenuHandler& handler);
 // 撤销注册。已落盘的组件文件保留，避免占用（文件管理器可能仍加载着它）。
 std::wstring unregisterShellMenuHandler(const ShellMenuHandler& handler);
 bool isShellMenuHandlerRegistered(const ShellMenuHandler& handler);
+
+// 探测本程序当前实际注册在哪个范围（HKCU 还是 HKLM）。
+// 用途：安装时选了「所有用户」的程序，每次启动都要按同一范围校对，
+// 不能想当然地用默认值，否则会往另一个根键再写一份。
+// 两个根键都没有时返回 kCurrentUser。
+InstallScope detectShellMenuScope(const ShellMenuHandler& handler);
+
+// ── 文件类型关联 ──
+//
+// 「把这些后缀默认交给本程序打开」。应用只声明后缀与要注册的处理器标识，
+// 落到注册表（ProgID + UserChoice 提示）、LaunchServices 还是 .desktop
+// 由平台后端决定。
+//
+// 注意：现代系统不允许程序静默抢占默认应用（Win10+ 的 UserChoice 带
+// 用户意图哈希），后端只能把本程序登记为「可打开该后缀的候选」并说明
+// 系统会提示用户确认。声明它仍必要：这样资源管理器、打开方式列表里
+// 都能直接看到本程序。
+struct FileAssociation {
+  // 处理器标识，如 "AIZip.zip"。同一程序内唯一。
+  std::wstring progId;
+  // 系统「打开方式」列表里显示的描述，如 "AIZip 压缩包"
+  std::wstring description;
+  // 生效后缀，含点，如 {".zip", ".7z"}
+  std::vector<std::wstring> extensions;
+};
+
+// 登记为这些后缀的候选打开方式。成功返回空串，失败返回可读原因。
+std::wstring registerFileAssociations(const FileAssociation& association);
+// 撤销登记
+std::wstring unregisterFileAssociations(const FileAssociation& association);
+// 是否已登记且仍指向当前可执行文件
+bool areFileAssociationsRegistered(const FileAssociation& association);
 
 // ── 托盘图标 ──
 

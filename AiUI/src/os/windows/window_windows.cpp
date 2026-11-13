@@ -1,5 +1,6 @@
-﻿// Windows 窗口后端：窗口类注册、消息翻译、离屏绘制
+// Windows 窗口后端：窗口类注册、消息翻译、离屏绘制
 #include "backend.h"
+#include "windows_backend.h"
 
 #include "AiUI/platform.h"
 
@@ -819,68 +820,24 @@ class WindowsPlatform : public Platform {
   }
 
   bool setClipboardText(const std::wstring& text) override {
-    if (!::OpenClipboard(nullptr)) return false;
-    ::EmptyClipboard();
-    const size_t bytes = (text.size() + 1) * sizeof(wchar_t);
-    bool ok = false;
-    if (HGLOBAL memory = ::GlobalAlloc(GMEM_MOVEABLE, bytes)) {
-      if (void* dst = ::GlobalLock(memory)) {
-        memcpy(dst, text.c_str(), bytes);
-        ::GlobalUnlock(memory);
-        // 成功后所有权归剪贴板，不能再 GlobalFree
-        ok = ::SetClipboardData(CF_UNICODETEXT, memory) != nullptr;
-        if (!ok) ::GlobalFree(memory);
-      } else {
-        ::GlobalFree(memory);
-      }
-    }
-    ::CloseClipboard();
-    return ok;
+    return os::backend().setClipboardText(text);
   }
 
-  std::wstring clipboardText() override {
-    if (!::IsClipboardFormatAvailable(CF_UNICODETEXT)) return L"";
-    if (!::OpenClipboard(nullptr)) return L"";
-    std::wstring data;
-    if (HANDLE handle = ::GetClipboardData(CF_UNICODETEXT)) {
-      if (const auto* text = static_cast<const wchar_t*>(::GlobalLock(handle))) {
-        data = text;
-        ::GlobalUnlock(handle);
-      }
-    }
-    ::CloseClipboard();
-    return data;
-  }
+  std::wstring clipboardText() override { return os::backend().clipboardText(); }
 
   bool isPathPrefix(const std::wstring& prefix, const std::wstring& path) override {
-    // 按分隔符边界判断，避免 "a2" 误配 "a"
-    if (prefix.empty()) return true;
-    if (path.size() < prefix.size()) return false;
-    if (::CompareStringOrdinal(path.c_str(), static_cast<int>(prefix.size()), prefix.c_str(),
-                               static_cast<int>(prefix.size()), TRUE) != CSTR_EQUAL) {
-      return false;
-    }
-    if (path.size() == prefix.size()) return true;
-    if (prefix.back() == L'\\' || prefix.back() == L'/') return true;
-    return path[prefix.size()] == L'\\' || path[prefix.size()] == L'/';
+    return os::backend().isPathPrefix(prefix, path);
   }
 
-  wchar_t pathSeparator() override { return L'\\'; }
+  wchar_t pathSeparator() override { return os::backend().pathSeparator(); }
   int compareText(const std::wstring& a, const std::wstring& b) override {
-    // 用系统的忽略大小写比较：与资源管理器的排序观感一致
-    const int r = ::CompareStringOrdinal(a.c_str(), static_cast<int>(a.size()), b.c_str(),
-                                         static_cast<int>(b.size()), TRUE);
-    if (r == CSTR_LESS_THAN) return -1;
-    if (r == CSTR_GREATER_THAN) return 1;
-    return 0;
+    return os::backend().compareText(a, b);
   }
   bool containsTextIgnoreCase(const std::wstring& text, const std::wstring& needle) override {
-    if (needle.empty()) return true;
-    return ::StrStrIW(text.c_str(), needle.c_str()) != nullptr;
+    return os::backend().containsTextIgnoreCase(text, needle);
   }
   bool equalsPath(const std::wstring& a, const std::wstring& b) override {
-    // Windows 盘符与扩展名不区分大小写，用系统排序规则比较
-    return ::CompareStringOrdinal(a.c_str(), -1, b.c_str(), -1, TRUE) == CSTR_EQUAL;
+    return os::backend().equalsPath(a, b);
   }
 
   Font createFont(const wchar_t* family, float pointSize, bool bold, int dpi) override {
@@ -1006,171 +963,181 @@ class WindowsPlatform : public Platform {
   void quitEventLoop(int exitCode) override { ::PostQuitMessage(exitCode); }
 
   std::wstring appDataDir(const std::wstring& appName) override {
-    return os::windows::appDataDirImpl(appName);
+    return os::backend().appDataDir(appName);
   }
   std::vector<DirEntry> listDirectory(const std::wstring& dir, bool skipHidden) override {
-    return os::windows::listDirectoryImpl(dir, skipHidden);
+    return os::backend().listDirectory(dir, skipHidden);
   }
   bool pathExists(const std::wstring& path) override {
-    return os::windows::pathExistsImpl(path);
+    return os::backend().pathExists(path);
   }
   bool isDirectory(const std::wstring& path) override {
-    return os::windows::isDirectoryImpl(path);
+    return os::backend().isDirectory(path);
   }
   bool createDirectory(const std::wstring& path) override {
-    return os::windows::createDirectoryImpl(path);
+    return os::backend().createDirectory(path);
   }
   uint64_t fileSize(const std::wstring& path) override {
-    return os::windows::fileSizeImpl(path);
+    return os::backend().fileSize(path);
   }
   int64_t modifiedTime(const std::wstring& path) override {
-    return os::windows::modifiedTimeImpl(path);
+    return os::backend().modifiedTime(path);
   }
   bool setModifiedTime(const std::wstring& path, int64_t millis) override {
-    return os::windows::setModifiedTimeImpl(path, millis);
+    return os::backend().setModifiedTime(path, millis);
   }
   std::string readFile(const std::wstring& path, size_t maxBytes) override {
-    return os::windows::readFileImpl(path, maxBytes);
+    return os::backend().readFile(path, maxBytes);
   }
   bool writeFile(const std::wstring& path, const std::string& data) override {
-    return os::windows::writeFileImpl(path, data);
+    return os::backend().writeFile(path, data);
   }
   bool deleteFile(const std::wstring& path) override {
-    return os::windows::deleteFileImpl(path);
+    return os::backend().deleteFile(path);
   }
   std::unique_ptr<FileStream> openFileStream(const std::wstring& path, bool openWrite) override {
-    return os::windows::openFileStreamImpl(path, openWrite);
+    return os::backend().openFileStream(path, openWrite);
   }
   bool moveFile(const std::wstring& from, const std::wstring& to) override {
-    return os::windows::moveFileImpl(from, to);
+    return os::backend().moveFile(from, to);
   }
   std::wstring absolutePath(const std::wstring& path) override {
-    return os::windows::absolutePathImpl(path);
+    return os::backend().absolutePath(path);
   }
-  std::wstring executablePath() override { return os::windows::executablePathImpl(); }
+  std::wstring executablePath() override { return os::backend().executablePath(); }
   std::vector<std::wstring> commandLineArgs() override {
-    return os::windows::commandLineArgsImpl();
+    return os::backend().commandLineArgs();
   }
-  std::wstring tempDir() override { return os::windows::tempDirImpl(); }
-  uint32_t processId() override { return os::windows::processIdImpl(); }
+  std::wstring tempDir() override { return os::backend().tempDir(); }
+  uint32_t processId() override { return os::backend().processId(); }
   bool moveToTrash(const std::wstring& path) override {
-    return os::windows::moveToTrashImpl(path);
+    return os::backend().moveToTrash(path);
   }
   std::wstring specialFolder(SpecialFolder folder) override {
-    return os::windows::specialFolderImpl(folder);
+    return os::backend().specialFolder(folder);
   }
-  std::vector<DriveInfo> listDrives() override { return os::windows::listDrivesImpl(); }
+  std::vector<DriveInfo> listDrives() override { return os::backend().listDrives(); }
 
   MessageBoxResult showMessageBox(NativeHandle owner, const MessageBoxParams& params) override {
-    return os::windows::showMessageBoxImpl(owner, params);
+    return os::backend().showMessageBox(owner, params);
   }
   bool canOwnModal(NativeHandle window) override {
-    return os::windows::canOwnModalImpl(window);
+    return os::backend().canOwnModal(window);
   }
   int showPopupMenu(NativeHandle owner, const Point& position,
                     const std::vector<MenuItem>& items) override {
-    return os::windows::showPopupMenuImpl(owner, position, items);
+    return os::backend().showPopupMenu(owner, position, items);
   }
-  Point cursorPosition() override { return os::windows::cursorPositionImpl(); }
-  void bringToFront(NativeHandle window) override { os::windows::bringToFrontImpl(window); }
+  Point cursorPosition() override { return os::backend().cursorPosition(); }
+  void bringToFront(NativeHandle window) override { os::backend().bringToFront(window); }
 
   std::wstring registerShellVerbs(const std::vector<ShellVerb>& verbs) override {
-    return os::windows::registerShellVerbsImpl(verbs);
+    return os::backend().registerShellVerbs(verbs);
   }
   std::wstring unregisterShellVerbs(const std::vector<ShellVerb>& verbs) override {
-    return os::windows::unregisterShellVerbsImpl(verbs);
+    return os::backend().unregisterShellVerbs(verbs);
   }
   bool areShellVerbsRegistered(const std::vector<ShellVerb>& verbs) override {
-    return os::windows::areShellVerbsRegisteredImpl(verbs);
+    return os::backend().areShellVerbsRegistered(verbs);
   }
 
   std::wstring registerShellMenuHandler(const ShellMenuHandler& handler) override {
-    return os::windows::registerShellMenuHandlerImpl(handler);
+    return os::backend().registerShellMenuHandler(handler);
   }
   std::wstring unregisterShellMenuHandler(const ShellMenuHandler& handler) override {
-    return os::windows::unregisterShellMenuHandlerImpl(handler);
+    return os::backend().unregisterShellMenuHandler(handler);
   }
   bool isShellMenuHandlerRegistered(const ShellMenuHandler& handler) override {
-    return os::windows::isShellMenuHandlerRegisteredImpl(handler);
+    return os::backend().isShellMenuHandlerRegistered(handler);
+  }
+  InstallScope detectShellMenuScope(const ShellMenuHandler& handler) override {
+    return os::backend().detectShellMenuScope(handler);
+  }
+  std::wstring registerFileAssociations(const FileAssociation& association) override {
+    return os::backend().registerFileAssociations(association);
+  }
+  std::wstring unregisterFileAssociations(const FileAssociation& association) override {
+    return os::backend().unregisterFileAssociations(association);
+  }
+  bool areFileAssociationsRegistered(const FileAssociation& association) override {
+    return os::backend().areFileAssociationsRegistered(association);
   }
 
-  bool isRunningElevated() override { return os::windows::isRunningElevatedImpl(); }
-  bool relaunchElevated() override { return os::windows::relaunchElevatedImpl(); }
+  bool isRunningElevated() override { return os::backend().isRunningElevated(); }
+  bool relaunchElevated(const std::wstring& extraArgs = {}) override {
+    return os::backend().relaunchElevated(extraArgs);
+  }
   std::wstring defaultInstallDir(InstallScope scope) override {
-    return os::windows::defaultInstallDirImpl(scope);
+    return os::backend().defaultInstallDir(scope);
   }
   std::wstring installFiles(const std::wstring& targetDir,
                             const std::vector<InstallFile>& files) override {
-    return os::windows::installFilesImpl(targetDir, files);
+    return os::backend().installFiles(targetDir, files);
   }
   std::wstring removeInstalledFiles(const std::wstring& targetDir,
                                     const std::vector<InstallFile>& files) override {
-    return os::windows::removeInstalledFilesImpl(targetDir, files);
-  }
-  std::wstring writeInstallMarker(const std::wstring& targetDir, const std::wstring& marker,
-                                  const std::string& content) override {
-    return os::windows::writeInstallMarkerImpl(targetDir, marker, content);
+    return os::backend().removeInstalledFiles(targetDir, files);
   }
   std::wstring createShortcuts(const std::wstring& targetDir, const std::wstring& exeName,
                                const std::wstring& displayName, InstallScope scope) override {
-    return os::windows::createShortcutsImpl(targetDir, exeName, displayName, scope);
+    return os::backend().createShortcuts(targetDir, exeName, displayName, scope);
   }
   std::wstring removeShortcuts(const std::wstring& displayName, InstallScope scope) override {
-    return os::windows::removeShortcutsImpl(displayName, scope);
+    return os::backend().removeShortcuts(displayName, scope);
   }
   int runAndWait(const std::wstring& exePath, const std::wstring& arguments) override {
-    return os::windows::runAndWaitImpl(exePath, arguments);
+    return os::backend().runAndWait(exePath, arguments);
   }
 
   std::unique_ptr<PlatformTray> createTrayIcon(PlatformTrayHost& host) override {
-    return os::windows::createTrayIconImpl(host);
+    return os::backend().createTrayIcon(host);
   }
 
-  bool isUiThread() override { return os::windows::isUiThreadImpl(); }
-  void sleepMillis(int ms) override { os::windows::sleepMillisImpl(ms); }
-  float scaleFactor() override { return os::windows::scaleFactorImpl(); }
+  bool isUiThread() override { return os::backend().isUiThread(); }
+  void sleepMillis(int ms) override { os::backend().sleepMillis(ms); }
+  float scaleFactor() override { return os::backend().scaleFactor(); }
 
   std::wstring pickFolder(NativeHandle owner, const std::wstring& title,
                           const std::wstring& initialDir) override {
-    return os::windows::pickFolderImpl(owner, title, initialDir);
+    return os::backend().pickFolder(owner, title, initialDir);
   }
   std::wstring pickSaveFile(NativeHandle owner, const std::wstring& title,
                             const std::wstring& initialDir, const std::wstring& defaultName,
                             const std::wstring& defaultExt,
                             const std::vector<std::wstring>& filters) override {
-    return os::windows::pickSaveFileImpl(owner, title, initialDir, defaultName, defaultExt,
+    return os::backend().pickSaveFile(owner, title, initialDir, defaultName, defaultExt,
                                          filters);
   }
   std::wstring pickOpenFile(NativeHandle owner, const std::wstring& title,
                             const std::wstring& initialDir,
                             const std::vector<std::wstring>& filters) override {
-    return os::windows::pickOpenFileImpl(owner, title, initialDir, filters);
+    return os::backend().pickOpenFile(owner, title, initialDir, filters);
   }
 
   bool openWithSystem(const std::wstring& path) override {
-    return os::windows::openWithSystemImpl(path);
+    return os::backend().openWithSystem(path);
   }
   bool showProperties(NativeHandle owner, const std::wstring& path) override {
-    return os::windows::showPropertiesImpl(owner, path);
+    return os::backend().showProperties(owner, path);
   }
 
   void postToUiThread(std::function<void()> fn) override {
-    os::windows::postToUiThread(std::move(fn));
+    os::backend().postToUiThread(std::move(fn));
   }
 
   void invokeOnUiThread(std::function<void()> fn) override {
-    os::windows::invokeOnUiThread(std::move(fn));
+    os::backend().invokeOnUiThread(std::move(fn));
   }
 
   bool claimSingleInstance(const std::wstring& appId) override {
-    return os::windows::claimSingleInstanceImpl(appId);
+    return os::backend().claimSingleInstance(appId);
   }
   void setLaunchPayloadHandler(std::function<void(const std::wstring& payload)> fn) override {
-    os::windows::setLaunchPayloadHandlerImpl(std::move(fn));
+    os::backend().setLaunchPayloadHandler(std::move(fn));
   }
   bool forwardToRunningInstance(const std::wstring& appId,
                                 const std::wstring& payload) override {
-    return os::windows::forwardToRunningInstanceImpl(appId, payload);
+    return os::backend().forwardToRunningInstance(appId, payload);
   }
 
  private:
@@ -1236,7 +1203,7 @@ void initHostProcess() {
   ::InitCommonControlsEx(&icc);
 
   // 工作线程回传 UI 用的收件窗口
-  os::windows::prepareUiThreadDispatch();
+  os::backend().prepareUiThreadDispatch();
 }
 
 void reportFatalError(const wchar_t* message) {

@@ -43,6 +43,49 @@ bool IsDirectoryPath(const std::wstring& path) {
   return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) != 0;
 }
 
+// 宿主程序图标 → 菜单位图。
+// 菜单由系统绘制，只能通过 MIIM_BITMAP 给一张位图；位图必须活到菜单关闭，
+// 所以由处理器对象持有，析构时释放。
+HBITMAP IconToBitmap(HICON icon, int size) {
+  if (!icon || size <= 0) return nullptr;
+
+  BITMAPINFO info = {};
+  info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+  info.bmiHeader.biWidth = size;
+  // 负高度 = 自上而下，直接对应菜单的绘制顺序
+  info.bmiHeader.biHeight = -size;
+  info.bmiHeader.biPlanes = 1;
+  info.bmiHeader.biBitCount = 32;
+  info.bmiHeader.biCompression = BI_RGB;
+
+  HDC screen = ::GetDC(nullptr);
+  void* bits = nullptr;
+  HBITMAP bitmap = ::CreateDIBSection(screen, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+  if (!bitmap) {
+    ::ReleaseDC(nullptr, screen);
+    return nullptr;
+  }
+  // 先清零：图标带 alpha，底色留 0 才是透明
+  if (bits) ::memset(bits, 0, static_cast<size_t>(size) * size * 4);
+
+  HDC dc = ::CreateCompatibleDC(screen);
+  HGDIOBJ old = ::SelectObject(dc, bitmap);
+  ::DrawIconEx(dc, 0, 0, icon, size, size, 0, nullptr, DI_NORMAL);
+  ::SelectObject(dc, old);
+  ::DeleteDC(dc);
+  ::ReleaseDC(nullptr, screen);
+  return bitmap;
+}
+
+// 菜单图标边长：随 DPI 放大，否则高分屏上会糊成一团
+int MenuIconSize() {
+  HDC screen = ::GetDC(nullptr);
+  if (!screen) return 16;
+  const int dpi = ::GetDeviceCaps(screen, LOGPIXELSX);
+  ::ReleaseDC(nullptr, screen);
+  return dpi > 0 ? ::MulDiv(16, dpi, 96) : 16;
+}
+
 std::wstring Quote(const std::wstring& s) {
   std::wstring out = L"\"";
   out += s;
@@ -142,9 +185,18 @@ class ContextMenu final : public IContextMenu, public IShellExtInit {
     const UINT capacity = lastCmd - firstCmd + 1;
     if (items.size() > capacity) items.resize(capacity);
 
+    // 每项都带上宿主程序图标：菜单里一眼能认出是谁
+    HBITMAP icon = iconBitmap();
     for (size_t i = 0; i < items.size(); ++i) {
-      ::InsertMenuW(menu, index++, MF_BYPOSITION | MF_STRING, firstCmd + static_cast<UINT>(i),
-                    items[i].label.c_str());
+      const UINT cmd = firstCmd + static_cast<UINT>(i);
+      ::InsertMenuW(menu, index++, MF_BYPOSITION | MF_STRING, cmd, items[i].label.c_str());
+      if (icon) {
+        MENUITEMINFOW info = {};
+        info.cbSize = sizeof(info);
+        info.fMask = MIIM_BITMAP;
+        info.hbmpItem = icon;
+        ::SetMenuItemInfoW(menu, cmd, FALSE, &info);
+      }
       if (items[i].separatorAfter) {
         ::InsertMenuW(menu, index++, MF_BYPOSITION | MF_SEPARATOR, 0, nullptr);
       }
@@ -177,7 +229,28 @@ class ContextMenu final : public IContextMenu, public IShellExtInit {
   }
 
  private:
-  ~ContextMenu() { ::InterlockedDecrement(&g_objectCount); }
+  ~ContextMenu() {
+    if (icon_) ::DeleteObject(icon_);
+    ::InterlockedDecrement(&g_objectCount);
+  }
+
+  // 宿主图标按需取一次；同一处理器生命周期内复用
+  HBITMAP iconBitmap() {
+    if (iconLoaded_) return icon_;
+    iconLoaded_ = true;
+
+    const std::wstring exe = AppPath();
+    if (exe.empty()) return nullptr;
+
+    const int size = MenuIconSize();
+    // 取小图标：菜单项高度有限，系统会再缩放到合适尺寸
+    HICON icon = nullptr;
+    if (::ExtractIconExW(exe.c_str(), 0, nullptr, &icon, 1) > 0 && icon) {
+      icon_ = IconToBitmap(icon, size);
+      ::DestroyIcon(icon);
+    }
+    return icon_;
+  }
 
   static HRESULT MakeResult(USHORT count) {
     return MAKE_HRESULT(SEVERITY_SUCCESS, 0, count);
@@ -216,6 +289,9 @@ class ContextMenu final : public IContextMenu, public IShellExtInit {
 
   LONG refs_ = 1;
   std::vector<AiUI::ShellSelectionItem> selection_;
+  // 菜单图标：由本对象持有，菜单关闭后才释放
+  HBITMAP icon_ = nullptr;
+  bool iconLoaded_ = false;
 };
 
 // ── 类工厂 ──

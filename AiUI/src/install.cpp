@@ -7,7 +7,9 @@ namespace AiUI {
 
 bool isRunningElevated() { return platform()->isRunningElevated(); }
 
-bool relaunchElevated() { return platform()->relaunchElevated(); }
+bool relaunchElevated(const std::wstring& extraArgs) {
+  return platform()->relaunchElevated(extraArgs);
+}
 
 std::wstring defaultInstallDir(InstallScope scope) { return platform()->defaultInstallDir(scope); }
 
@@ -18,11 +20,6 @@ std::wstring installFiles(const std::wstring& targetDir, const std::vector<Insta
 std::wstring removeInstalledFiles(const std::wstring& targetDir,
                                   const std::vector<InstallFile>& files) {
   return platform()->removeInstalledFiles(targetDir, files);
-}
-
-std::wstring writeInstallMarker(const std::wstring& targetDir, const std::wstring& marker,
-                                const std::string& content) {
-  return platform()->writeInstallMarker(targetDir, marker, content);
 }
 
 std::wstring createShortcuts(const std::wstring& targetDir, const std::wstring& exeName,

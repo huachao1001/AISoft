@@ -18,8 +18,13 @@ std::wstring UnregisterContextMenu(AiUI::InstallScope scope = AiUI::currentInsta
 // 菜单是否已注册且指向当前可执行文件
 bool IsContextMenuRegistered(AiUI::InstallScope scope = AiUI::currentInstallScope());
 
-// 安装时选定的范围（安装版从标记文件读，开发期为当前用户）。
+// 安装时选定的范围（安装版从注册表探测，开发期为当前用户）。
 // 程序每次启动都按这个范围校对菜单，避免重复注册到另一个根键。
 AiUI::InstallScope InstalledScope();
+
+// 把本程序登记为受支持压缩包的候选打开方式，并校验是否仍有效。
+// 现代系统不允许静默抢占默认应用，用户需在系统提示里确认一次。
+std::wstring RegisterFileAssociations();
+bool AreFileAssociationsRegistered();
 
 }  // namespace shell

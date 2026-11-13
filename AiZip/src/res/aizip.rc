@@ -19,12 +19,12 @@ BEGIN
     BEGIN
         BLOCK "080404B0"
         BEGIN
-            VALUE "CompanyName", "AIZip"
-            VALUE "FileDescription", "AIZip 压缩软件"
+            VALUE "CompanyName", "爱压"
+            VALUE "FileDescription", "爱压 压缩软件"
             VALUE "FileVersion", "1.0.0.0"
             VALUE "InternalName", "AIZip"
             VALUE "OriginalFilename", "AIZip.exe"
-            VALUE "ProductName", "AIZip"
+            VALUE "ProductName", "爱压"
             VALUE "ProductVersion", "1.0.0.0"
         END
     END

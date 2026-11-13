@@ -60,6 +60,22 @@ bool isShellMenuHandlerRegistered(const ShellMenuHandler& handler) {
   return platform()->isShellMenuHandlerRegistered(handler);
 }
 
+InstallScope detectShellMenuScope(const ShellMenuHandler& handler) {
+  return platform()->detectShellMenuScope(handler);
+}
+
+std::wstring registerFileAssociations(const FileAssociation& association) {
+  return platform()->registerFileAssociations(association);
+}
+
+std::wstring unregisterFileAssociations(const FileAssociation& association) {
+  return platform()->unregisterFileAssociations(association);
+}
+
+bool areFileAssociationsRegistered(const FileAssociation& association) {
+  return platform()->areFileAssociationsRegistered(association);
+}
+
 // 嵌套类可以访问 TrayIcon 的私有成员，托盘事件就能直接回到应用回调
 class TrayIcon::Host final : public PlatformTrayHost {
  public:

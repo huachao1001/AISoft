@@ -1,4 +1,4 @@
-﻿// 平台后端接口
+// 平台后端接口
 //
 // 视图只通过这里与操作系统打交道。所有平台相关实现集中在 src/os/<platform>/，
 // 换平台时新增一份实现即可，控件代码一行不用改。
@@ -551,11 +551,30 @@ class Platform {
     (void)handler;
     return false;
   }
+  // 探测注册落在哪个范围；不知道的平台按当前用户处理
+  virtual InstallScope detectShellMenuScope(const ShellMenuHandler& handler) {
+    (void)handler;
+    return InstallScope::kCurrentUser;
+  }
+
+  // 文件类型关联：默认不支持，子类覆盖后才有行为
+  virtual std::wstring registerFileAssociations(const FileAssociation& association) {
+    (void)association;
+    return L"当前平台不支持";
+  }
+  virtual std::wstring unregisterFileAssociations(const FileAssociation& association) {
+    (void)association;
+    return L"当前平台不支持";
+  }
+  virtual bool areFileAssociationsRegistered(const FileAssociation& association) {
+    (void)association;
+    return false;
+  }
 
   // ── 安装与卸载 ──
   // 默认全部不支持；各平台后端按自己的目录约定与权限模型实现。
   virtual bool isRunningElevated() { return true; }
-  virtual bool relaunchElevated() { return false; }
+  virtual bool relaunchElevated(const std::wstring& extraArgs = {}) { (void)extraArgs; return false; }
   virtual std::wstring defaultInstallDir(InstallScope scope) {
     (void)scope;
     return {};
@@ -570,14 +589,6 @@ class Platform {
                                             const std::vector<InstallFile>& files) {
     (void)targetDir;
     (void)files;
-    return L"当前平台不支持";
-  }
-  virtual std::wstring writeInstallMarker(const std::wstring& targetDir,
-                                          const std::wstring& marker,
-                                          const std::string& content) {
-    (void)targetDir;
-    (void)marker;
-    (void)content;
     return L"当前平台不支持";
   }
   virtual std::wstring createShortcuts(const std::wstring& targetDir, const std::wstring& exeName,

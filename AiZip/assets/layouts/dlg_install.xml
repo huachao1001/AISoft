@@ -9,7 +9,7 @@
               paddingBottom="18" spacing="10" background="dialogBg">
 
   <!-- 标题与说明 -->
-  <TextView text="安装 AIZip" height="26" textColor="text" bold="true"/>
+  <TextView text="安装爱压" height="26" textColor="text" bold="true"/>
   <TextView text="选择安装范围，再把程序放到目标目录并挂上资源管理器右键菜单。"
             height="20" textColor="textMuted"/>
 

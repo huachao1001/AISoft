@@ -1,4 +1,4 @@
-﻿// 解压对话框
+// 解压对话框
 //
 // 只收集目标路径；真正的解压放在进度对话框里跑，因为它可能耗时很久。
 // 密码不在这里配置：打开压缩包时若发现需要密码，由 OpenArchiveWithPassword
@@ -23,7 +23,7 @@ namespace {
 std::wstring defaultTargetDir() {
   if (!g_app.archivePath.empty()) {
     const std::wstring dir = util::DirName(g_app.archivePath);
-    const std::wstring stem = util::FileStem(g_app.archivePath);
+    const std::wstring stem = util::ArchiveStem(g_app.archivePath);
     return util::JoinPath(dir, stem);
   }
   if (!g_app.settings.extractDir.empty()) return g_app.settings.extractDir;
@@ -136,7 +136,7 @@ bool DlgExtract::onAccept() {
   std::wstring target = target_ ? target_->text() : std::wstring();
   if (target.empty()) {
     AiUI::MessageBoxParams params;
-    params.title = L"AIZip";
+    params.title = L"爱压";
     params.message = L"请填写解压目标路径。";
     params.icon = AiUI::MessageBoxIcon::kInfo;
     AiUI::platform()->showMessageBox(window()->handle(), params);
@@ -145,7 +145,7 @@ bool DlgExtract::onAccept() {
   target = util::AbsolutePath(target);
   if (!util::EnsureDirectory(target)) {
     AiUI::MessageBoxParams params;
-    params.title = L"AIZip";
+    params.title = L"爱压";
     params.message = L"无法创建目标文件夹。";
     params.icon = AiUI::MessageBoxIcon::kError;
     AiUI::platform()->showMessageBox(window()->handle(), params);
@@ -176,7 +176,7 @@ void runExtractTask(AiUI::NativeHandle owner, const ExtractTask& task) {
           int result = 1;
           RunOnUiThread([&] {
             AiUI::MessageBoxParams params;
-            params.title = L"AIZip";
+            params.title = L"爱压";
             params.message = L"文件已存在：\n\n" + path + L"\n\n是否覆盖？";
             params.icon = AiUI::MessageBoxIcon::kWarning;
             params.buttons = AiUI::MessageBoxButtons::kYesNo;
@@ -200,7 +200,7 @@ void runExtractTask(AiUI::NativeHandle owner, const ExtractTask& task) {
   if (!ok) {
     if (!error.empty()) {
       AiUI::MessageBoxParams params;
-      params.title = L"AIZip";
+      params.title = L"爱压";
       params.message = L"解压失败：\n" + error;
       params.icon = AiUI::MessageBoxIcon::kError;
       AiUI::platform()->showMessageBox(owner, params);

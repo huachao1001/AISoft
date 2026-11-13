@@ -1,4 +1,4 @@
-﻿// 压缩对话框
+// 压缩对话框
 //
 // 原来的原生控件消息读写（BM_GETCHECK / CB_GETCURSEL / GetWindowText）
 // 全部换成了控件对象，界面状态只有一份来源。
@@ -279,7 +279,7 @@ bool DlgCompress::onAccept() {
   std::wstring outPath = path_ ? path_->text() : std::wstring();
   if (outPath.empty()) {
     AiUI::MessageBoxParams params;
-    params.title = L"AIZip";
+    params.title = L"爱压";
     params.message = L"请填写输出路径。";
     params.icon = AiUI::MessageBoxIcon::kInfo;
     AiUI::platform()->showMessageBox(window()->handle(), params);
@@ -290,7 +290,7 @@ bool DlgCompress::onAccept() {
   const std::wstring dir = util::DirName(outPath);
   if (!dir.empty() && !util::EnsureDirectory(dir)) {
     AiUI::MessageBoxParams params;
-    params.title = L"AIZip";
+    params.title = L"爱压";
     params.message = L"无法创建目标目录。";
     params.icon = AiUI::MessageBoxIcon::kError;
     AiUI::platform()->showMessageBox(window()->handle(), params);
@@ -305,7 +305,7 @@ bool DlgCompress::onAccept() {
     const uint64_t raw = rawVolumeBytes();
     if (raw > 0 && raw < kMinVolumeBytes) {
       AiUI::MessageBoxParams params;
-      params.title = L"AIZip";
+      params.title = L"爱压";
       params.message = L"分卷大小不能小于 0.1 GB。\n\n留空表示不分卷。";
       params.icon = AiUI::MessageBoxIcon::kInfo;
       AiUI::platform()->showMessageBox(window()->handle(), params);
@@ -315,7 +315,7 @@ bool DlgCompress::onAccept() {
   const std::wstring firstVolume = volumeSize > 0 ? arc::VolumePath(outPath, 1) : outPath;
   if (util::PathExists(firstVolume)) {
     AiUI::MessageBoxParams params;
-    params.title = L"AIZip";
+    params.title = L"爱压";
     params.message = volumeSize > 0 ? L"分卷文件已存在，是否覆盖？" : L"文件已存在，是否覆盖？";
     params.icon = AiUI::MessageBoxIcon::kWarning;
     params.buttons = AiUI::MessageBoxButtons::kYesNo;
@@ -335,7 +335,7 @@ bool DlgCompress::onAccept() {
     util::CollectSources(sources_, probe);
     if (probe.size() != 1) {
       AiUI::MessageBoxParams params;
-      params.title = L"AIZip";
+      params.title = L"爱压";
       params.message = std::wstring(L"「") + info.name +
                        L"」格式一次只能压缩一个文件。\n\n"
                        L"要打包多个文件或整个文件夹，请改用 TAR 组合格式。";
@@ -380,7 +380,7 @@ void runCompressTask(AiUI::NativeHandle owner, const CompressTask& task) {
 
   if (!ok && !error.empty()) {
     AiUI::MessageBoxParams params;
-    params.title = L"AIZip";
+    params.title = L"爱压";
     params.message = L"压缩失败：\n" + error;
     params.icon = AiUI::MessageBoxIcon::kError;
     AiUI::platform()->showMessageBox(owner, params);
@@ -392,7 +392,7 @@ void runCompressTask(AiUI::NativeHandle owner, const CompressTask& task) {
 void ShowCompressDialog(AiUI::NativeHandle owner, const std::vector<std::wstring>& sources) {
   if (sources.empty()) {
     AiUI::MessageBoxParams params;
-    params.title = L"AIZip";
+    params.title = L"爱压";
     params.message = L"没有可压缩的内容。";
     params.icon = AiUI::MessageBoxIcon::kInfo;
     AiUI::platform()->showMessageBox(owner, params);

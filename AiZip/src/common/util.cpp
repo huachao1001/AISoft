@@ -31,6 +31,28 @@ std::wstring FileStem(const std::wstring& path) {
   return (dot == std::wstring::npos) ? base : base.substr(0, dot);
 }
 
+std::wstring ArchiveStem(const std::wstring& path) {
+  // 组合后缀要连续剥两段，"a.tar.gz" 才算 a
+  static const wchar_t* kDoubleExts[] = {L".tar.gz", L".tar.bz2", L".tar.xz",
+                                         L".tar.zst", L".tar.z"};
+  const std::wstring name = BaseName(path);
+  std::wstring lowerName = name;
+  for (auto& c : lowerName) {
+    if (c >= L'A' && c <= L'Z') c = static_cast<wchar_t>(c - L'A' + L'a');
+  }
+
+  for (const wchar_t* ext : kDoubleExts) {
+    const std::wstring suffix = ext;
+    if (lowerName.size() > suffix.size() &&
+        lowerName.compare(lowerName.size() - suffix.size(), suffix.size(), suffix) == 0) {
+      return name.substr(0, name.size() - suffix.size());
+    }
+  }
+
+  const std::wstring stem = FileStem(path);
+  return stem;
+}
+
 std::wstring BaseName(const std::wstring& path) {
   // 兼容压缩包内的 '/' 分隔
   const size_t sep = path.find_last_of(L"\\/");

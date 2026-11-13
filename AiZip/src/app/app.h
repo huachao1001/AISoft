@@ -61,12 +61,14 @@ bool AppCanBack();
 bool AppCanForward();
 // 打开指定压缩包并弹出解压对话框（不进入包内浏览）
 bool AppExtractArchive(AiUI::NativeHandle owner, const std::wstring& path);
-// 解压到压缩包所在目录，不弹选项对话框
+// 解压到压缩包所在目录本身，不建同名子目录
 void AppExtractHere(const std::wstring& path);
+// 解压到以压缩包主名命名的子目录，目录自动创建
+void AppExtractToFolder(const std::wstring& path);
 
 // 外部发起的一次操作（资源管理器右键菜单、单实例转发、命令行）
 struct LaunchRequest {
-  enum class Action { kCompress, kExtract, kExtractHere, kQuickZip };
+  enum class Action { kCompress, kExtract, kExtractHere, kExtractToFolder, kQuickZip };
   Action action = Action::kCompress;
   // 命令行是否显式带了动作开关。没有时为“浏览模式”：开主窗口定位到 paths
   bool explicitAction = false;

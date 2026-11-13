@@ -29,7 +29,7 @@ MainActivity* g_activity = nullptr;
 // 消息框出口：图标与按钮组合由平台层映射到各系统原生样式
 void info(const std::wstring& text, AiUI::NativeHandle owner) {
   AiUI::MessageBoxParams params;
-  params.title = L"AIZip";
+  params.title = L"爱压";
   params.message = text;
   params.icon = AiUI::MessageBoxIcon::kInfo;
   AiUI::platform()->showMessageBox(owner, params);
@@ -37,7 +37,7 @@ void info(const std::wstring& text, AiUI::NativeHandle owner) {
 
 void warn(const std::wstring& text, AiUI::NativeHandle owner) {
   AiUI::MessageBoxParams params;
-  params.title = L"AIZip";
+  params.title = L"爱压";
   params.message = text;
   params.icon = AiUI::MessageBoxIcon::kWarning;
   AiUI::platform()->showMessageBox(owner, params);
@@ -173,7 +173,7 @@ MainActivity::MainActivity() {
   style.captionHeight = 0;
   setStyle(style);
   setMinSize(kMinWidth, kMinHeight);
-  setTitle(L"AIZip");
+  setTitle(L"爱压");
   // 主窗口不响应 Esc
   setEscapeCloses(false);
   // 主题名来自设置（themes.xml 里的 name）；查不到就落到浅色
@@ -449,7 +449,7 @@ void MainActivity::setFilterText(const std::wstring& text) {
 
 void MainActivity::updateTitle() {
   const std::wstring title =
-      g_app.archiveMode ? util::BaseName(g_app.archivePath) + L" - AIZip" : L"AIZip";
+      g_app.archiveMode ? util::BaseName(g_app.archivePath) + L" - 爱压" : L"爱压";
   setTitle(title);
 }
 

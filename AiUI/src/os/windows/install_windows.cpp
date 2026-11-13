@@ -4,6 +4,7 @@
 // 注册表那部分不在这里：右键菜单的注册由已落地的 exe 自己完成，
 // 组件是它的内嵌资源，安装器不该再维护一份同样的注册逻辑。
 #include "backend.h"
+#include "windows_backend.h"
 
 #include <shellapi.h>
 #include <shlobj.h>
@@ -92,7 +93,7 @@ bool createShellLink(const std::wstring& linkPath, const std::wstring& target,
 
 }  // namespace
 
-bool isRunningElevatedImpl() {
+bool WindowsBackend::isRunningElevated() {
   HANDLE token = nullptr;
   if (!::OpenProcessToken(::GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
 
@@ -103,15 +104,24 @@ bool isRunningElevatedImpl() {
   return ok != 0 && elevation.TokenIsElevated != 0;
 }
 
-bool relaunchElevatedImpl() {
-  const std::wstring exe = executablePathImpl();
+bool WindowsBackend::relaunchElevated(const std::wstring& extraArgs) {
+  const std::wstring exe = executablePath();
   if (exe.empty()) return false;
 
-  // 原命令行原样带过去，安装范围由界面参数决定，不靠提权继承
+  // 原命令行原样带过去，安装范围由界面参数决定，不靠提权继承。
+  // 只给含空格的参数加引号：无脑全加会把 --dir="C:\x" 变成 "--dir="C:\x""。
+  auto quoteIfNeeded = [](const std::wstring& arg) {
+    if (arg.find(L' ') == std::wstring::npos) return arg;
+    return L'"' + arg + L'"';
+  };
   std::wstring args;
-  for (const auto& arg : commandLineArgsImpl()) {
+  for (const auto& arg : commandLineArgs()) {
     if (!args.empty()) args += L' ';
-    args += L'"' + arg + L'"';
+    args += quoteIfNeeded(arg);
+  }
+  if (!extraArgs.empty()) {
+    if (!args.empty()) args += L' ';
+    args += extraArgs;
   }
 
   SHELLEXECUTEINFOW info = {};
@@ -151,14 +161,14 @@ std::wstring pickInstallVolume() {
   return {};
 }
 
-std::wstring defaultInstallDirImpl(InstallScope scope) {
+std::wstring WindowsBackend::defaultInstallDir(InstallScope scope) {
   (void)scope;  // 两种范围共用同一套盘位选择，差别只在子目录的写入权限
   const std::wstring volume = pickInstallVolume();
   if (volume.empty()) return {};
   return volume + L"\\AISoft\\AIZip";
 }
 
-std::wstring installFilesImpl(const std::wstring& targetDir, const std::vector<InstallFile>& files) {
+std::wstring WindowsBackend::installFiles(const std::wstring& targetDir, const std::vector<InstallFile>& files) {
   if (targetDir.empty()) return L"安装目录为空";
   if (!ensureDir(targetDir)) return L"无法创建安装目录：" + targetDir;
 
@@ -172,8 +182,9 @@ std::wstring installFilesImpl(const std::wstring& targetDir, const std::vector<I
   return {};
 }
 
-std::wstring removeInstalledFilesImpl(const std::wstring& targetDir,
-                                      const std::vector<InstallFile>& files) {  if (targetDir.empty()) return {};
+std::wstring WindowsBackend::removeInstalledFiles(const std::wstring& targetDir,
+                                                  const std::vector<InstallFile>& files) {
+  if (targetDir.empty()) return {};
   for (const auto& file : files) {
     if (file.fileName.empty()) continue;
     ::DeleteFileW((targetDir + L"\\" + file.fileName).c_str());
@@ -183,26 +194,9 @@ std::wstring removeInstalledFilesImpl(const std::wstring& targetDir,
   return {};
 }
 
-std::wstring writeInstallMarkerImpl(const std::wstring& targetDir, const std::wstring& marker,
-                                    const std::string& content) {
-  if (targetDir.empty() || marker.empty()) return L"安装目录或标记名为空";
-  if (!ensureDir(targetDir)) return L"无法创建安装目录：" + targetDir;
-
-  const std::wstring path = targetDir + L"\\" + marker;
-  HANDLE file = ::CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
-                              FILE_ATTRIBUTE_HIDDEN, nullptr);
-  if (file == INVALID_HANDLE_VALUE) return L"无法写入安装标记：" + path;
-
-  DWORD written = 0;
-  if (!content.empty()) {
-    ::WriteFile(file, content.data(), static_cast<DWORD>(content.size()), &written, nullptr);
-  }
-  ::CloseHandle(file);
-  return {};
-}
-
-std::wstring createShortcutsImpl(const std::wstring& targetDir, const std::wstring& exeName,
-                                const std::wstring& displayName, InstallScope scope) {
+std::wstring WindowsBackend::createShortcuts(const std::wstring& targetDir,
+                                             const std::wstring& exeName,
+                                             const std::wstring& displayName, InstallScope scope) {
   if (targetDir.empty() || exeName.empty()) return {};
 
   const std::wstring exe = targetDir + L"\\" + exeName;
@@ -217,14 +211,14 @@ std::wstring createShortcutsImpl(const std::wstring& targetDir, const std::wstri
                                                             : L"无法创建快捷方式";
 }
 
-std::wstring removeShortcutsImpl(const std::wstring& displayName, InstallScope scope) {
+std::wstring WindowsBackend::removeShortcuts(const std::wstring& displayName, InstallScope scope) {
   const std::wstring programs = startMenuPrograms(scope);
   if (programs.empty()) return {};
   ::DeleteFileW((programs + L"\\" + displayName + L".lnk").c_str());
   return {};
 }
 
-int runAndWaitImpl(const std::wstring& exePath, const std::wstring& arguments) {
+int WindowsBackend::runAndWait(const std::wstring& exePath, const std::wstring& arguments) {
   if (exePath.empty()) return -1;
 
   std::wstring command = L'"' + exePath + L'"';

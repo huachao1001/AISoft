@@ -105,7 +105,7 @@ add_custom_command(TARGET AiZip POST_BUILD
 
 # 右键菜单的动态组件：静态动词做不出「压缩到 rnd.zip」，只能交给进程内组件。
 # 组件形态、COM 注册、资源内嵌全在 AiUI 里，应用只给一份纯菜单逻辑。
-aiui_add_shell_menu_dll(aicmd
+aiui_add_shell_menu_dll(aizip
   APP AiZip
   APP_NAME "AiZip.exe"
   CLSID "{7B1F2C3A-5D4E-4F60-9A8B-1C2D3E4F5A6B}"

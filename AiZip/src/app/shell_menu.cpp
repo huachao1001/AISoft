@@ -5,11 +5,8 @@
 // 首次运行时由后端释放并注册，分发仍然只有一个文件。
 #include "shell_menu.h"
 
-#include "util.h"
-
-#include "AiUI/shell.h"
-
 #include "AiUI/platform.h"
+#include "AiUI/shell.h"
 
 namespace shell {
 namespace {
@@ -21,50 +18,27 @@ constexpr const wchar_t* kHandlerId = L"AIZip";
 // 组件标识。与 CMake 里 aiui_add_shell_menu_dll 的 CLSID 参数必须一致。
 constexpr const wchar_t* kHandlerClsid = L"{7B1F2C3A-5D4E-4F60-9A8B-1C2D3E4F5A6B}";
 
-// 已安装的版本把组件放在程序目录，卸载时能随程序一起清掉；
-// 开发期（build 目录里跑）仍放用户数据目录，免得构建产物混进 dll。
-// 判据是安装程序写下的标记文件，而不是目录名之类的猜测。
-std::wstring installedComponentDir() {
+// 组件永远与宿主 exe 同目录：安装版在程序目录，开发期在构建目录。
+// 两者都可写，也不再需要任何标记文件来判断「是不是安装版」。
+std::wstring componentDir() {
   const std::wstring exe = AiUI::platform()->executablePath();
   if (exe.empty()) return {};
-
   const size_t slash = exe.find_last_of(L'\\');
-  if (slash == std::wstring::npos) return {};
-  const std::wstring dir = exe.substr(0, slash);
-
-  // 标记文件由安装程序落盘，存在即视为安装版
-  if (!util::PathExists(dir + L"\\installed.marker")) return {};
-  return dir;
-}
-
-// 安装版的范围由安装程序决定并存进标记文件（如 "all-users"）。
-// 程序自己猜不出来：同一份 exe 装在 Program Files 还是用户目录，
-// 只有安装时知道。读不到就按当前用户处理。
-AiUI::InstallScope installedScope() {
-  const std::wstring exe = AiUI::platform()->executablePath();
-  if (exe.empty()) return AiUI::InstallScope::kCurrentUser;
-
-  const size_t slash = exe.find_last_of(L'\\');
-  if (slash == std::wstring::npos) return AiUI::InstallScope::kCurrentUser;
-
-  std::string text = AiUI::platform()->readFile(exe.substr(0, slash) + L"\\installed.marker", 256);
-  if (text.empty()) return AiUI::InstallScope::kCurrentUser;
-  return text.find("all-users") != std::string::npos ? AiUI::InstallScope::kAllUsers
-                                                     : AiUI::InstallScope::kCurrentUser;
+  return slash == std::wstring::npos ? std::wstring() : exe.substr(0, slash);
 }
 
 AiUI::ShellMenuHandler handler(AiUI::InstallScope scope) {
   AiUI::ShellMenuHandler h;
   h.id = kHandlerId;
   h.clsid = kHandlerClsid;
-  h.componentName = L"aicmd.dll";
+  h.componentName = L"aizip.dll";
   h.componentResourceId = 200;
-  h.displayName = L"AIZip 右键菜单";
+  h.displayName = L"爱压 右键菜单";
   // 文件与目录都要挂：右键文件夹是最常见的压缩入口
   h.targets = {L"*", L"Directory"};
   h.scope = scope;
   h.scopeExplicit = true;
-  h.componentDir = installedComponentDir();
+  h.componentDir = componentDir();
   return h;
 }
 
@@ -82,6 +56,39 @@ bool IsContextMenuRegistered(AiUI::InstallScope scope) {
   return AiUI::isShellMenuHandlerRegistered(handler(scope));
 }
 
-AiUI::InstallScope InstalledScope() { return installedScope(); }
+AiUI::InstallScope InstalledScope() {
+  // 不额外存状态：注册表里哪一边挂着我们的菜单，就是哪一边装的。
+  // 两边都没有（尚未装过）按当前用户处理。
+  return AiUI::detectShellMenuScope(handler(AiUI::InstallScope::kCurrentUser));
+}
+
+namespace {
+
+// 受支持的压缩包后缀：与 arc::Archive::IsArchiveFile 保持同一张表。
+// 改一处必须同步另一处，否则「双击能打开」和「归我们处理」会对不上。
+const wchar_t* const kAssociableExts[] = {
+    L".zip", L".7z",  L".rar", L".tar", L".gz",  L".tgz",  L".bz2", L".tbz2",
+    L".xz",  L".txz", L".cab", L".iso", L".wim", L".img",  L".jar", L".apk",
+    L".aar", L".epub", L".lzh", L".arj", L".z",   L".001",
+};
+
+AiUI::FileAssociation association(AiUI::InstallScope scope) {
+  AiUI::FileAssociation a;
+  a.progId = L"AIZip.Archive";
+  a.description = L"爱压 压缩包";
+  for (const wchar_t* ext : kAssociableExts) a.extensions.emplace_back(ext);
+  (void)scope;  // 范围由 AiUI::currentInstallScope() 决定
+  return a;
+}
+
+}  // namespace
+
+std::wstring RegisterFileAssociations() {
+  return AiUI::registerFileAssociations(association(AiUI::currentInstallScope()));
+}
+
+bool AreFileAssociationsRegistered() {
+  return AiUI::areFileAssociationsRegistered(association(AiUI::currentInstallScope()));
+}
 
 }  // namespace shell

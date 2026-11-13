@@ -123,7 +123,7 @@ AiUI::NativeHandle DialogOwner() {
 // 统一的提示框出口：图标与按钮组合在平台层映射到各系统的原生样式
 void Info(const std::wstring& text, AiUI::NativeHandle owner = nullptr) {
   AiUI::MessageBoxParams params;
-  params.title = L"AIZip";
+  params.title = L"爱压";
   params.message = text;
   params.icon = AiUI::MessageBoxIcon::kInfo;
   AiUI::platform()->showMessageBox(owner, params);
@@ -131,7 +131,7 @@ void Info(const std::wstring& text, AiUI::NativeHandle owner = nullptr) {
 
 void Warn(const std::wstring& text, AiUI::NativeHandle owner = nullptr) {
   AiUI::MessageBoxParams params;
-  params.title = L"AIZip";
+  params.title = L"爱压";
   params.message = text;
   params.icon = AiUI::MessageBoxIcon::kWarning;
   AiUI::platform()->showMessageBox(owner, params);
@@ -139,7 +139,7 @@ void Warn(const std::wstring& text, AiUI::NativeHandle owner = nullptr) {
 
 void Fail(const std::wstring& text, AiUI::NativeHandle owner = nullptr) {
   AiUI::MessageBoxParams params;
-  params.title = L"AIZip";
+  params.title = L"爱压";
   params.message = text;
   params.icon = AiUI::MessageBoxIcon::kError;
   AiUI::platform()->showMessageBox(owner, params);
@@ -262,16 +262,11 @@ bool AppExtractArchive(AiUI::NativeHandle owner, const std::wstring& path) {
   return true;
 }
 
-// 解压到压缩包所在目录下的同名子目录：不弹选项对话框，冲突时逐个询问。
-// 包内若已带唯一顶层目录，就用它来隔离（否则会多出一层 a\a\）；
-// 其余情况新建同名目录，避免包内文件散落到当前目录。
-void AppExtractHere(const std::wstring& path) {
-  const AiUI::NativeHandle owner = DialogOwner();
-  if (!arc::Archive::IsArchiveFile(path) || !util::PathExists(path)) {
-    Warn(L"不是可识别的压缩包：\n" + path, owner);
-    return;
-  }
-
+// 打开压缩包并把内容解到 targetDir，不弹选项对话框；冲突时逐个询问。
+// stripIfTopMatches 非空时：包内唯一顶层目录与它同名就去掉这层，避免 a\a\。
+// 返回 false 表示已提示过错误或用户取消。
+bool ExtractArchiveInto(const std::wstring& path, const std::wstring& targetDir,
+                        const std::wstring& stripIfTopMatches, AiUI::NativeHandle owner) {
   // 用全局 archive：进度框在后台线程跑，局部对象在收尾阶段析构会和
   // 线程里的回调抢生命周期，对话框路径一直用 g_app.archive 也是这个原因。
   g_app.archive.Close();
@@ -280,36 +275,17 @@ void AppExtractHere(const std::wstring& path) {
     if (!r.error.empty()) {
       Fail(L"无法打开压缩包：\n" + path + L"\n\n" + r.error, owner);
     }
-    return;
-  }
-
-  const std::wstring parent = util::DirName(path);
-  const std::wstring topDir = arc::Archive::SingleTopLevelDir(g_app.archive.Entries());
-  // 包内已有的公共目录可用时直接解压到父目录，靠它隔离；
-  // 否则新建一个目录，并把包内那层公共目录剥掉（避免 a\a\）。
-  const bool reuseTopDir = !topDir.empty() && !util::PathExists(util::JoinPath(parent, topDir));
-  std::wstring target = parent;
-  if (!reuseTopDir) {
-    // 目录名取包内公共目录名，其次压缩包主名（"a.tar.gz" → "a.tar"），
-    // 与解压对话框的默认命名一致。不用 MakeUniquePath：它按扩展名拆分，
-    // 会把 .001 这类分卷后缀当成扩展名。
-    std::wstring stem = topDir;
-    if (stem.empty()) stem = util::FileStem(path);
-    if (stem.empty()) stem = L"archive";
-    target = util::JoinPath(parent, stem);
-    for (int i = 2; util::PathExists(target) && i < 10000; ++i) {
-      target = util::JoinPath(parent, stem + L" (" + std::to_wstring(i) + L")");
-    }
-    if (!util::EnsureDirectory(target)) {
-      Fail(L"无法创建目标文件夹：\n" + target, owner);
-      return;
-    }
+    return false;
   }
 
   arc::ExtractOptions opts;
-  opts.targetDir = target;
-  // 外层已建目录时，包内那层公共目录要去掉，否则会多套一层
-  if (!reuseTopDir) opts.stripTopDir = topDir;
+  opts.targetDir = targetDir;
+  if (!stripIfTopMatches.empty()) {
+    const std::wstring topDir = arc::Archive::SingleTopLevelDir(g_app.archive.Entries());
+    if (!topDir.empty() && AiUI::platform()->equalsPath(topDir, stripIfTopMatches)) {
+      opts.stripTopDir = topDir;
+    }
+  }
 
   std::wstring error;
   const bool ok = ui::ShowProgressDialog(owner, L"正在解压", path, [&](const arc::ProgressFn& prog) {
@@ -320,7 +296,7 @@ void AppExtractHere(const std::wstring& path) {
           int result = 0;
           ui::RunOnUiThread([&] {
             AiUI::MessageBoxParams params;
-            params.title = L"AIZip";
+            params.title = L"爱压";
             params.message = L"文件已存在：\n\n" + filePath + L"\n\n是否覆盖？";
             params.icon = AiUI::MessageBoxIcon::kWarning;
             params.buttons = AiUI::MessageBoxButtons::kYesNo;
@@ -345,6 +321,39 @@ void AppExtractHere(const std::wstring& path) {
   // 关掉句柄：否则压缩包会一直被占用，用户改不了名也删不掉
   g_app.archive.Close();
   if (ok && g_app.mainWnd) AppRefreshView();
+  return ok;
+}
+
+// 解压到压缩包所在目录本身：不建同名子目录，包内结构原样落到当前目录。
+void AppExtractHere(const std::wstring& path) {
+  const AiUI::NativeHandle owner = DialogOwner();
+  if (!arc::Archive::IsArchiveFile(path) || !util::PathExists(path)) {
+    Warn(L"不是可识别的压缩包：\n" + path, owner);
+    return;
+  }
+  ExtractArchiveInto(path, util::DirName(path), L"", owner);
+}
+
+// 解压到以压缩包主名命名的子目录（"a.zip" → 同级 "a\"），目录自动创建。
+void AppExtractToFolder(const std::wstring& path) {
+  const AiUI::NativeHandle owner = DialogOwner();
+  if (!arc::Archive::IsArchiveFile(path) || !util::PathExists(path)) {
+    Warn(L"不是可识别的压缩包：\n" + path, owner);
+    return;
+  }
+
+  const std::wstring parent = util::DirName(path);
+  // 目录名取压缩包主名："a.tar.gz" → "a"，与菜单文案同一套规则。
+  // 不用 MakeUniquePath：它按扩展名拆分，会把 .001 这类分卷后缀当成扩展名。
+  std::wstring stem = util::ArchiveStem(path);
+  if (stem.empty()) stem = L"archive";
+  const std::wstring target = util::JoinPath(parent, stem);
+  if (!util::EnsureDirectory(target)) {
+    Fail(L"无法创建目标文件夹：\n" + target, owner);
+    return;
+  }
+
+  ExtractArchiveInto(path, target, stem, owner);
 }
 
 void AppGoUp() {
@@ -455,6 +464,9 @@ LaunchRequest ParseLaunchArgs() {
     } else if (EqualsNoCase(a, L"-extract-here")) {
       req.action = LaunchRequest::Action::kExtractHere;
       actionGiven = true;
+    } else if (EqualsNoCase(a, L"-extract-to-folder")) {
+      req.action = LaunchRequest::Action::kExtractToFolder;
+      actionGiven = true;
     } else if (EqualsNoCase(a, L"-extract")) {
       req.action = LaunchRequest::Action::kExtract;
       actionGiven = true;
@@ -476,6 +488,8 @@ std::wstring SerializeLaunch(const LaunchRequest& req) {
     s = L"-extract";
   } else if (req.action == LaunchRequest::Action::kExtractHere) {
     s = L"-extract-here";
+  } else if (req.action == LaunchRequest::Action::kExtractToFolder) {
+    s = L"-extract-to-folder";
   } else if (req.action == LaunchRequest::Action::kQuickZip) {
     s = L"-compress-zip";
   }
@@ -504,6 +518,9 @@ LaunchRequest DeserializeLaunch(const std::wstring& packed) {
       actionGiven = true;
     } else if (EqualsNoCase(line, L"-extract-here")) {
       req.action = LaunchRequest::Action::kExtractHere;
+      actionGiven = true;
+    } else if (EqualsNoCase(line, L"-extract-to-folder")) {
+      req.action = LaunchRequest::Action::kExtractToFolder;
       actionGiven = true;
     } else if (EqualsNoCase(line, L"-extract")) {
       req.action = LaunchRequest::Action::kExtract;
@@ -562,6 +579,10 @@ void AppDispatchLaunch(const LaunchRequest& req) {
   if (req.action == LaunchRequest::Action::kExtractHere) {
     // 多选时逐个解压到各自目录，不再要求只有一个包
     for (const auto& p : req.paths) AppExtractHere(p);
+    return;
+  }
+  if (req.action == LaunchRequest::Action::kExtractToFolder) {
+    for (const auto& p : req.paths) AppExtractToFolder(p);
     return;
   }
   if (req.paths.size() > 1) {

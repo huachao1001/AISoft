@@ -21,9 +21,8 @@ namespace {
 // 内嵌资源：CMake 把构建出的 AiZip.exe 作为 RCDATA 打进本程序
 constexpr int kAiZipResourceId = 101;
 
-// 落地文件名与显示名
+// 落地文件名
 constexpr const wchar_t* kExeName = L"AiZip.exe";
-constexpr const wchar_t* kDisplayName = L"AIZip";
 
 // 让已落地的程序注册右键菜单后退出。参数名与 AiZip 的 main 约定一致。
 constexpr const wchar_t* kRegisterArg = L"--register-shell-menu";
@@ -40,6 +39,28 @@ int AiUI::runApp() {
       &AiUI::ThemeRegistry::getOr(L"light", AiUI::kLightTheme));
 
   ui::InstallActivity activity;
+
+  // 提权后的新实例：按带过来的目录与范围直接安装，用户只点一次 UAC
+  {
+    const auto args = AiUI::platform()->commandLineArgs();
+    bool retry = false;
+    std::wstring dir;
+    AiUI::InstallScope scope = AiUI::InstallScope::kAllUsers;
+    for (const auto& arg : args) {
+      if (arg == L"--elevated-retry") retry = true;
+      else if (arg == L"--scope=all-users") scope = AiUI::InstallScope::kAllUsers;
+      else if (arg == L"--scope=current-user") scope = AiUI::InstallScope::kCurrentUser;
+      else if (arg.rfind(L"--dir=", 0) == 0) dir = arg.substr(6);
+    }
+    if (retry) {
+      // 去掉可能存在的包裹引号
+      if (dir.size() >= 2 && dir.front() == L'"' && dir.back() == L'"') {
+        dir = dir.substr(1, dir.size() - 2);
+      }
+      activity.setAutoInstall(dir, scope);
+    }
+  }
+
   if (!activity.create(nullptr)) {
     AiUI::reportFatalError(L"安装程序窗口创建失败。");
     AiUI::fonts.destroy();

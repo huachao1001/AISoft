@@ -15,15 +15,9 @@ namespace {
 // 内嵌资源 id 与落地文件名。资源由 CMake 打进本程序（RCDATA）。
 constexpr int kAiZipResourceId = 101;
 const wchar_t* kExeName = L"AiZip.exe";
-const wchar_t* kDisplayName = L"AIZip";
+const wchar_t* kDisplayName = L"爱压";
 
-// 让已落地的程序完成右键菜单注册。组件是它自己的内嵌资源，安装器不重复实现。
-const wchar_t* kRegisterArg = L"--register-shell-menu";
-
-const wchar_t* kTitle = L"AIZip";
-
-// 标记文件：安装版把右键组件放在程序目录，程序靠它区分「安装版」与开发期构建
-const wchar_t* kInstalledMarker = L"installed.marker";
+const wchar_t* kTitle = L"爱压";
 void messageBox(AiUI::NativeHandle owner, const std::wstring& text,
                 AiUI::MessageBoxIcon icon) {
   AiUI::MessageBoxParams params;
@@ -36,7 +30,7 @@ void messageBox(AiUI::NativeHandle owner, const std::wstring& text,
 }  // namespace
 
 void InstallActivity::onCreate() {
-  setTitle(L"安装 AIZip");
+  setTitle(L"安装爱压");
 
   scopeGroup_ = findView<AiUI::RadioGroup>("scopeGroup");
   dirBox_ = findView<AiUI::InputBox>("dir");
@@ -47,37 +41,55 @@ void InstallActivity::onCreate() {
       applyScope(index == 1 ? AiUI::InstallScope::kAllUsers : AiUI::InstallScope::kCurrentUser,
                  true);
     });
-    // 默认「仅当前用户」：不需要提权，装完立刻可用
-    scopeGroup_->setCheckedIndex(0);
+    // 默认「所有用户」：装一次全机可用，省得每个账户再装一遍
+    scopeGroup_->setCheckedIndex(1);
   }
 
-  applyScope(AiUI::InstallScope::kCurrentUser, true);
+  applyScope(AiUI::InstallScope::kAllUsers, true);
 
   if (auto* browseButton = findView<AiUI::Button>("btnBrowse")) {
     browseButton->setOnClick([this] { browse(); });
   }
   if (auto* installButton = findView<AiUI::Button>("btnInstall")) {
-    installButton->setOnClick([this] {
-      const std::wstring error = install();
-      if (!error.empty()) {
-        messageBox(window()->handle(), error, AiUI::MessageBoxIcon::kError);
-        return;
-      }
-      messageBox(window()->handle(),
-                 L"安装完成。\n\n在资源管理器里右键文件或文件夹即可看到 AIZip 菜单。",
-                 AiUI::MessageBoxIcon::kInfo);
-      close();
-    });
+    installButton->setOnClick([this] { runInstall(); });
   }
   if (auto* cancel = findView<AiUI::Button>("btnCancel")) {
     cancel->setOnClick([this] { close(); });
   }
+
+  // 提权后的新进程：按带过来的选择直接装，用户只需在 UAC 上点一次「是」
+  if (autoInstall_) {
+    if (dirBox_) dirBox_->setText(autoDir_);
+    if (scopeGroup_) {
+      scopeGroup_->setCheckedIndex(autoScope_ == AiUI::InstallScope::kAllUsers ? 1 : 0);
+    }
+    applyScope(autoScope_, false);
+    runInstall();
+  }
+}
+
+void InstallActivity::setAutoInstall(const std::wstring& dir, AiUI::InstallScope scope) {
+  autoInstall_ = true;
+  autoDir_ = dir;
+  autoScope_ = scope;
+}
+
+void InstallActivity::runInstall() {
+  const std::wstring error = install();
+  if (!error.empty()) {
+    messageBox(window()->handle(), error, AiUI::MessageBoxIcon::kError);
+    return;
+  }
+  // 装完直接打开程序，用户不用去开始菜单里找
+  const std::wstring exe = selectedDir() + L"\\" + kExeName;
+  AiUI::platform()->openWithSystem(exe);
+  close();
 }
 
 AiUI::InstallScope InstallActivity::selectedScope() const {
-  // 索引 0 = 当前用户，1 = 所有用户；未选中时退回当前用户
-  const int index = scopeGroup_ ? scopeGroup_->checkedIndex() : 0;
-  return index == 1 ? AiUI::InstallScope::kAllUsers : AiUI::InstallScope::kCurrentUser;
+  // 索引 0 = 当前用户，1 = 所有用户；未选中时退回默认的「所有用户」
+  const int index = scopeGroup_ ? scopeGroup_->checkedIndex() : 1;
+  return index == 0 ? AiUI::InstallScope::kCurrentUser : AiUI::InstallScope::kAllUsers;
 }
 
 std::wstring InstallActivity::selectedDir() const {
@@ -114,9 +126,12 @@ std::wstring InstallActivity::install() {
   std::wstring dir = selectedDir();
   if (dir.empty()) return L"请填写安装目录。";
 
-  // 所有用户必须提权：Program Files 与 HKLM 都写不了
+  // 所有用户必须提权：Program Files 与 HKLM 都写不了。
+  // 提权后的新进程带 --elevated-retry 自动继续，用户只需在 UAC 点一次「是」。
   if (scope == AiUI::InstallScope::kAllUsers && !AiUI::isRunningElevated()) {
-    if (AiUI::relaunchElevated()) {
+    const std::wstring retryArgs =
+        L"--elevated-retry --scope=all-users --dir=\"" + dir + L"\"";
+    if (AiUI::relaunchElevated(retryArgs)) {
       close();
       return {};
     }
@@ -128,16 +143,13 @@ std::wstring InstallActivity::install() {
   const std::wstring writeError = AiUI::installFiles(dir, files);
   if (!writeError.empty()) return writeError;
 
-  // 安装标记：程序据此把右键组件放到自己目录，并按这里的范围注册菜单
-  const std::string markerContent = scope == AiUI::InstallScope::kAllUsers
-                                        ? "scope=all-users\r\n"
-                                        : "scope=current-user\r\n";
-  const std::wstring markerError = AiUI::writeInstallMarker(dir, kInstalledMarker, markerContent);
-  if (!markerError.empty()) return markerError;
-
-  // 2. 注册右键菜单：让装好的程序自己做，组件是它的内嵌资源
+  // 2. 注册右键菜单：让装好的程序自己做，组件是它的内嵌资源。
+  //    范围必须显式传过去：注册表写 HKLM 还是 HKCU 只有这里知道。
   const std::wstring exePath = dir + L"\\" + kExeName;
-  const int exitCode = AiUI::runAndWait(exePath, kRegisterArg);
+  const std::wstring registerArgs =
+      scope == AiUI::InstallScope::kAllUsers ? L"--register-shell-menu --scope=all-users"
+                                             : L"--register-shell-menu --scope=current-user";
+  const int exitCode = AiUI::runAndWait(exePath, registerArgs);
   if (exitCode != 0) {
     return L"右键菜单注册失败（退出码 " + std::to_wstring(exitCode) +
            L"）。\n\n程序已安装到：" + dir;

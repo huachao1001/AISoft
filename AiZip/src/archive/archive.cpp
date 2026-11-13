@@ -894,9 +894,9 @@ bool Archive::IsArchiveFile(const std::wstring& path) {
   const std::wstring ext = util::FileExtension(path);
   static const wchar_t* kExts[] = {L".zip",  L".7z",   L".rar",  L".tar", L".gz",
                                    L".tgz",  L".bz2",  L".tbz2", L".xz",  L".txz",
-                                   L".cab",  L".iso",  L".wim",  L".jar", L".apk",
-                                   L".aar",  L".epub", L".lzh",  L".arj", L".z",
-                                   L".001"};
+                                   L".cab",  L".iso",  L".wim",  L".img", L".jar",
+                                   L".apk",  L".aar",  L".epub", L".lzh", L".arj",
+                                   L".z",    L".001"};
   for (const wchar_t* e : kExts) {
     if (::CompareStringOrdinal(ext.c_str(), -1, e, -1, TRUE) == CSTR_EQUAL) return true;
   }

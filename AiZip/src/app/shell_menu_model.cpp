@@ -14,8 +14,8 @@ namespace {
 // 组件里不能链接压缩内核，所以只能各自持有一份。
 constexpr const wchar_t* kArchiveExts[] = {
     L".zip",  L".7z",   L".rar", L".tar", L".gz",  L".tgz", L".bz2", L".tbz2",
-    L".xz",   L".txz",  L".cab", L".iso", L".wim", L".jar", L".apk", L".aar",
-    L".epub", L".lzh",  L".arj", L".z",   L".001",
+    L".xz",   L".txz",  L".cab", L".iso", L".wim", L".img", L".jar", L".apk",
+    L".aar",  L".epub", L".lzh", L".arj", L".z",   L".001",
 };
 
 wchar_t lower(wchar_t c) { return (c >= L'A' && c <= L'Z') ? static_cast<wchar_t>(c - L'A' + L'a') : c; }
@@ -71,6 +71,27 @@ bool isArchiveName(const std::wstring& path) {
   return false;
 }
 
+// 解压目标目录名：压缩包主名（"a.tar.gz" → "a"）。
+// 规则与 util::ArchiveStem 一致——组件不链接应用代码，只能各持一份。
+std::wstring extractFolderName(const std::wstring& path) {
+  static const wchar_t* kDoubleExts[] = {L".tar.gz", L".tar.bz2", L".tar.xz",
+                                         L".tar.zst", L".tar.z"};
+  const std::wstring name = baseName(path);
+  std::wstring lowerName = name;
+  for (auto& c : lowerName) c = lower(c);
+
+  for (const wchar_t* ext : kDoubleExts) {
+    const std::wstring suffix = ext;
+    if (lowerName.size() > suffix.size() &&
+        lowerName.compare(lowerName.size() - suffix.size(), suffix.size(), suffix) == 0) {
+      return name.substr(0, name.size() - suffix.size());
+    }
+  }
+
+  const std::wstring stem = fileStem(path);
+  return stem.empty() ? L"archive" : stem;
+}
+
 // 压缩输出名：单选取主名，多选取父目录名。
 // 多选用第一个文件的名字会让用户以为只压了那一个，看不出整批都进去了。
 std::wstring compressTargetName(const std::vector<AiUI::ShellSelectionItem>& selection) {
@@ -103,8 +124,9 @@ AiUI::ShellMenuResult aiuiBuildShellMenu(const std::vector<AiUI::ShellSelectionI
 
   // 选中了压缩包就只给解压入口：再压一层不是用户想要的
   if (!anyArchive) {
-    result.items.push_back({L"压缩到 " + compressTargetName(selection) + L".zip", L"-compress-zip",
-                            false});
+    // 输出名加引号，长名字或含空格时一眼能看清边界
+    result.items.push_back(
+        {L"压缩到 \"" + compressTargetName(selection) + L".zip\"", L"-compress-zip", false});
     result.items.push_back({L"添加到压缩文件...", L"-compress", true});
     return result;
   }
@@ -112,7 +134,13 @@ AiUI::ShellMenuResult aiuiBuildShellMenu(const std::vector<AiUI::ShellSelectionI
   // 解压只对单个压缩包有明确语义：多选时"解压到哪里"指向不明
   if (allArchives && selection.size() == 1) {
     result.items.push_back({L"打开压缩文件", L"", false});
+    // 「解压到...」是要用户自己选位置的通用入口，放在带具体目录名的那项之前
     result.items.push_back({L"解压到...", L"-extract", false});
+    // 解压到同名子目录：目录名取压缩包主名，自动创建。
+    // 名字加引号，长名字或含空格时一眼能看清边界。
+    result.items.push_back({L"解压到 \"" + extractFolderName(selection.front().path) + L"\"",
+                            L"-extract-to-folder", false});
+    // 直接摊到当前目录，不建子目录
     result.items.push_back({L"解压到当前目录", L"-extract-here", true});
   }
   return result;

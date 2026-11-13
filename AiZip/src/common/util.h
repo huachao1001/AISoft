@@ -12,6 +12,9 @@ namespace util {
 // ── 路径 ──
 std::wstring FileExtension(const std::wstring& path);        // 含点，小写
 std::wstring FileStem(const std::wstring& path);            // 去目录去扩展
+// 压缩包主名：组合后缀连续剥两段（"a.tar.gz" → "a"），否则同 FileStem。
+// 解压目标目录的命名统一用它，菜单文案与实际目录才不会错位。
+std::wstring ArchiveStem(const std::wstring& path);
 std::wstring BaseName(const std::wstring& path);            // 去目录
 std::wstring DirName(const std::wstring& path);
 std::wstring JoinPath(const std::wstring& a, const std::wstring& b);

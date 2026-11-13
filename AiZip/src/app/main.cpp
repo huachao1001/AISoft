@@ -14,24 +14,30 @@
 #include "AiUI/platform.h"
 #include "AiUI/theme_registry.h"
 
-namespace {
-
-// 无参数启动且已有主窗口时，把路径转过去；返回是否应退出本进程
-bool forwardIfRunning(const std::wstring& path) {
-  return ui::ForwardPathToRunningWindow(path);
-}
-
-}  // namespace
-
 int AiUI::runApp() {
   AiUI::initHostProcess();
   AiUI::startupPlatform();
 
   // 安装程序的注册通道：装好文件后由它拉起本程序，写完注册表就退出。
   // 放在读配置、建窗口之前，退出码就是注册结果，安装器据此判断成败。
-  for (const auto& arg : AiUI::platform()->commandLineArgs()) {
-    if (arg == L"--register-shell-menu") {
-      const std::wstring err = shell::RegisterContextMenu();
+  // --scope=all-users 由安装器按用户选择传入：注册表写 HKLM 还是 HKCU
+  // 只有安装那一刻知道，程序自己猜不出来。
+  {
+    const auto args = AiUI::platform()->commandLineArgs();
+    bool registering = false;
+    for (const auto& arg : args) {
+      if (arg == L"--register-shell-menu") registering = true;
+      else if (arg == L"--scope=all-users") AiUI::setCurrentInstallScope(AiUI::InstallScope::kAllUsers);
+      else if (arg == L"--scope=current-user") {
+        AiUI::setCurrentInstallScope(AiUI::InstallScope::kCurrentUser);
+      }
+    }
+    if (registering) {
+      // 文件关联失败不算致命：右键菜单才是主功能，关联只是「打开方式」
+      // 里的候选。只要菜单注册成功就报成功，否则用户会看到一个装完却
+      // 打不开的提示，而实际上程序完全可用。
+      std::wstring err = shell::RegisterContextMenu(AiUI::currentInstallScope());
+      shell::RegisterFileAssociations();
       AiUI::shutdownPlatform();
       return err.empty() ? 0 : 1;
     }
@@ -49,16 +55,18 @@ int AiUI::runApp() {
   // 右键菜单默认注册到当前用户（不需要管理员，也不改任何文件关联）。
   // 程序换位置后旧菜单会指向失效路径，所以每次启动都校对一遍。
   // 安装版按安装时选的范围注册，否则「所有用户」装的程序会又往 HKCU 写一份。
+  //
+  // 这里是自愈性质的后台动作，失败一律静默：用户点的是「打开压缩文件」，
+  // 不该因为写不了注册表而被弹窗拦住。注册失败的真实报错由安装器的
+  // --register-shell-menu 通道通过退出码上报。
   AiUI::setCurrentInstallScope(shell::InstalledScope());
-  if (!shell::IsContextMenuRegistered(shell::InstalledScope())) {
-    const std::wstring err = shell::RegisterContextMenu(shell::InstalledScope());
-    if (!err.empty()) {
-      AiUI::MessageBoxParams params;
-      params.title = L"AIZip";
-      params.message = err;
-      params.icon = AiUI::MessageBoxIcon::kWarning;
-      AiUI::platform()->showMessageBox(nullptr, params);
-    }
+  if (!shell::IsContextMenuRegistered(AiUI::currentInstallScope())) {
+    shell::RegisterContextMenu(AiUI::currentInstallScope());
+  }
+  // 文件关联同样是自愈性质：登记为受支持后缀的候选打开方式。
+  // 静默处理，失败不影响主流程。
+  if (!shell::AreFileAssociationsRegistered()) {
+    shell::RegisterFileAssociations();
   }
 
   LaunchRequest req = ParseLaunchArgs();
@@ -81,20 +89,9 @@ int AiUI::runApp() {
     AiUI::fonts.destroy();
     return 0;
   }
-  // 浏览模式：已有主窗口时把路径转过去。用平台层的单实例锁判断，
-  // 避免两个进程几乎同时启动时都在对方建窗之前查不到窗口。
-  const std::wstring targetPath = req.paths.empty() ? L"" : req.paths[0];
-  if (!AiUI::platform()->claimSingleInstance(inst::kBrowserInstanceId)) {
-    // 先启动的进程可能还没建完窗口，短暂等一下再转发
-    bool forwarded = false;
-    for (int i = 0; i < 20 && !forwarded; ++i) {
-      forwarded = forwardIfRunning(targetPath);
-      if (!forwarded) AiUI::platform()->sleepMillis(50);
-    }
-    if (!forwarded) forwardIfRunning(L"");
-    AiUI::fonts.destroy();
-    return 0;
-  }
+  // 浏览模式：每个进程独立建窗口，不转发到已有窗口。
+  // 用户打开两个压缩包时就是要两个窗口同时对比，把第二个塞进第一个
+  // 反而会丢掉前一个的浏览位置。
 
   // 初始目录：上次浏览的目录，其次用户目录，最后退回根目录
   if (!g_app.settings.lastDir.empty() && util::IsDirectory(g_app.settings.lastDir)) {
@@ -155,6 +152,9 @@ int AiUI::runApp() {
   if (g_app.settings.winMax && activity.window()) {
     if (AiUI::PlatformWindow* pw = activity.window()->platformWindow()) pw->toggleMaximize();
   }
+  // 双击压缩包拉起的是新进程：系统可能把焦点留在资源管理器，
+  // 窗口只闪一下任务栏。这里显式置顶，保证用户立刻看到内容。
+  if (activity.window()) AiUI::platform()->bringToFront(activity.window()->handle());
 
   const int code = AiUI::platform()->runEventLoop();
 

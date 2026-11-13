@@ -30,7 +30,8 @@ bool isRunningElevated();
 
 // 以管理员身份重启当前程序（保留命令行）。返回 true 表示已把新进程拉起，
 // 调用方应立即退出。用户拒绝提权时返回 false。
-bool relaunchElevated();
+// extraArgs 追加在原命令行之后，用于把「提权后该做什么」带给新进程。
+bool relaunchElevated(const std::wstring& extraArgs = {});
 
 // 安装目录。scope 为 kCurrentUser 时落在用户目录下，否则落在 Program Files。
 // 不含尾部分隔符；目录不必存在。
@@ -46,12 +47,6 @@ std::wstring installFiles(const std::wstring& targetDir, const std::vector<Insta
 // 从 targetDir 里删除安装的文件（卸载）。返回空串表示成功。
 std::wstring removeInstalledFiles(const std::wstring& targetDir,
                                   const std::vector<InstallFile>& files);
-
-// 写下安装标记。程序用它区分「安装版」与开发期构建：安装版把右键组件
-// 放在自己目录下，卸载时能一并清掉。content 里的范围关键字（all-users）
-// 也决定程序启动时往哪个根键注册。
-std::wstring writeInstallMarker(const std::wstring& targetDir, const std::wstring& marker,
-                                const std::string& content);
 
 // 在资源管理器 / 开始菜单里为已装程序创建快捷方式。
 // exeName 是 targetDir 里的可执行文件名，displayName 用作 .lnk 名。
