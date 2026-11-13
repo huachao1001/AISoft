@@ -39,10 +39,12 @@ const std::vector<std::wstring>& ArchiveExts() {
 
 // 完整动作清单。
 //
-// 压缩项挂在"所有文件"上且不排除任何后缀。原因是多选时 shell 的 AppliesTo
-// 只按第一个选中项判定：一旦首个文件是 .zip，排除条件就会让整个压缩项消失，
-// 用户没法把多个压缩包重新打包。单选的取舍是包里也会看到压缩项，
-// 这比"多选时功能消失"更容易接受。
+// 压缩项对「能解压的压缩包后缀」隐藏：对归档文件有意义的是解压，
+// 再给一个压缩入口只会让人选错。
+//
+// 代价要说清楚：多选时 shell 的 AppliesTo 只按第一个选中项判定
+// （实测 zip 在前 + txt → 压缩项消失）。所以选中项里第一个是压缩包时，
+// 本批次的压缩入口也会跟着消失。这是「归档不显示压缩项」的必然结果。
 std::vector<AiUI::ShellVerb> Verbs() {
   std::vector<AiUI::ShellVerb> verbs;
 
@@ -50,6 +52,8 @@ std::vector<AiUI::ShellVerb> Verbs() {
   compress.id = kIdCompress;
   compress.label = kLabelCompress;
   compress.command = kArgCompress;
+  // 排除逻辑只对 "*" 生效：目录位置本来就不会命中这些后缀
+  compress.excludeTargets = ArchiveExts();
   // 不置顶：按 id 排序（Compress → CompressZip），两项自然挨在一起
   verbs.push_back(compress);
 
@@ -57,6 +61,7 @@ std::vector<AiUI::ShellVerb> Verbs() {
   quickZip.id = kIdCompressZip;
   quickZip.label = kLabelCompressZip;
   quickZip.command = kArgCompressZip;
+  quickZip.excludeTargets = ArchiveExts();
   verbs.push_back(quickZip);
 
   // 压缩包后缀挂解压项。按类型挂动词，不碰默认打开方式，
