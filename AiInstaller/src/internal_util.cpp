@@ -17,6 +17,18 @@ std::wstring directoryOf(const std::wstring& path) {
   return slash == std::wstring::npos ? std::wstring() : path.substr(0, slash);
 }
 
+bool isAbsolutePath(const std::wstring& path) {
+  // "D:\x" 或 "D:/x"
+  if (path.size() >= 2 && path[1] == L':') return true;
+  // UNC："\\server\share"
+  if (path.size() >= 2 && (path[0] == L'\\' || path[0] == L'/') &&
+      (path[1] == L'\\' || path[1] == L'/')) {
+    return true;
+  }
+  // 以单个分隔符开头也算绝对：相对的是当前盘根，不是安装目录
+  return !path.empty() && (path.front() == L'\\' || path.front() == L'/');
+}
+
 std::vector<std::wstring> missingDirectories(const std::wstring& dir) {
   std::vector<std::wstring> out;
   if (dir.empty()) return out;

@@ -93,6 +93,19 @@ AiInstaller 是公共件：一个通用安装器 exe，加上把清单与载荷�
 `--silent` 这条路上没有人能点 UAC 的「是」，选「所有用户」会让进程卡在一个
 永远等不到的授权框上。默认写 HKCU，需要全机的部署由调用方显式指定。
 
+## 清单命令不得写死根键与盘符
+
+`[commands]` 里的 `path` / `args` 用 `${root}`（`HKLM` / `HKCU` 按范围）与
+`${dir}`（安装目录），由 `runCommand()` 按本次请求展开。
+
+写死 `HKLM` 会踩两个坑，实测都发生过：选「仅当前用户」或 `--silent` 时越权
+写全机注册表，而卸载只清 HKCU，留下的项没人收；换台机器装到别的盘时写死
+路径直接指错。清单是构建期产物，装到哪个盘、哪个范围是运行期才知道的。
+
+`runAndWait` 与 `launchDetached` 都必须自己把裸文件名解析成完整路径：
+`CreateProcessW` 的 `lpApplicationName` **不查 PATH**，传 `reg.exe` 会直接
+失败。前者曾漏掉这一步，`required=0` 又把失败吞了，于是整条命令静默不执行。
+
 ## 临时文件要自己删
 
 解出来的 logo 等临时文件必须在 `shutdownPlatform()` **之后**删：AiUI 的位图

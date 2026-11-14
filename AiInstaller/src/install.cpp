@@ -35,10 +35,38 @@ AiUI::InstallScope toAiScope(Scope scope) {
                                    : AiUI::InstallScope::kCurrentUser;
 }
 
-void report(const ProgressFn& fn, void* user, const wchar_t* stage) {
-  if (fn) fn(stage, user);
-}
+// 进度计步器：把整场安装切成固定的若干步，每完成一步推进一格。
+//
+// 为什么不按字节算比例：复制大文件时如果按字节推进，进度条会长时间停在
+// 同一个数字上；按「文件数 + 命令数」计步则每一步都有明确的动作可报，
+// 用户看到的文字和进度条同步变化。文件大小差异很大时这一步会慢一点，
+// 但不会假。
+class Progress {
+ public:
+  Progress(ProgressFn fn, void* user) : fn_(fn), user_(user) {}
 
+  // 登记总步数。安装开始前一次性算好，中途不再变。
+  void reserve(int steps) { total_ = steps > 0 ? steps : 1; }
+
+  // 完成一步：fraction 只增不减，界面据此推进度条
+  void step(const wchar_t* stage) {
+    if (done_ < total_) ++done_;
+    report(stage);
+  }
+
+  // 报告一个不回推进度的状态（如开始复制第 n 个文件）
+  void report(const wchar_t* stage) const {
+    if (!fn_) return;
+    const float fraction = static_cast<float>(done_) / static_cast<float>(total_);
+    fn_(fraction > 1.0f ? 1.0f : fraction, stage, user_);
+  }
+
+ private:
+  ProgressFn fn_ = nullptr;
+  void* user_ = nullptr;
+  int total_ = 1;
+  int done_ = 0;
+};
 // 从安装目录里删掉一个文件；不存在视为成功
 void removeFile(const std::wstring& installDir, const std::wstring& relative) {
   if (relative.empty()) return;
@@ -181,30 +209,79 @@ void scheduleSelfCleanup(const std::wstring& installDir,
   AiUI::launchDetached(L"cmd.exe", L"/c \"" + scriptPath + L"\"", tempDir);
 }
 
-// 安装完成后执行清单里的命令。
+// 展开命令里的占位符。
 //
-// 命令形如 "AiZip.exe" 或 "AiZip.exe --open"：第一段是程序，其余是参数。
-// 不含路径分隔符时相对安装目录解析，这样清单里只写文件名，换盘也不用改。
-void runAfterInstallCommand(const std::wstring& installDir, const std::wstring& command) {
-  if (command.empty() || installDir.empty()) return;
+// 清单是构建期写死的，但「装到哪个盘」「写 HKLM 还是 HKCU」是运行时才知道的：
+// 同一个包在 A 机装 D 盘、在 B 机装 E 盘；选「仅当前用户」时写 HKLM 是越权。
+// 让清单写 ${dir} / ${root}，安装器按实际请求展开，包就不必为这些变量做多份。
+//
+// ${dir}  安装目录，不含尾部分隔符
+// ${root} 注册表根键：所有用户 → HKLM，仅当前用户 → HKCU
+std::wstring expandPlaceholders(const std::wstring& text, const std::wstring& installDir,
+                                Scope scope) {
+  if (text.empty()) return text;
 
-  std::wstring exe = command;
-  std::wstring args;
-  const size_t space = command.find(L' ');
-  if (space != std::wstring::npos) {
-    exe = command.substr(0, space);
-    args = command.substr(space + 1);
-  }
-  // 去掉可能存在的包裹引号
-  if (exe.size() >= 2 && exe.front() == L'"' && exe.back() == L'"') {
-    exe = exe.substr(1, exe.size() - 2);
-  }
-  if (exe.empty()) return;
+  const std::wstring root = scope == Scope::kAllUsers ? L"HKLM" : L"HKCU";
+  std::wstring out;
+  out.reserve(text.size());
 
-  if (exe.find_first_of(L"\\/") == std::wstring::npos) {
+  for (size_t i = 0; i < text.size();) {
+    if (text.compare(i, 2, L"${") == 0) {
+      const size_t close = text.find(L'}', i + 2);
+      if (close != std::wstring::npos) {
+        const std::wstring name = text.substr(i + 2, close - i - 2);
+        if (name == L"dir") {
+          out += installDir;
+          i = close + 1;
+          continue;
+        }
+        if (name == L"root") {
+          out += root;
+          i = close + 1;
+          continue;
+        }
+      }
+    }
+    out.push_back(text[i]);
+    ++i;
+  }
+  return out;
+}
+
+// 执行清单里的一条命令。
+//
+// path 的解析规则：
+//   - 含路径分隔符（如 "C:\x\y.exe" 或 "sub\y.exe"）→ 原样用；相对路径
+//     相对安装目录，这样清单里写 "AiZip.exe" 换盘也不用改。
+//   - 裸文件名（如 "regsvr32.exe"）→ 交给系统按 PATH 搜索。注册表命令
+//     几乎都是系统自带的工具，让清单写全路径反而容易换机器就失效。
+//
+// 返回空串表示成功；required=false 的命令失败也返回空串（只记日志），
+// 因为有些命令本来就是「有则更好」的清理动作。
+std::wstring runCommand(const std::wstring& installDir, const ManifestCommand& command,
+                        Scope scope) {
+  if (command.path.empty()) return {};
+
+  std::wstring exe = expandPlaceholders(command.path, installDir, scope);
+  const std::wstring args = expandPlaceholders(command.args, installDir, scope);
+
+  if (exe.find_first_of(L"\\/") != std::wstring::npos &&
+      !detail::isAbsolutePath(exe)) {
     exe = detail::joinPath(installDir, exe);
   }
-  AiUI::launchDetached(exe, args, installDir);
+
+  if (!command.wait) {
+    // 不等结果的命令：拉起来就走。安装器退出后它还得活着，所以用脱离式启动。
+    AiUI::launchDetached(exe, args, installDir);
+    return {};
+  }
+
+  const int code = AiUI::runAndWait(exe, args);
+  if (code == 0) return {};
+
+  const std::wstring label = command.text.empty() ? command.path : command.text;
+  if (!command.required) return {};
+  return label + L" 执行失败（退出码 " + std::to_wstring(code) + L"）";
 }
 
 // 清单登记的文件可能带子目录（如 "config\x.dll"）。文件删掉之后这些
@@ -232,6 +309,30 @@ std::vector<std::wstring> subdirectoriesOf(const std::vector<std::wstring>& file
 }
 
 }  // namespace
+
+void runAfterInstall(const std::wstring& installDir, const std::wstring& command) {
+  if (command.empty() || installDir.empty()) return;
+
+  std::wstring exe = command;
+  std::wstring args;
+  const size_t space = command.find(L' ');
+  if (space != std::wstring::npos) {
+    exe = command.substr(0, space);
+    args = command.substr(space + 1);
+  }
+  // 去掉可能存在的包裹引号
+  if (exe.size() >= 2 && exe.front() == L'"' && exe.back() == L'"') {
+    exe = exe.substr(1, exe.size() - 2);
+  }
+  if (exe.empty()) return;
+
+  // 不含分隔符时相对安装目录：清单里只写文件名，换盘也不用改
+  if (exe.find_first_of(L"\\/") == std::wstring::npos) {
+    exe = detail::joinPath(installDir, exe);
+  }
+  // 脱离式启动：安装器随后就退出了，被启动的程序得自己活着
+  AiUI::launchDetached(exe, args, installDir);
+}
 
 Scope readInstalledScope(const std::wstring& installDir, Scope fallback) {
   if (installDir.empty()) return fallback;
@@ -309,13 +410,26 @@ std::wstring runInstall(const InstallPlan& plan) {
 
   if (request.targetDir.empty()) return L"安装目录为空";
 
+  // 要真正落盘的文件：品牌素材（界面图标）只随包携带，不写到用户目录
+  std::vector<ManifestFile> installs;
+  for (const auto& file : plan.files) {
+    if (file.install && !file.path.empty()) installs.push_back(file);
+  }
+
+  // 计步：每个待装文件一步、配置模块一步、每条命令一步，再加记录与收尾几步。
+  // 命令与配置都算「安装步骤」，用户看到的进度条因此能反映真实工作量。
+  Progress progress(plan.progress, plan.progressUser);
+  const int stepFiles = static_cast<int>(installs.size());
+  const int stepConfig = plan.configModule.empty() ? 0 : 1;
+  const int stepCommands = static_cast<int>(plan.commands.size());
+  // 部署卸载程序、写安装记录、快捷方式、卸载入口：各算一步
+  progress.reserve(stepFiles + stepConfig + stepCommands + 4);
+
   // 先记下「哪几级目录现在还不存在」：往后每一步都会创建目录，等装完再
   // 问就分不清哪些是本机原有、哪些是安装器新建的了。卸载靠这份记录决定
   // 能收回哪几级，绝不按目录名去猜系统目录。
   const std::vector<std::wstring> createdDirs =
       detail::missingDirectories(request.targetDir);
-
-  report(plan.progress, plan.progressUser, L"正在写入文件...");
 
   // 1. 落盘：从包里按偏移逐个写出。子目录（如 config\x.dll）自动创建。
   Package package;
@@ -324,23 +438,26 @@ std::wstring runInstall(const InstallPlan& plan) {
     return packageError.empty() ? L"安装包不完整：没有找到打包数据" : packageError;
   }
 
-  for (const auto& file : plan.files) {
-    if (file.path.empty()) continue;
-    // 品牌素材（界面图标）只随包携带，不落到用户目录
-    if (!file.install) continue;
+  for (const auto& file : installs) {
+    // 进度条下方实时显示正在复制哪个文件：大文件复制时用户不会以为卡死
+    const std::wstring stage = L"正在复制 " + file.path;
+    progress.report(stage.c_str());
     const std::wstring path = detail::joinPath(request.targetDir, file.path);
     const std::wstring error = package.extractFile(file, path);
     if (!error.empty()) return error;
+    progress.step(stage.c_str());
   }
 
   // 2. 安装器自身：卸载入口指向安装目录里的 uninstall.exe。它必须是
   //    安装器本体的副本——只有它知道怎么按 installer.manifest 反向拆包。
   //    名字固定成 uninstall.exe，用户看到的是「卸载」而不是「安装」。
-  report(plan.progress, plan.progressUser, L"正在部署卸载程序...");
+  const wchar_t* kDeployUninstaller = L"正在部署卸载程序...";
+  progress.report(kDeployUninstaller);
   const std::wstring uninstaller =
       detail::joinPath(request.targetDir, Package::uninstallFileName());
   const std::wstring copyError = package.copyInstallerTo(uninstaller);
   if (!copyError.empty()) return copyError;
+  progress.step(kDeployUninstaller);
 
   // 清单也留一份：卸载时从它读回文件表与配置模块名。
   // 装好的 exe 已经被裁掉了载荷，不能再靠它自己回答「当初装了什么」。
@@ -351,11 +468,26 @@ std::wstring runInstall(const InstallPlan& plan) {
   // 3. 应用配置：右键菜单、文件关联等由标准 ABI 的配置模块完成。
   //    安装器不知道这些细节，只知道「装完了叫它一声」。
   if (!plan.configModule.empty()) {
-    report(plan.progress, plan.progressUser, L"正在注册系统集成...");
+    const wchar_t* kConfig = L"正在注册系统集成...";
+    progress.report(kConfig);
     const std::wstring hostExe = detail::joinPath(request.targetDir, request.app.exeName);
     const std::wstring error =
         applyConfiguration(request.targetDir, hostExe, plan.configModule, request.scope);
     if (!error.empty()) return error;
+    progress.step(kConfig);
+  }
+
+  // 4. 清单里登记的命令：按顺序执行，每条的文案显示在进度条下方。
+  //    注册表写入、组件注册这类「一条命令行就够」的事写在这里；
+  //    需要 COM 的复杂注册仍走配置模块，两者并存。
+  for (const auto& command : plan.commands) {
+    if (command.path.empty()) continue;
+    const std::wstring stage =
+        command.text.empty() ? L"正在执行 " + command.path : command.text;
+    progress.report(stage.c_str());
+    const std::wstring error = runCommand(request.targetDir, command, request.scope);
+    if (!error.empty()) return error;
+    progress.step(stage.c_str());
   }
 
   // 记下范围，卸载时据此清理正确的根键。必须在配置成功之后写：
@@ -364,24 +496,26 @@ std::wstring runInstall(const InstallPlan& plan) {
   // 目录记录同样要在成功路径上写：失败时安装目录可能根本没用起来
   writeCreatedDirs(request.targetDir, createdDirs);
 
-  // 4. 快捷方式与卸载入口是安装器的通用职责
-  report(plan.progress, plan.progressUser, L"正在创建快捷方式...");
+  // 5. 快捷方式与卸载入口是安装器的通用职责
+  const wchar_t* kShortcut = L"正在创建快捷方式...";
+  progress.report(kShortcut);
   if (!request.app.exeName.empty()) {
     AiUI::createShortcuts(request.targetDir, request.app.exeName, request.app.displayName, scope);
   }
+  progress.step(kShortcut);
 
-  report(plan.progress, plan.progressUser, L"正在登记卸载入口...");
+  const wchar_t* kUninstallEntry = L"正在登记卸载入口...";
+  progress.report(kUninstallEntry);
   const std::wstring uninstallError = AiUI::registerUninstallEntry(
       request.app.displayName, request.app.version, request.app.publisher, request.targetDir,
       uninstaller, L"--uninstall", scope);
   if (!uninstallError.empty()) return uninstallError;
+  progress.step(kUninstallEntry);
 
-  // 5. 安装后命令：清单里写了才执行，失败不影响安装结果
-  if (!request.app.afterInstall.empty()) {
-    runAfterInstallCommand(request.targetDir, request.app.afterInstall);
-  }
+  // 注意：[run] afterInstall 不在这里执行。装完立刻弹出程序会打断用户，
+  // 改成由完成页的「立即打开」复选框决定，见 runAfterInstall()。
 
-  report(plan.progress, plan.progressUser, L"安装完成");
+  progress.step(L"安装完成");
   return {};
 }
 
@@ -393,7 +527,12 @@ std::wstring runRemove(const RemovePlan& plan) {
   const Scope scopeValue = readInstalledScope(request.targetDir, request.scope);
   const AiUI::InstallScope scope = toAiScope(scopeValue);
 
-  report(plan.progress, plan.progressUser, L"正在撤销系统集成...");
+  // 卸载也按步推进：撤销配置、删文件、清目录各占一段。
+  // 卸载是后台通道，界面通常不显示进度，但签名要保持一致。
+  Progress progress(plan.progress, plan.progressUser);
+  progress.reserve(3);
+
+  progress.report(L"正在撤销系统集成...");
 
   // 1. 先撤销应用配置：钩子失败不该阻止删文件，但要记下第一条错误
   std::wstring firstError;
@@ -405,9 +544,10 @@ std::wstring runRemove(const RemovePlan& plan) {
   // 2. 撤销安装器自己的登记
   AiUI::removeShortcuts(request.app.displayName, scope);
   AiUI::unregisterUninstallEntry(request.app.displayName, scope);
+  progress.step(L"正在撤销系统集成...");
 
   // 3. 删文件
-  report(plan.progress, plan.progressUser, L"正在删除文件...");
+  progress.report(L"正在删除文件...");
   // 目录记录要先读出来：等会儿它自己也要被删掉
   const std::vector<std::wstring> createdDirs = readCreatedDirs(request.targetDir);
   for (const auto& relative : plan.files) removeFile(request.targetDir, relative);
@@ -417,15 +557,17 @@ std::wstring runRemove(const RemovePlan& plan) {
   removeFile(request.targetDir, kScopeMarkerName);
   removeFile(request.targetDir, Package::manifestFileName());
   removeFile(request.targetDir, kCreatedDirsName);
+  progress.step(L"正在删除文件...");
 
   // 4. 删空目录。带子目录的文件（如 config\x.dll）删完会留下空目录，
   //    不清掉安装目录就永远非空，父目录也收不回来。
   //    顺序：最内层子目录 → 安装目录 → 安装时新建的父目录（由内到外）。
-  report(plan.progress, plan.progressUser, L"正在清理目录...");
+  progress.report(L"正在清理目录...");
   for (const auto& relative : subdirectoriesOf(plan.files)) {
     removeEmptyDir(detail::joinPath(request.targetDir, relative));
   }
   removeEmptyDir(request.targetDir);
+  progress.step(L"正在清理目录...");
 
   // 5. 自我删除：进程删不掉正在运行的自己，写脚本等本进程退出后收尾。
   //    脚本同时负责删除安装目录与安装时新建的父目录。

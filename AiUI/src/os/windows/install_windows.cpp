@@ -236,7 +236,18 @@ std::wstring WindowsBackend::removeShortcuts(const std::wstring& displayName, In
 int WindowsBackend::runAndWait(const std::wstring& exePath, const std::wstring& arguments) {
   if (exePath.empty()) return -1;
 
-  std::wstring command = L'"' + exePath + L'"';
+  // CreateProcessW 的 lpApplicationName 不查 PATH，传裸名字（如 "reg.exe"）
+  // 会直接失败。清单里写系统工具是合理的期待，这里补一次解析——与
+  // launchDetached 同一套规则。
+  std::wstring appPath = exePath;
+  if (appPath.find_first_of(L"\\/") == std::wstring::npos) {
+    wchar_t resolved[MAX_PATH] = {};
+    const DWORD len = ::SearchPathW(nullptr, appPath.c_str(), L".exe", MAX_PATH, resolved, nullptr);
+    if (len == 0 || len >= MAX_PATH) return -1;
+    appPath = resolved;
+  }
+
+  std::wstring command = L'"' + appPath + L'"';
   if (!arguments.empty()) {
     command += L' ';
     command += arguments;
@@ -247,7 +258,7 @@ int WindowsBackend::runAndWait(const std::wstring& exePath, const std::wstring& 
   PROCESS_INFORMATION pi = {};
   std::vector<wchar_t> buffer(command.begin(), command.end());
   buffer.push_back(L'\0');
-  if (!::CreateProcessW(exePath.c_str(), buffer.data(), nullptr, nullptr, FALSE, 0, nullptr,
+  if (!::CreateProcessW(appPath.c_str(), buffer.data(), nullptr, nullptr, FALSE, 0, nullptr,
                         nullptr, &si, &pi)) {
     return -1;
   }

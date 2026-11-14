@@ -72,8 +72,10 @@
 | 安装范围 | 当前用户写 HKCU；所有用户写 HKLM（需提权）。点一次「安装」后自动请求提权，新实例按 `--elevated-retry --dir=` 直接完成安装，无需再点第二次。安装时把范围记进安装目录的 `installer.scope`，卸载按它读回——**不靠「当前是否提权」推断**，因为卸载器带 `requireAdministrator`，那样永远会猜成「所有用户」而清错根键 |
 | 配置模块 | 右键菜单与文件关联封装在 `aizip_config.dll`，按标准 ABI 导出 `AiSetupConfigApply / Remove / IsReady / Version`（见 `AiInstaller/include/AiInstaller/config_abi.h`）。安装包只「按 ABI 调用」它，自己不写注册表；爱压主程序也调同一份实现，因此能自愈菜单 |
 | 安装器库 | 通用能力（清单解析、包读取、路径策略、落盘、快捷方式、卸载入口、提权、卸载收尾、通用界面）在 `AiInstaller`，与 `AiUI` 同样定位，可被其它应用用 CMake 引入 |
-| 界面 | 只有一个通用模板（图标 + 文案 + 安装范围 + 目录），品牌化全靠 `setup.ini` 的 `[ui]` 与 `logo.png`。不引入运行时 XML 解析：布局构建期编译，清单是 INI |
-| 安装后行为 | 装完不弹提示框，按清单 `[run] afterInstall` 启动目标目录里的 `AiZip.exe` |
+| 界面 | 只有一个通用模板，三段式切换：配置页（图标 + 文案 + 安装范围 + 目录 +「安装」）→ 进度页（真实进度条 + 当前动作）→ 完成页（「立即打开」复选框 + 正中间的「完成」）。品牌化全靠 `setup.ini` 的 `[ui]` 与 `logo.png`。不引入运行时 XML 解析：布局构建期编译，清单是 INI |
+| 进度 | 按「文件数 + 配置 + 命令数 + 收尾步骤」计步推进，不是假动画；进度条下方实时显示当前动作（「正在复制 AiZip.exe」→「正在登记文件类型说明...」→「正在登记卸载入口...」）。安装跑在工作线程上，回调只写快照、UI 线程按 60ms 取走 |
+| 清单命令 | `setup.ini` 的 `[commands]` 可按顺序登记命令行（如 `reg.exe add …`），用来做「一条命令行就能做完」的注册；需要 COM 的复杂注册仍走配置模块。命令里用 `${root}` 取 HKLM/HKCU、`${dir}` 取安装目录，不写死根键与盘符 |
+| 安装后行为 | 装完不自动启动，也不弹提示框：完成页的「立即打开」复选框（默认勾选）由用户决定，勾上才按 `[run] afterInstall` 启动目标目录里的 `AiZip.exe` |
 | 组件位置 | 组件与宿主 exe 同目录（安装版在程序目录，开发期在构建目录），文件名带内容指纹，如 `aizip_5705E357.dll`；指纹与清理规则都在 AiUI 内部，调用方不必知道 |
 | 卸载 | 从「应用与功能」拉起安装目录里的 `uninstall.exe --uninstall`（安装器本体换名后的裁剪副本，`UninstallString` 直接指向它）：先调配置模块撤销菜单与关联，再删清单文件、快捷方式、卸载项，最后删空目录。`uninstall.exe` 自己与安装时新建的父目录（`installer.dirs` 记录）由「延迟脚本重试删除」收尾，被资源管理器占用时也能清干净；目录里用户自己放的文件一律保留。卸载读安装目录里的 `installer.manifest`——那份副本已被裁掉载荷，打不开自己末尾的包 |
 | 启动自愈 | 每次启动检查配置模块是否就绪，不就绪则调 `Apply` 修一次，失败静默忽略。范围仍从注册表探测（要求注册项指向本程序），避免与另一份安装互相误判 |
@@ -156,7 +158,7 @@ AiInstaller/
 
 AiZip/
 ├─ CMakeLists.txt         add_subdirectory(../AiUI ../AiInstaller)
-├─ setup.ini              安装清单：文案、logo、配置模块、afterInstall、文件表
+├─ setup.ini              安装清单：文案、logo、配置模块、命令、afterInstall、文件表
 ├─ assets/logo.png        安装界面里的品牌图片（只随包携带，不落盘）
 ├─ assets/layouts/        XML 界面布局（构建期自动转 C++）
 ├─ src/

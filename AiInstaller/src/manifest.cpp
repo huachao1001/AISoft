@@ -186,9 +186,51 @@ bool parseManifest(const std::wstring& text, Manifest& out, std::wstring& error)
   manifest.allUsersText = getText(values, "ui.alluserstext", L"所有用户");
   manifest.currentUserText = getText(values, "ui.currentusertext", L"仅当前用户");
   manifest.showScope = getFlag(values, "ui.showscope", true);
+  manifest.runAfterText = getText(values, "ui.runaftertext", L"立即打开");
+  manifest.runAfterChecked = getFlag(values, "ui.runafterchecked", true);
 
   manifest.configModule = getText(values, "config.module", {});
   manifest.afterInstall = getText(values, "run.afterinstall", {});
+
+  // [commands] 段里的 cmd.<n>.path / .args / .text / .wait / .required：
+  // 与文件表同样按下标归组，顺序与清单里的书写顺序无关。
+  {
+    constexpr const char* kCommandPrefix = "commands.cmd.";
+    std::map<int, ManifestCommand> order;
+    for (const auto& [key, value] : values) {
+      if (key.rfind(kCommandPrefix, 0) != 0) continue;
+      const size_t prefixSize = std::strlen(kCommandPrefix);
+      const size_t dot = key.find('.', prefixSize);
+      if (dot == std::string::npos) continue;
+
+      const std::string indexText = key.substr(prefixSize, dot - prefixSize);
+      if (indexText.empty()) continue;
+      int index = 0;
+      try {
+        index = std::stoi(indexText);
+      } catch (...) {
+        continue;
+      }
+
+      const std::string field = key.substr(dot + 1);
+      ManifestCommand& command = order[index];
+      if (field == "path") {
+        command.path = value;
+      } else if (field == "args") {
+        command.args = value;
+      } else if (field == "text") {
+        command.text = value;
+      } else if (field == "wait") {
+        command.wait = getFlag(values, key.c_str(), true);
+      } else if (field == "required") {
+        command.required = getFlag(values, key.c_str(), true);
+      }
+    }
+    for (auto& [index, command] : order) {
+      if (command.path.empty()) continue;  // 只有文案的残项跳过
+      manifest.commands.push_back(command);
+    }
+  }
 
   if (manifest.displayName.empty()) {
     error = L"清单缺少 app.displayName";
@@ -268,6 +310,10 @@ std::wstring formatManifest(const Manifest& manifest) {
   appendLine(text, "allUsersText", manifest.allUsersText);
   appendLine(text, "currentUserText", manifest.currentUserText);
   appendLine(text, "showScope", manifest.showScope ? L"1" : L"0");
+  if (manifest.runAfterText != L"立即打开") {
+    appendLine(text, "runAfterText", manifest.runAfterText);
+  }
+  if (!manifest.runAfterChecked) text += "runAfterChecked=0\n";
   text += "\n";
 
   if (!manifest.configModule.empty()) {
@@ -279,6 +325,20 @@ std::wstring formatManifest(const Manifest& manifest) {
   if (!manifest.afterInstall.empty()) {
     text += "[run]\n";
     appendLine(text, "afterInstall", manifest.afterInstall);
+    text += "\n";
+  }
+
+  if (!manifest.commands.empty()) {
+    text += "[commands]\n";
+    for (size_t i = 0; i < manifest.commands.size(); ++i) {
+      const ManifestCommand& command = manifest.commands[i];
+      const std::string prefix = "cmd." + std::to_string(i) + ".";
+      appendLine(text, prefix + "path", command.path);
+      appendLine(text, prefix + "args", command.args);
+      appendLine(text, prefix + "text", command.text);
+      if (!command.wait) text += prefix + "wait=0\n";
+      if (!command.required) text += prefix + "required=0\n";
+    }
     text += "\n";
   }
 

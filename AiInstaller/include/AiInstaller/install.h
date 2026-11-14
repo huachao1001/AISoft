@@ -23,8 +23,12 @@ struct InstallRequest {
   Scope scope = Scope::kAllUsers;
 };
 
-// 安装进度回调。stage 是可读的阶段名，用于界面显示。
-using ProgressFn = void (*)(const wchar_t* stage, void* user);
+// 安装进度回调。
+//
+// fraction 是 0..1 的完成比例，由「文件数 + 配置 + 命令数 + 收尾步骤」计步
+// 得出，不是假动画；stage 是给用户看的当前动作，如「正在复制 AiZip.exe」
+// 或「正在注册右键菜单」。
+using ProgressFn = void (*)(float fraction, const wchar_t* stage, void* user);
 
 // 一次安装的全部输入。
 //
@@ -36,6 +40,8 @@ struct InstallPlan {
   std::vector<ManifestFile> files;
   // 配置模块文件名（相对安装目录）；空表示该应用没有系统配置
   std::wstring configModule;
+  // 安装后按顺序执行的命令。与配置模块并存，两者都算安装步骤。
+  std::vector<ManifestCommand> commands;
   ProgressFn progress = nullptr;
   void* progressUser = nullptr;
 };
@@ -77,6 +83,12 @@ std::wstring removeConfiguration(const std::wstring& installDir,
 // 查询配置是否已就绪且指向 hostExePath。模块不可用时返回 false。
 bool isConfigurationReady(const std::wstring& installDir, const std::wstring& hostExePath,
                           const std::wstring& moduleName, Scope scope);
+
+// 执行安装完成后由用户勾选「立即打开」触发的命令。
+//
+// 与清单里的 [run] afterInstall 对应：装完自动启动会打断用户，所以改成
+// 由完成页的复选框决定。命令相对安装目录解析，脱离式启动。
+void runAfterInstall(const std::wstring& installDir, const std::wstring& command);
 
 // ── 范围记录 ──
 

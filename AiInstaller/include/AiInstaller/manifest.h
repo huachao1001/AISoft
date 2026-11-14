@@ -30,6 +30,26 @@ struct ManifestFile {
   bool install = true;
 };
 
+// 清单里登记的一条安装后命令。
+//
+// 为什么用「命令行」而不是只留配置 dll：有些注册动作本来就是一条命令行
+// （reg add、regsvr32、sc create），为一个命令行去编一个 dll 不值当。命令
+// 与配置 dll 并存：能一条命令做完的写命令，需要 COM/复杂逻辑的才写 dll。
+struct ManifestCommand {
+  // 可执行文件。含路径分隔符时直接用；裸文件名（如 regsvr32.exe）由系统
+  // 按 PATH 搜索。相对路径（如 AiZip.exe）相对安装目录解析。
+  std::wstring path;
+  // 参数，原样传给程序
+  std::wstring args;
+  // 进度条下方显示的文案，如「正在注册右键菜单」。留空时用 path 兜底。
+  std::wstring text;
+  // true（默认）表示等它执行完再继续；false 表示拉起来就走，不等结果。
+  // 静默的注册命令都该是 true——不等就报不出它失败。
+  bool wait = true;
+  // 失败是否影响安装结果。默认 true：注册命令失败通常意味着装得不完整。
+  bool required = true;
+};
+
 struct Manifest {
   // ── 身份（[app]）──
   std::wstring displayName;
@@ -39,11 +59,11 @@ struct Manifest {
   std::wstring exeName;
   // 安装子目录，不含盘符，如 "AISoft\AiZip"
   std::wstring installSubdir;
-  // 安装完成后要执行的命令，可带参数，如 "AiZip.exe" 或 "AiZip.exe --open"。
-  // 留空表示装完什么都不启动。
+  // 用户勾选「立即打开」时要执行的命令，可带参数，如 "AiZip.exe" 或
+  // "AiZip.exe --open"。留空表示完成后没有可打开的程序（复选框会隐藏）。
   //
-  // 不写成「启动主程序」的布尔值：有的应用装完要跑一次初始化工具，
-  // 有的要带参数打开，给一条命令同时覆盖这些情形，清单也不必为此加字段。
+  // 不再「装完自动启动」：安装结束时突然弹出一个窗口会打断用户手上的事。
+  // 现在这条命令只由完成页的复选框触发，用户不勾就不跑。
   std::wstring afterInstall;
 
   // ── 界面（[ui]）──
@@ -61,11 +81,21 @@ struct Manifest {
   // 是否显示「安装范围」一行。只支持当前用户的应用可以关掉它，
   // 免得用户选了一个注定要提权失败的选项。
   bool showScope = true;
+  // 「立即打开」复选框的文字，与它的默认选中状态。
+  // 装完弹出一个程序会打断用户手上的事，所以文案与默认值做成可配置的：
+  // 应用自己知道装完是否该顺手打开。
+  std::wstring runAfterText = L"立即打开";
+  bool runAfterChecked = true;
 
   // ── 配置模块（[config]）──
   // 安装目录里的配置 dll 文件名，按 AiInstaller/config_abi.h 的标准 ABI 导出。
   // 留空表示该应用没有任何系统配置，安装器装完文件就结束。
   std::wstring configModule;
+
+  // ── 安装后命令（[commands]）──
+  // 按清单顺序执行。与配置 dll 并存：dll 负责需要 COM 的复杂注册，
+  // 命令负责「一条命令行就能做完」的事。每条的文案会显示在进度条下方。
+  std::vector<ManifestCommand> commands;
 
   // ── 载荷（[files]）──
   // 源清单里只写 path；打包器补上 offset/size。

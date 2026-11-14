@@ -16,6 +16,10 @@ std::wstring joinPath(const std::wstring& dir, const std::wstring& name);
 // 去掉最后一段后的目录；没有分隔符时返回空串
 std::wstring directoryOf(const std::wstring& path);
 
+// 是否为绝对路径：盘符路径（D:\x）、UNC（\\server\share）或以分隔符开头。
+// 清单命令用它区分「相对安装目录」与「系统 PATH 里的程序」。
+bool isAbsolutePath(const std::wstring& path);
+
 // 逐级创建目录，已存在视为成功。
 // 注意：不处理 UNC 共享路径，安装目录不会落在那里。
 bool ensureDirectoryTree(const std::wstring& dir);
