@@ -15,6 +15,12 @@ namespace {
 // AiUI 的卷描述已经区分了可移动盘与固定盘，这里只做筛选
 bool isFixedVolume(const AiUI::DriveInfo& drive) { return !drive.removable; }
 
+// 探针文件名：带进程 id，避免两台安装器同时探测时互相删掉对方刚建的文件。
+std::wstring probeFileName() {
+  return L"aisetup_write_probe_" +
+         std::to_wstring(AiUI::platform()->processId()) + L".tmp";
+}
+
 }  // namespace
 
 std::vector<Volume> listInstallVolumes() {
@@ -29,16 +35,30 @@ std::vector<Volume> listInstallVolumes() {
   return volumes;
 }
 
+bool isVolumeWritable(const std::wstring& root) {
+  if (root.empty()) return false;
+
+  const std::wstring probe = joinInstallDir(root, probeFileName());
+  if (!AiUI::platform()->writeFile(probe, std::string())) return false;
+  // 删不掉不影响判断：能写就说明装得进去，残留一个 0 字节文件比误判更轻。
+  AiUI::platform()->deleteFile(probe);
+  return true;
+}
+
 std::wstring pickInstallVolume() {
   const std::vector<Volume> volumes = listInstallVolumes();
   if (volumes.empty()) return {};
 
-  // 先找非系统盘：系统盘装满系统与页面文件，装到别处更稳
+  // 先找非系统盘：系统盘装满系统与页面文件，装到别处更稳。
+  // 只跳过不可写的——盘存在但装不进去，选中它等于让用户等到最后一步才失败。
   for (const auto& volume : volumes) {
-    if (!volume.system) return volume.root;
+    if (!volume.system && isVolumeWritable(volume.root)) return volume.root;
   }
-  // 只有系统盘可用时才退而求其次
-  return volumes.front().root;
+  // 没有可用的非系统盘时才退而求其次用系统盘
+  for (const auto& volume : volumes) {
+    if (isVolumeWritable(volume.root)) return volume.root;
+  }
+  return {};
 }
 
 std::wstring joinInstallDir(const std::wstring& volumeRoot, const std::wstring& subdir) {
@@ -62,16 +82,6 @@ std::wstring defaultInstallDir(const AppInfo& app) {
   return joinInstallDir(volume, app.installSubdir);
 }
 
-std::wstring perUserInstallDir(const AppInfo& app) {
-  // 装到用户自己的 Programs 目录：不需要提权，也不和别的账户互相干扰
-  const std::wstring local = AiUI::platform()->specialFolder(AiUI::SpecialFolder::kHome);
-  if (local.empty()) return defaultInstallDir(app);
-
-  std::wstring dir = local;
-  if (dir.back() != L'\\' && dir.back() != L'/') dir += L'\\';
-  dir += L"Programs\\";
-  dir += app.installSubdir;
-  return dir;
-}
+std::wstring perUserInstallDir(const AppInfo& app) { return defaultInstallDir(app); }
 
 }  // namespace AiInstaller

@@ -68,7 +68,7 @@
 | 菜单图标 | 每项带宿主程序图标（按 DPI 缩放，150% 下为 24px，位图 32bpp 带 alpha） |
 | 多选退化 | 已消除：判定逻辑在组件里逐项检查，不依赖注册表条件表达式 |
 | 菜单可见性 | Win10 直接出现在右键第一层。Win11 的紧凑菜单只接受带包标识（MSIX/稀疏包）的 `IExplorerCommand`，未打包的 Win32 程序一律归入「显示更多选项」，7-Zip、WinRAR 同样如此；本项目不引入稀疏包，故 Win11 需点「显示更多选项」 |
-| 安装包 | `AiZipSetup.exe` 由**通用安装器 + 追加数据**合成：`AiSetup.exe` 本体一字不改，构建期把 `setup.ini` 清单与 `AiZip.exe`、`aizip_config.dll`、`logo.png` 追加到它末尾，并改写图标与版本资源。安装包本身**只负责解压与删除**。默认装到非系统盘（策略内嵌在 `AiInstaller` 库：跳过系统盘，按盘符字母序找固定盘，只有系统盘可用时才用它），安装子目录 `AISoft\AIZip` 不含盘符 |
+| 安装包 | `AiZipSetup.exe` 由**通用安装器 + 追加数据**合成：`AiSetup.exe` 本体一字不改，构建期把 `setup.ini` 清单与 `AiZip.exe`、`aizip_config.dll`、`logo.png` 追加到它末尾，并改写图标与版本资源。安装包本身**只负责解压与删除**。默认装到非系统盘（策略内嵌在 `AiInstaller` 库：按盘符字母序找第一个可写的固定盘并跳过系统盘，非系统盘全部不可写时才用系统盘；盘根不可写会换下一个盘），安装子目录 `AISoft\AIZip` 不含盘符。两个安装范围共用同一套选盘与子目录 |
 | 安装范围 | 当前用户写 HKCU；所有用户写 HKLM（需提权）。点一次「安装」后自动请求提权，新实例按 `--elevated-retry --dir=` 直接完成安装，无需再点第二次。安装时把范围记进安装目录的 `installer.scope`，卸载按它读回——**不靠「当前是否提权」推断**，因为卸载器带 `requireAdministrator`，那样永远会猜成「所有用户」而清错根键 |
 | 配置模块 | 右键菜单与文件关联封装在 `aizip_config.dll`，按标准 ABI 导出 `AiSetupConfigApply / Remove / IsReady / Version`（见 `AiInstaller/include/AiInstaller/config_abi.h`）。安装包只「按 ABI 调用」它，自己不写注册表；爱压主程序也调同一份实现，因此能自愈菜单 |
 | 安装器库 | 通用能力（清单解析、包读取、路径策略、落盘、快捷方式、卸载入口、提权、卸载收尾、通用界面）在 `AiInstaller`，与 `AiUI` 同样定位，可被其它应用用 CMake 引入 |
