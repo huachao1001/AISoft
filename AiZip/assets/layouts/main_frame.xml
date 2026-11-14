@@ -41,17 +41,20 @@
       <View weight="1"/>
 
       <LinearLayout orientation="vertical" width="match" height="wrap" gravity="center">
-        <ImageView id="homeIcon" width="96" height="96" scale="fit" align="center"/>
+        <!-- 图标颜色在 attachHome() 里按主题字段设，XML 的 tint 只认固定色 -->
+        <ImageView id="homeIcon" icon="folder" width="96" height="96"
+                   scale="fit" align="center"/>
 
         <TextView id="homeTitle" text="拖拽压缩包到这里" height="34" marginTop="24"
-                  textColor="textHead" align="center"/>
+                  textColor="text" align="center" large="true" bold="true"/>
 
         <TextView id="homeHint" text="也可以点下面的按钮，从磁盘里选一个"
-                  height="24" marginTop="4" textColor="textMuted" align="center"/>
+                  height="24" marginTop="6" textColor="textMuted" align="center"/>
 
         <LinearLayout orientation="horizontal" width="wrap" height="40" marginTop="24"
                       align="center">
-          <Button id="btnHomeOpen" text="打开压缩包..." width="148" height="36"/>
+          <!-- 主按钮用 accent 底色：空状态页要有明确的主操作，不能整屏灰 -->
+          <Button id="btnHomeOpen" text="打开压缩包..." style="primary" width="148" height="36"/>
           <Button id="btnHomeCreate" text="新建压缩包" style="outline" width="128" height="36"
                   marginX="12"/>
         </LinearLayout>

@@ -301,9 +301,14 @@ void MainActivity::attachHome() {
 
   if (auto* icon = findView<AiUI::ImageView>("homeIcon")) {
     // 用内建的文件夹图标而不是品牌 logo：首页要表达的是「这里放包」，
-    // 不是「这是爱压」。图标由主题着色，深色主题下自动跟随。
+    // 不是「这是爱压」。
+    //
+    // 颜色取主题的 iconMuted 再往文字色靠一点：纯 iconMuted 在大面积浅底上
+    // 太淡，看着像禁用；靠一点就够醒目又不抢标题。深色主题下自动跟随，
+    // 不能在 XML 里写死——tint 只认十六进制固定色。
+    const AiUI::Theme* t = appTheme() ? appTheme() : AiUI::Activity::defaultThemePtr();
     icon->setIcon(AiUI::IconId::kFolder);
-    icon->setPlaceholderColor(AiUI::kColorTextFaint);
+    if (t) icon->setPlaceholderColor(AiUI::blendColor(t->iconMuted, t->text, 0.45f));
   }
 }
 
