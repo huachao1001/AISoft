@@ -35,6 +35,8 @@ class MainActivity : public AiUI::Activity {
   void updateTitle();
   // 视图状态变化后同步面包屑与树（仅根结构变化时才重建树）
   void refreshAddressBar();
+  // 在首页 / 浏览页之间切换（由 homeMode 驱动）
+  void refreshStage();
   // 把焦点交回文件列表
   void focusFileList();
 
@@ -57,6 +59,7 @@ class MainActivity : public AiUI::Activity {
   // ── 装配 ──
   void attachCrumbBar();
   void attachToolBar();
+  void attachHome();
   void attachSideTree();
   void attachFileList();
   void attachStatusBar();
@@ -91,6 +94,10 @@ class MainActivity : public AiUI::Activity {
   AiUI::TreeView* tree_ = nullptr;
   AiUI::ListView* list_ = nullptr;
   AiUI::StatusBar* status_ = nullptr;
+
+  // 首页与浏览页：按 homeMode 二选一显示
+  AiUI::View* homePane_ = nullptr;
+  AiUI::View* browsePane_ = nullptr;
 
   AiUI::Button* btnRefresh_ = nullptr;
   AiUI::Button* btnExtractSel_ = nullptr;

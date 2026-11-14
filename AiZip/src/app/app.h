@@ -38,7 +38,13 @@ struct App {
 
   // 视图状态
   bool archiveMode = false;
-  std::wstring curDir;       // 文件系统模式当前目录
+  // 主界面停在「还没打开压缩包」的首页。
+  //
+  // 与 archiveMode 分开：archiveMode=false 还包含「正在浏览文件系统」，
+  // 那种状态下有目录内容可显示，不该显示首页。这个标记只在启动时没有
+  // 带路径、以及用户自己关掉/切换出去之后为 true。
+  bool homeMode = false;
+  std::wstring curDir;       // 文件系统模式当前目录（首页时只作打开对话框的起点）
   std::wstring archivePath;  // 压缩包完整路径
   std::wstring innerPath;    // 压缩包内当前目录（空=根）
   arc::Archive archive;

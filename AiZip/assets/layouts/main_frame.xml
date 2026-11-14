@@ -2,8 +2,13 @@
 <!--
   主窗口整体布局。
 
-  纵向四段：导航条、工具栏、内容区（左树右列表）、状态栏。
-  控件的行为都在代码里配置，这里只描述"放在哪、多大"。
+  纵向三段：顶部导航条 + 工具栏合并区、内容区、状态栏。
+  内容区是 FrameLayout：底层的「左树右列表」与上层的首页叠在同一块区域，
+  按 homeMode 二选一显示——首页要占满整块内容区并居中，用叠加比另做一页
+  省事，也不必在切换时重建视图树。
+
+  导航条与工具栏在没有打开压缩包时整体隐藏：地址、搜索、提取这些动作
+  都要先有包才有意义，摆在首页上只会是灰的。
 
   标签名直接就是控件类名。AiUI 内置控件不需要额外属性；
   如果确实要放自定义控件，用 header 指明头文件、ns 指明命名空间。
@@ -13,14 +18,49 @@
   <!-- 导航条：面包屑 + 搜索框，全部由 BreadcrumbBar 自绘 -->
   <BreadcrumbBar id="crumb" height="48"/>
 
-  <!-- 工具栏：五个按钮由 ui_toolbar.cpp 在创建后装配 -->
+  <!-- 工具栏：五个按钮由 main_activity.cpp 在创建后装配 -->
   <ButtonBar id="toolBar" height="52"/>
 
-  <!-- 内容区：左树右列表，列表吃掉剩余宽度 -->
-  <LinearLayout id="content" orientation="horizontal" weight="1">
-    <TreeView id="tree" width="230" height="match"/>
-    <ListView id="list" weight="1" height="match"/>
-  </LinearLayout>
+  <!-- 内容区：底层左右分栏，上层首页 -->
+  <FrameLayout id="content" weight="1">
+
+    <!-- 打开压缩包之后显示的那一套 -->
+    <LinearLayout id="browsePane" orientation="horizontal" width="match" height="match">
+      <TreeView id="tree" width="230" height="match"/>
+      <ListView id="list" weight="1" height="match"/>
+    </LinearLayout>
+
+    <!--
+      首页：没有打开压缩包时铺满内容区。
+      上下各放一个弹性空白，中间的列就被压到垂直中央——LinearLayout 的
+      gravity 只管交叉轴（这里即水平），主轴要靠 weight 分配剩余空间。
+    -->
+    <LinearLayout id="homePane" orientation="vertical" width="match" height="match"
+                  gravity="center">
+
+      <View weight="1"/>
+
+      <LinearLayout orientation="vertical" width="match" height="wrap" gravity="center">
+        <ImageView id="homeIcon" width="96" height="96" scale="fit" align="center"/>
+
+        <TextView id="homeTitle" text="拖拽压缩包到这里" height="34" marginTop="24"
+                  textColor="textHead" align="center"/>
+
+        <TextView id="homeHint" text="也可以点下面的按钮，从磁盘里选一个"
+                  height="24" marginTop="4" textColor="textMuted" align="center"/>
+
+        <LinearLayout orientation="horizontal" width="wrap" height="40" marginTop="24"
+                      align="center">
+          <Button id="btnHomeOpen" text="打开压缩包..." width="148" height="36"/>
+          <Button id="btnHomeCreate" text="新建压缩包" style="outline" width="128" height="36"
+                  marginX="12"/>
+        </LinearLayout>
+      </LinearLayout>
+
+      <View weight="1"/>
+    </LinearLayout>
+
+  </FrameLayout>
 
   <!-- 状态栏 -->
   <StatusBar id="status" height="36"/>

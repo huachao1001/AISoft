@@ -14,6 +14,7 @@
 #include "AiUI/widgets/breadcrumb_bar.h"
 #include "AiUI/widgets/button.h"
 #include "AiUI/widgets/button_bar.h"
+#include "AiUI/widgets/image_view.h"
 #include "AiUI/widgets/status_bar.h"
 #include "AiUI/widgets/tree_view.h"
 
@@ -194,9 +195,12 @@ void MainActivity::onCreate() {
   tree_ = findView<AiUI::TreeView>("tree");
   list_ = findView<AiUI::ListView>("list");
   status_ = findView<AiUI::StatusBar>("status");
+  homePane_ = findView<AiUI::View>("homePane");
+  browsePane_ = findView<AiUI::View>("browsePane");
 
   attachCrumbBar();
   attachToolBar();
+  attachHome();
   attachSideTree();
   attachFileList();
   attachStatusBar();
@@ -204,6 +208,9 @@ void MainActivity::onCreate() {
   // 拖放与单实例转发挂在 AiUI 建的顶层窗口上
   g_app.mainWnd = nativeWindow();
   AttachHostHooks();
+
+  // 先定好这一次是首页还是浏览页，再让其它刷新函数看到正确的可见性
+  refreshStage();
 }
 
 AiUI::NativeHandle MainActivity::nativeWindow() const {
@@ -269,6 +276,47 @@ void MainActivity::attachToolBar() {
   if (btnDelete_) btnDelete_->setOnClick([this] { deleteItems(selectedItemIndices()); });
 
   refreshToolBar();
+}
+
+void MainActivity::attachHome() {
+  if (auto* open = findView<AiUI::Button>("btnHomeOpen")) {
+    open->setOnClick([this] {
+      // 起点用上次浏览的目录，没有就用用户目录：这是用户最可能放包的地方
+      const std::wstring start =
+          g_app.curDir.empty()
+              ? AiUI::platform()->specialFolder(AiUI::SpecialFolder::kHome)
+              : g_app.curDir;
+      const std::wstring picked = AiUI::platform()->pickOpenFile(
+          nativeWindow(), L"打开压缩包", start,
+          {L"压缩包 (*.zip;*.7z;*.rar;*.tar;*.gz;*.xz;*.cab;*.iso)|*.zip;*.7z;*.rar;*.tar;*.gz;*"
+           L".tgz;*.bz2;*.xz;*.cab;*.iso;*.wim;*.jar;*.apk;*.epub|所有文件 (*.*)|*.*"});
+      if (picked.empty()) return;
+      AppOpenArchive(picked);
+    });
+  }
+
+  if (auto* create = findView<AiUI::Button>("btnHomeCreate")) {
+    create->setOnClick([this] { ShowCompressDialog(g_app.mainWnd, {}); });
+  }
+
+  if (auto* icon = findView<AiUI::ImageView>("homeIcon")) {
+    // 用内建的文件夹图标而不是品牌 logo：首页要表达的是「这里放包」，
+    // 不是「这是爱压」。图标由主题着色，深色主题下自动跟随。
+    icon->setIcon(AiUI::IconId::kFolder);
+    icon->setPlaceholderColor(AiUI::kColorTextFaint);
+  }
+}
+
+// 首页 / 浏览页二选一。
+//
+// 隐藏的不只是内容区：导航条与工具栏在没有包时没有可用项，留着只是几行
+// 灰按钮。状态栏留下——它显示「没有打开压缩包」这类现状说明。
+void MainActivity::refreshStage() {
+  const bool home = g_app.homeMode;
+  if (homePane_) homePane_->show(home);
+  if (browsePane_) browsePane_->show(!home);
+  if (crumb_) crumb_->show(!home);
+  if (toolBar_) toolBar_->show(!home);
 }
 
 void MainActivity::attachSideTree() {
@@ -386,6 +434,13 @@ void MainActivity::refreshStatusBar() {
   if (!status_) return;
 
   AiUI::StatusFields fields;
+  if (g_app.homeMode) {
+    // 首页没有「当前目录」可言：写「爱压」比写一个用户没进过的路径更清楚
+    fields.left = L"爱压";
+    fields.right = L"未打开压缩包";
+    status_->setFields(fields);
+    return;
+  }
   if (g_app.archiveMode) {
     fields.left = g_app.archivePath;
     fields.tag = z7::FormatNameFromExtension(util::FileExtension(g_app.archivePath));
@@ -454,6 +509,8 @@ void MainActivity::updateTitle() {
 }
 
 void MainActivity::refreshAddressBar() {
+  // 首页没有地址与树可同步：省掉这次重建，免得对着空的 curDir 建根节点
+  if (g_app.homeMode) return;
   refreshCrumbBar();
   syncSideTree();
 }
@@ -756,6 +813,8 @@ void MainActivity::commitAddress(const std::wstring& target) {
 
 bool MainActivity::onKeyDown(const AiUI::Key& key, const AiUI::Modifiers& mods) {
   if (!mods.ctrl) return false;
+  // 首页没有地址栏与搜索框可操作，快捷键应当无效
+  if (g_app.homeMode) return false;
   switch (key) {
     case AiUI::Key::kL:
       if (crumb_) crumb_->beginEdit();

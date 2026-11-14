@@ -165,6 +165,11 @@ int AiUI::runApp() {
       AppNavigateTo(util::DirName(util::AbsolutePath(arg)));
     }
   } else {
+    // 没带路径：停在首页，让用户拖包进来或点「打开压缩包」。
+    //
+    // 以前这里直接列上次浏览的目录：用户双击图标就想看某个包，却先看到一堆
+    // 无关的文件，还得自己在里面找。主界面只服务「打开压缩包」这一件事。
+    g_app.homeMode = true;
     AppRefreshView();
   }
 

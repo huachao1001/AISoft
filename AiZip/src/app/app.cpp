@@ -172,7 +172,10 @@ bool OpenArchiveWithPassword(arc::Archive& a, const std::wstring& path,
 }  // namespace
 
 void AppRefreshView() {
-  if (g_app.archiveMode) {
+  // 首页没有内容可载入：跳过列目录，界面只剩提示与两个按钮
+  if (g_app.homeMode) {
+    g_app.items.clear();
+  } else if (g_app.archiveMode) {
     LoadArchiveItems();
   } else {
     LoadDirectoryItems(g_app.curDir);
@@ -185,6 +188,7 @@ void AppRefreshView() {
     activity->refreshFileList();
     activity->refreshStatusBar();
     activity->refreshToolBar();
+    activity->refreshStage();
   }
 }
 
@@ -207,6 +211,8 @@ void AppNavigateTo(const std::wstring& dirIn) {
 
   g_app.curDir = dir;
   g_app.settings.lastDir = dir;
+  // 浏览文件系统同样是「有内容可看」的状态，离开首页
+  g_app.homeMode = false;
 
   // 历史前进
   if (g_app.historyPos < 0 || g_app.historyPos >= static_cast<int>(g_app.history.size()) ||
@@ -229,6 +235,7 @@ void AppOpenArchive(const std::wstring& path) {
     return;
   }
   g_app.archiveMode = true;
+  g_app.homeMode = false;
   g_app.archivePath = path;
   g_app.innerPath.clear();
 
