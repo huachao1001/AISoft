@@ -42,7 +42,7 @@ void Button::resolvePalette(Color& background, Color& border, Color& ink) const 
   if (!isEnabled()) {
     // 主行动禁用时保留底色，只是褪成浅色调；完全透明会让人以为按钮消失了
     if (spec_.style == ButtonStyle::kPrimary) {
-      background = blendColor(t.accent, t.pane, 0.72);
+      background = blendColor(t.accent, t.pane, 0.72f);
       ink = t.textFaint;
     } else {
       background = spec_.style == ButtonStyle::kOutline ? t.btnDisBg : kNoColor;

@@ -78,7 +78,7 @@ int InputBox::textRight() const {
 // 1 物理像素在 150% 屏上细得像根发丝，看不出是光标；取 1.5 设计像素再按 DPI
 // 取整：100% 下 2px、150% 下 2px、200% 下 3px，随缩放增减但不会失形。
 int InputBox::caretBarWidth() const {
-  const int width = (1.5 * dpi() / 96.0 + 0.5);
+  const int width = static_cast<int>(1.5 * dpi() / 96.0 + 0.5);
   return width < 1 ? 1 : width;
 }
 

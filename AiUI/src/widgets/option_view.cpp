@@ -36,7 +36,7 @@ void OptionView::onPaint(Painter& painter, const Rect& rect) {
   const Color accent = spec_.accent != kNoColor ? spec_.accent : t.inputFocus;
   // 未选中的描边要比输入框的更重一档：输入框是整条长矩形，浅浅一条也看得出来，
   // 而单选框只有 16pt 的小圆圈，用同一支灰在浅底上会糊成一团虚影。
-  const Color idleBorder = blendColor(t.controlBorder, t.text, 0.38);
+  const Color idleBorder = blendColor(t.controlBorder, t.text, 0.38f);
   const Color border = spec_.boxBorder != kNoColor  ? spec_.boxBorder
                        : !isEnabled()               ? edgeOn(boxBg, 8)
                                                     : idleBorder;
