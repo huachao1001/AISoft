@@ -71,14 +71,39 @@ bool innerPathExists(std::wstring inner) {
   return false;
 }
 
+// 嵌套层的面包屑标记：\x01 开头跟着「要退几层」，避免和真实包内路径撞车
+constexpr wchar_t kNestTagPrefix = L'\x01';
+
+std::wstring MakeNestTag(size_t pops) {
+  return std::wstring(1, kNestTagPrefix) + std::to_wstring(pops);
+}
+
+// 是不是嵌套层标记；是则把要退的层数写进 pops
+bool ParseNestTag(const std::wstring& tag, size_t& pops) {
+  if (tag.size() < 2 || tag.front() != kNestTagPrefix) return false;
+  pops = static_cast<size_t>(_wtoi(tag.c_str() + 1));
+  return true;
+}
+
 // 拆 "C:\a\b" 或包内 "a\b" 成逐级路径段
 std::vector<AiUI::BreadcrumbSegment> buildSegments() {
   std::vector<AiUI::BreadcrumbSegment> out;
 
   if (g_app.archiveMode) {
+    // 嵌进去时先把外层那几个包按「目录链」摆出来：用户看到的应该是一路
+    // 走下来的路径，而不是凭空出现一个临时文件名
+    const size_t depth = g_app.nestStack.size();
+    for (size_t i = 0; i < depth; ++i) {
+      AiUI::BreadcrumbSegment outer;
+      outer.label = util::BaseName(g_app.nestStack[i].archivePath);
+      outer.tag = MakeNestTag(depth - i);
+      outer.home = true;
+      out.push_back(outer);
+    }
+
     AiUI::BreadcrumbSegment root;
     root.label = util::BaseName(g_app.archivePath);
-    root.tag.clear();  // 空 = 包根
+    root.tag.clear();  // 空 = 当前包根
     root.current = g_app.innerPath.empty();
     root.home = true;
     out.push_back(root);
@@ -234,6 +259,12 @@ void MainActivity::attachCrumbBar() {
   };
   callbacks.onNavigate = [this](const std::wstring& tag) {
     if (g_app.archiveMode) {
+      size_t pops = 0;
+      if (ParseNestTag(tag, pops)) {
+        // 点外层面包屑：连退这么多层
+        for (size_t i = 0; i < pops && AppInNestedArchive(); ++i) AppLeaveNestedArchive();
+        return;
+      }
       if (tag == g_app.innerPath) return;
       g_app.innerPath = tag;
       AppRefreshView();
@@ -244,7 +275,10 @@ void MainActivity::attachCrumbBar() {
   callbacks.onSearch = [this](const std::wstring& text) { setFilterText(text); };
   callbacks.addressText = [] {
     if (!g_app.archiveMode) return g_app.curDir;
-    std::wstring text = g_app.archivePath;
+    // 嵌套时把外层链一起写出来，形态与面包屑一致：点到哪一层都看得出位置
+    std::wstring text;
+    for (const auto& layer : g_app.nestStack) text += util::BaseName(layer.archivePath) + L"\\";
+    text += util::BaseName(g_app.archivePath);
     if (!g_app.innerPath.empty()) text += L"\\" + g_app.innerPath;
     return text;
   };
@@ -270,7 +304,22 @@ void MainActivity::attachToolBar() {
   }
 
   btnAdd_ = toolBar_->addButton(makeButtonSpec(L"添加文件", AiUI::IconId::kAdd), 2);
-  if (btnAdd_) btnAdd_->setOnClick([this] { ShowCompressDialog(g_app.mainWnd, selectedPaths()); });
+  if (btnAdd_) {
+    btnAdd_->setOnClick([this] {
+      // 在压缩包里时是「把文件加进这个包」，走多选；在文件系统里是新建压缩包
+      if (g_app.archiveMode) {
+        const std::vector<std::wstring> picked = AiUI::platform()->pickOpenFiles(
+            nativeWindow(), L"添加到压缩包",
+            g_app.curDir.empty() ? util::DirName(g_app.archivePath) : g_app.curDir,
+            {L"所有文件 (*.*)|*.*"});
+        if (picked.empty()) return;
+        const std::wstring error = AppAddFilesToArchive(picked);
+        if (!error.empty()) warn(error, nativeWindow());
+        return;
+      }
+      ShowCompressDialog(g_app.mainWnd, selectedPaths());
+    });
+  }
 
   btnDelete_ = toolBar_->addButton(makeButtonSpec(L"删除选中", AiUI::IconId::kTrash), 2);
   if (btnDelete_) btnDelete_->setOnClick([this] { deleteItems(selectedItemIndices()); });
@@ -303,12 +352,13 @@ void MainActivity::attachHome() {
     // 用内建的文件夹图标而不是品牌 logo：首页要表达的是「这里放包」，
     // 不是「这是爱压」。
     //
-    // 颜色取主题的 iconMuted 再往文字色靠一点：纯 iconMuted 在大面积浅底上
-    // 太淡，看着像禁用；靠一点就够醒目又不抢标题。深色主题下自动跟随，
-    // 不能在 XML 里写死——tint 只认十六进制固定色。
+    // 颜色取主题 accent 再往 body 收一点：全强度 accent 在 96px 的大面积上
+    // 太扎眼，和主按钮抢注意力；收一点既点出「这里是重点」，又不会喧宾夺主。
+    // 必须在这里算而不是写 XML 的 tint——tint 只认十六进制固定色，深色主题
+    // 下会变成一个和背景打架的颜色。
     const AiUI::Theme* t = appTheme() ? appTheme() : AiUI::Activity::defaultThemePtr();
     icon->setIcon(AiUI::IconId::kFolder);
-    if (t) icon->setPlaceholderColor(AiUI::blendColor(t->iconMuted, t->text, 0.45f));
+    if (t) icon->setPlaceholderColor(AiUI::blendColor(t->accent, t->body, 0.28f));
   }
 }
 
@@ -447,7 +497,17 @@ void MainActivity::refreshStatusBar() {
     return;
   }
   if (g_app.archiveMode) {
-    fields.left = g_app.archivePath;
+    // 嵌套时 g_app.archivePath 是临时镜像里的副本，不能直接给用户看。
+    // 状态栏要写「用户是从哪条路进来的」，所以按面包屑的形态拼。
+    if (AppInNestedArchive()) {
+      std::wstring path;
+      for (const auto& layer : g_app.nestStack) path += util::BaseName(layer.archivePath) + L"\\";
+      path += util::BaseName(g_app.archivePath);
+      if (!g_app.innerPath.empty()) path += L"\\" + g_app.innerPath;
+      fields.left = path;
+    } else {
+      fields.left = g_app.archivePath;
+    }
     fields.tag = z7::FormatNameFromExtension(util::FileExtension(g_app.archivePath));
     fields.size = util::FormatSize(AiUI::platform()->fileSize(g_app.archivePath));
     fields.showHome = true;
@@ -494,7 +554,8 @@ void MainActivity::refreshToolBar() {
   if (!toolBar_) return;
   if (btnExtractSel_) btnExtractSel_->setEnabled(canExtractSelected());
   if (btnDelete_) btnDelete_->setEnabled(!selectedItemIndices().empty());
-  if (btnAdd_) btnAdd_->setEnabled(!g_app.archiveMode);
+  // 「添加文件」在两种模式下都可用：文件系统里是新建压缩包，包里是往里加文件
+  if (btnAdd_) btnAdd_->setEnabled(true);
   if (btnRefresh_) btnRefresh_->setEnabled(true);
   if (btnExtractAll_) btnExtractAll_->setEnabled(true);
   toolBar_->relayout();
@@ -607,7 +668,22 @@ void MainActivity::onRowActivated(int row) {
       AppRefreshView();
       return;
     }
-    ShowExtractDialog(host, {list_ ? list_->rowTag(row) : -1});
+
+    // 包内的路径：条目名只是当前这一层的相对名，拼上 innerPath 才是包内全路径
+    const std::wstring entryPath =
+        g_app.innerPath.empty() ? item->name : g_app.innerPath + L"\\" + item->name;
+
+    // 包里的压缩包当目录：点进去做二级预览
+    if (arc::Archive::IsArchiveFile(item->name)) {
+      const std::wstring error = AppEnterNestedArchive(item->entryIndex, entryPath);
+      if (!error.empty()) warn(error, host);
+      return;
+    }
+
+    // 其余文件：解到临时镜像再用系统默认程序打开。
+    // 包内条目没有磁盘路径，直接交给 shell 是打不开的。
+    const std::wstring error = AppOpenArchiveEntry(item->entryIndex, entryPath);
+    if (!error.empty()) warn(error, host);
     return;
   }
 

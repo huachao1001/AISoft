@@ -756,6 +756,14 @@ class Platform {
     (void)filters;
     return {};
   }
+  // 多选版本；后端不支持时退化成单选，语义仍是「用户选了什么」
+  virtual std::vector<std::wstring> pickOpenFiles(NativeHandle owner, const std::wstring& title,
+                                                  const std::wstring& initialDir,
+                                                  const std::vector<std::wstring>& filters) {
+    const std::wstring one = pickOpenFile(owner, title, initialDir, filters);
+    if (one.empty()) return {};
+    return {one};
+  }
 
   // ── Shell 集成 ──
   // 用系统关联程序打开文件或目录

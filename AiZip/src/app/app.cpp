@@ -8,6 +8,7 @@
 #include "ui_main.h"
 #include "util.h"
 
+#include <algorithm>
 #include <map>
 
 App g_app;
@@ -203,6 +204,7 @@ void AppNavigateTo(const std::wstring& dirIn) {
   }
 
   if (g_app.archiveMode) {
+    AppClearNestedArchives();
     g_app.archive.Close();
     g_app.archiveMode = false;
     g_app.innerPath.clear();
@@ -228,12 +230,19 @@ void AppNavigateTo(const std::wstring& dirIn) {
 }
 
 void AppOpenArchive(const std::wstring& path) {
+  // 换包前先清嵌套栈：临时文件属于上一个包，留着只会漏在 temp 里
+  AppClearNestedArchives();
+
   arc::OpenResult r;
   if (!OpenArchiveWithPassword(g_app.archive, path, DialogOwner(), r)) {
     if (r.error.empty()) return;  // 用户取消
     Fail(L"无法打开压缩包：\n" + path + L"\n\n" + r.error, g_app.mainWnd);
     return;
   }
+  // 换包时旧包的镜像目录也要清：按路径散列命名，不复用会一直堆在 temp 里
+  util::RemoveDirectoryTree(g_app.stageDir);
+  g_app.stageDir.clear();
+
   g_app.archiveMode = true;
   g_app.homeMode = false;
   g_app.archivePath = path;
@@ -246,6 +255,288 @@ void AppOpenArchive(const std::wstring& path) {
   g_app.historyPos = static_cast<int>(g_app.history.size()) - 1;
 
   AppRefreshView();
+}
+
+// ───────────────────── 包内条目落地（嵌套 / 打开 / 追加共用） ─────────────────────
+
+namespace {
+
+// 从路径里取一个安全的文件名（去掉目录与可能害事的字符）
+std::wstring SafeFileName(const std::wstring& path) {
+  std::wstring name = util::BaseName(path);
+  for (wchar_t& c : name) {
+    if (c == L'\\' || c == L'/' || c == L':' || c == L'*' || c == L'?' || c == L'"' ||
+        c == L'<' || c == L'>' || c == L'|') {
+      c = L'_';
+    }
+  }
+  return name.empty() ? std::wstring(L"nested.bin") : name;
+}
+
+// 某一层压缩包的落地镜像目录。按包路径散列，同一层反复进出复用同一个目录，
+// 不同层（含内层那个临时包）各占一个，互不覆盖。
+std::wstring StageDirFor(const std::wstring& archivePath) {
+  const uint32_t hash = util::StableHash(util::ToLower(archivePath));
+  wchar_t suffix[64] = {};
+  swprintf_s(suffix, L"aizip_stage_%08X", hash);
+  return util::JoinPath(AiUI::platform()->tempDir(), suffix);
+}
+
+// 当前层用于落地的目录；还没有就建一个。失败返回空串。
+std::wstring EnsureStageDir() {
+  if (g_app.stageDir.empty()) g_app.stageDir = StageDirFor(g_app.archivePath);
+  if (g_app.stageDir.empty()) return {};
+  if (!util::EnsureDirectory(g_app.stageDir)) return {};
+  return g_app.stageDir;
+}
+
+// 把当前层的某个条目按包内相对路径解到镜像目录，返回落地路径。
+//
+// 已经在镜像里就直接复用：双击一个文件两次不该解两遍，大文件尤其明显。
+std::wstring StageEntry(int entryIndex, const std::wstring& entryPath, std::wstring& error) {
+  const std::wstring dir = EnsureStageDir();
+  if (dir.empty()) {
+    error = L"无法创建临时目录";
+    return {};
+  }
+
+  // 7-Zip 按包内相对路径落地，分隔符可能是 '/'，也可能被去掉了公共前缀
+  std::wstring landed = util::JoinPath(dir, entryPath);
+  std::replace(landed.begin(), landed.end(), L'/', L'\\');
+  if (util::PathExists(landed)) return landed;
+
+  arc::ExtractOptions opts;
+  opts.targetDir = dir;
+  const std::vector<uint32_t> indices{static_cast<uint32_t>(entryIndex)};
+  if (!g_app.archive.Extract(indices, opts, nullptr, nullptr, nullptr, error)) {
+    if (error.empty()) error = L"无法解出该内容";
+    return {};
+  }
+
+  // 路径形态对不上时退一步：解压层可能自己收拾了目录层级
+  if (!util::PathExists(landed)) {
+    const std::wstring flat = util::JoinPath(dir, SafeFileName(entryPath));
+    if (!util::PathExists(flat)) {
+      error = L"解出的内容里找不到这个文件";
+      return {};
+    }
+    return flat;
+  }
+  return landed;
+}
+
+}  // namespace
+
+std::wstring AppEnterNestedArchive(int entryIndex, const std::wstring& entryPath) {
+  if (!g_app.archiveMode || entryIndex < 0) return L"当前没有打开压缩包";
+
+  std::wstring error;
+  const std::wstring landed = StageEntry(entryIndex, entryPath, error);
+  if (landed.empty()) return error;
+
+  // 内层先在自己的临时对象里打开，成功之后才动全局状态：
+  // 失败时视图停在原处，不会留下「半个嵌套层」。
+  App::NestedLayer next;
+  arc::OpenResult r;
+  if (!OpenArchiveWithPassword(next.archive, landed, DialogOwner(), r)) {
+    return r.error.empty() ? L"无法打开内层压缩包" : r.error;
+  }
+
+  // 当前这一层整体入栈（连同它的 Archive 句柄与镜像目录），内层接管全局状态
+  App::NestedLayer outer;
+  outer.archive = std::move(g_app.archive);
+  outer.archivePath = g_app.archivePath;
+  outer.innerPath = g_app.innerPath;
+  outer.stageDir = g_app.stageDir;
+  g_app.nestStack.push_back(std::move(outer));
+
+  g_app.archive = std::move(next.archive);
+  g_app.archivePath = landed;
+  g_app.innerPath.clear();
+  // 内层用新的镜像目录；外层那个（含刚解出来的内层包）留在栈里不动
+  g_app.stageDir.clear();
+
+  AppRefreshView();
+  return {};
+}
+
+bool AppLeaveNestedArchive() {
+  if (g_app.nestStack.empty()) return false;
+
+  // 栈顶保存的是「进入本层前」的那一层，退出时把它接回来
+  App::NestedLayer outer = std::move(g_app.nestStack.back());
+  g_app.nestStack.pop_back();
+
+  // 先关掉本层句柄，再删它解出来的镜像目录：Windows 上句柄还在就删不掉文件
+  g_app.archive.Close();
+  util::RemoveDirectoryTree(g_app.stageDir);
+
+  g_app.archive = std::move(outer.archive);
+  g_app.archivePath = outer.archivePath;
+  g_app.innerPath = outer.innerPath;
+  // 外层镜像目录要留着：内层这个压缩包本身就在里面，删了会连带下次进入失败
+  g_app.stageDir = outer.stageDir;
+
+  AppRefreshView();
+  return true;
+}
+
+bool AppInNestedArchive() { return !g_app.nestStack.empty(); }
+
+void AppClearNestedArchives() {
+  for (auto& layer : g_app.nestStack) {
+    layer.archive.Close();
+    util::RemoveDirectoryTree(layer.stageDir);
+  }
+  g_app.nestStack.clear();
+  util::RemoveDirectoryTree(g_app.stageDir);
+  g_app.stageDir.clear();
+}
+
+std::wstring AppOpenArchiveEntry(int entryIndex, const std::wstring& entryPath) {
+  if (!g_app.archiveMode || entryIndex < 0) return L"当前没有打开压缩包";
+
+  std::wstring error;
+  const std::wstring landed = StageEntry(entryIndex, entryPath, error);
+  if (landed.empty()) return error;
+
+  if (!AiUI::platform()->openWithSystem(landed)) return L"没有程序可以打开这个文件";
+  return {};
+}
+
+std::wstring AppAddFilesToArchive(const std::vector<std::wstring>& sources) {
+  if (!g_app.archiveMode) return L"当前没有打开压缩包";
+  if (sources.empty()) return {};
+
+  // 嵌套层里的包只是一份临时副本，改它不会回到外层真正的包里。与其让用户
+  // 以为改动生效，不如直接说清楚。
+  if (AppInNestedArchive()) {
+    return L"包内的压缩包是预览用的临时副本，改动无法保存。\n请先返回上一层再添加文件。";
+  }
+
+  const std::wstring original = g_app.archivePath;
+  const std::wstring workRoot =
+      util::JoinPath(AiUI::platform()->tempDir(),
+                     L"aizip_add_" + std::to_wstring(AiUI::platform()->processId()) + L"_" +
+                         std::to_wstring(AiUI::platform()->monotonicMillis()));
+  const std::wstring unpackDir = util::JoinPath(workRoot, L"unpack");
+  // 输出放在独立目录并保留原文件名：Compress 靠扩展名决定容器格式
+  const std::wstring outDir = util::JoinPath(workRoot, L"out");
+  const std::wstring outPath = util::JoinPath(outDir, util::BaseName(original));
+
+  // 加密包：口令在解压回调里问一次，重压时沿用同一个
+  std::wstring password;
+  std::wstring error;
+
+  const bool ok = ui::ShowProgressDialog(g_app.mainWnd, L"正在添加文件", original,
+                                         [&](const arc::ProgressFn& prog) {
+    if (!util::EnsureDirectory(unpackDir) || !util::EnsureDirectory(outDir)) {
+      error = L"无法创建临时目录";
+      return false;
+    }
+
+    // 1) 整包解到临时目录：7-Zip 没有「往已压好的容器追加」的能力，
+    //    只能走「解开 → 合并 → 重新压回」这条路。
+    arc::ExtractOptions opts;
+    opts.targetDir = unpackDir;
+    const bool extracted = g_app.archive.Extract(
+        {}, opts, prog, nullptr,
+        [&password](std::wstring& out) -> bool {
+          bool accepted = false;
+          ui::RunOnUiThread([&] {
+            std::wstring pwd;
+            accepted = ui::PromptText(g_app.mainWnd, L"输入密码", L"压缩包已加密，请输入密码：",
+                                      pwd, true);
+            if (accepted) {
+              pwd.swap(password);
+              out = password;
+            }
+          });
+          return accepted;
+        },
+        error);
+    if (!extracted) {
+      if (error.empty()) error = L"无法解开原压缩包";
+      return false;
+    }
+
+    // 2) 把新文件并到当前所在目录（不是包根）：用户是在这个目录里拖进来的，
+    //    文件就该落在眼前这一层。
+    const std::wstring destDir =
+        g_app.innerPath.empty() ? unpackDir : util::JoinPath(unpackDir, g_app.innerPath);
+    if (!util::EnsureDirectory(destDir)) {
+      error = L"无法创建目标文件夹";
+      return false;
+    }
+    for (const std::wstring& src : sources) {
+      std::wstring landed;
+      if (!util::CopyTreeInto(src, destDir, landed)) {
+        error = L"无法读入：" + util::BaseName(src);
+        return false;
+      }
+    }
+
+    // 3) 重新压回同格式。输出先写临时目录，成功后再替换原文件——
+    //    中途失败时原包仍然完好，不会出现「加到一半包坏了」。
+    std::vector<std::wstring> contents;
+    for (const auto& entry : AiUI::platform()->listDirectory(unpackDir, false)) {
+      contents.push_back(entry.fullPath);
+    }
+    if (contents.empty()) {
+      error = L"没有可写回的内容";
+      return false;
+    }
+
+    arc::CompressOptions copts;
+    copts.archivePath = outPath;
+    copts.password = password;
+    if (!arc::Compress(contents, copts, prog, error)) {
+      if (error.empty()) error = L"重新压缩失败";
+      return false;
+    }
+    return true;
+  });
+
+  if (!ok) {
+    util::RemoveDirectoryTree(workRoot);
+    return error.empty() ? L"添加失败" : error;
+  }
+
+  // 替换原包：必须先关句柄，否则 Windows 上换不掉
+  g_app.archive.Close();
+  bool replaced = false;
+  for (int attempt = 0; attempt < 10 && !replaced; ++attempt) {
+    replaced = AiUI::platform()->moveFile(outPath, original);
+    if (!replaced) AiUI::platform()->sleepMillis(50);
+  }
+  if (!replaced) {
+    // 换不掉时退回「复制覆盖」这一条路，用户数据不该因为锁文件而丢
+    replaced = util::CopyFileTo(outPath, original);
+  }
+  util::RemoveDirectoryTree(workRoot);
+
+  if (!replaced) {
+    // 原包还在，重新打开它，界面不至于变成空白
+    arc::OpenResult r;
+    OpenArchiveWithPassword(g_app.archive, original, DialogOwner(), r);
+    AppRefreshView();
+    return L"无法写回压缩包，原文件可能被占用";
+  }
+
+  // 镜像目录里的旧内容已经过期（包变了），整棵清掉重新按需落地
+  util::RemoveDirectoryTree(g_app.stageDir);
+  g_app.stageDir.clear();
+
+  arc::OpenResult r;
+  if (!OpenArchiveWithPassword(g_app.archive, original, DialogOwner(), r)) {
+    g_app.archiveMode = false;
+    g_app.archivePath.clear();
+    g_app.innerPath.clear();
+    AppRefreshView();
+    return r.error.empty() ? L"写回后无法重新打开压缩包" : r.error;
+  }
+  AppRefreshView();
+  return {};
 }
 
 bool AppExtractArchive(AiUI::NativeHandle owner, const std::wstring& path) {
@@ -371,6 +662,9 @@ void AppGoUp() {
       AppRefreshView();
       return;
     }
+    // 本层包根：在嵌套里就先退回外层那个包（它才是「上一层」），
+    // 只有真外层才是磁盘目录
+    if (AppLeaveNestedArchive()) return;
     // 压缩包根目录：回到所在文件夹
     AppNavigateTo(util::DirName(g_app.archivePath));
     return;
@@ -384,9 +678,13 @@ void AppGoBack() {
     --g_app.historyPos;
     const std::wstring target = g_app.history[g_app.historyPos];
     if (arc::Archive::IsArchiveFile(target) && util::PathExists(target)) {
+      AppClearNestedArchives();
       arc::OpenResult r;
       if (OpenArchiveWithPassword(g_app.archive, target, DialogOwner(), r)) {
+        util::RemoveDirectoryTree(g_app.stageDir);
+        g_app.stageDir.clear();
         g_app.archiveMode = true;
+        g_app.homeMode = false;
         g_app.archivePath = target;
         g_app.innerPath.clear();
         AppRefreshView();
@@ -404,9 +702,13 @@ void AppGoForward() {
     ++g_app.historyPos;
     const std::wstring target = g_app.history[g_app.historyPos];
     if (arc::Archive::IsArchiveFile(target) && util::PathExists(target)) {
+      AppClearNestedArchives();
       arc::OpenResult r;
       if (OpenArchiveWithPassword(g_app.archive, target, DialogOwner(), r)) {
+        util::RemoveDirectoryTree(g_app.stageDir);
+        g_app.stageDir.clear();
         g_app.archiveMode = true;
+        g_app.homeMode = false;
         g_app.archivePath = target;
         g_app.innerPath.clear();
         AppRefreshView();

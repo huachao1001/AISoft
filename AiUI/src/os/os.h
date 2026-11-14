@@ -86,6 +86,10 @@ class Backend {
   virtual std::wstring pickOpenFile(NativeHandle owner, const std::wstring& title,
                                     const std::wstring& initialDir,
                                     const std::vector<std::wstring>& filters) = 0;
+  // 多选版本：取消或未选中时返回空
+  virtual std::vector<std::wstring> pickOpenFiles(NativeHandle owner, const std::wstring& title,
+                                                  const std::wstring& initialDir,
+                                                  const std::vector<std::wstring>& filters) = 0;
 
   // ── 剪贴板 ──
   virtual bool setClipboardText(const std::wstring& text) = 0;

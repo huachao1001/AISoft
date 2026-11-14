@@ -23,6 +23,18 @@ bool IsDirectory(const std::wstring& path);
 bool EnsureDirectory(const std::wstring& path);
 std::wstring AbsolutePath(const std::wstring& path);
 
+// 连内容一起删掉一个目录；不存在也算成功。
+// 平台层只有「空目录才删」，递归这一层归这里的通用代码，不往平台接口里加。
+bool RemoveDirectoryTree(const std::wstring& dir);
+
+// 复制单个文件；目标目录必须已存在。
+bool CopyFileTo(const std::wstring& from, const std::wstring& to);
+
+// 把一个文件或整棵目录复制进 destDir，返回落地路径；失败返回空串。
+// 目标已存在时的处理交给调用方：这里不覆盖也不改名。
+bool CopyTreeInto(const std::wstring& from, const std::wstring& destDir,
+                  std::wstring& outPath);
+
 // 同名文件生成 "name (2).ext"，用于“自动重命名”
 std::wstring MakeUniquePath(const std::wstring& path);
 

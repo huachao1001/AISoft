@@ -1171,6 +1171,11 @@ class WindowsPlatform : public Platform {
                             const std::vector<std::wstring>& filters) override {
     return os::backend().pickOpenFile(owner, title, initialDir, filters);
   }
+  std::vector<std::wstring> pickOpenFiles(NativeHandle owner, const std::wstring& title,
+                                          const std::wstring& initialDir,
+                                          const std::vector<std::wstring>& filters) override {
+    return os::backend().pickOpenFiles(owner, title, initialDir, filters);
+  }
 
   bool openWithSystem(const std::wstring& path) override {
     return os::backend().openWithSystem(path);

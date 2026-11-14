@@ -716,6 +716,26 @@ class UpdateCallback final : public z7::IArchiveUpdateCallback {
 
 Archive::Archive() = default;
 
+// 移动语义：嵌套预览要把「当前层」整体压栈、再让内层接管全局对象。
+// 这些字段都是裸指针，默认的按位移动正好把所有权交出去；源对象必须清空，
+// 否则两边析构会 double-release。
+Archive::Archive(Archive&& other) noexcept
+    : stream_(other.stream_), archive_(other.archive_), entries_(std::move(other.entries_)) {
+  other.stream_ = nullptr;
+  other.archive_ = nullptr;
+}
+
+Archive& Archive::operator=(Archive&& other) noexcept {
+  if (this == &other) return *this;
+  Close();
+  stream_ = other.stream_;
+  archive_ = other.archive_;
+  entries_ = std::move(other.entries_);
+  other.stream_ = nullptr;
+  other.archive_ = nullptr;
+  return *this;
+}
+
 Archive::~Archive() { Close(); }
 
 void Archive::Close() {

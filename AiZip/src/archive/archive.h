@@ -67,6 +67,9 @@ class Archive {
   ~Archive();
   Archive(const Archive&) = delete;
   Archive& operator=(const Archive&) = delete;
+  // 可移动：嵌套预览要把当前层整体压栈，再让内层接管
+  Archive(Archive&& other) noexcept;
+  Archive& operator=(Archive&& other) noexcept;
 
   OpenResult Open(const std::wstring& filePath, const std::wstring& password = L"");
   void Close();

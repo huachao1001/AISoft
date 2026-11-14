@@ -10,10 +10,31 @@
 #include "AiUI/platform.h"
 #include "AiUI/window.h"
 
+
 namespace ui {
 
 void HandleDroppedFiles(const std::vector<std::wstring>& paths) {
   if (paths.empty()) return;
+
+  // 已经在浏览某个压缩包：拖进来的东西就是「加进这个包」。
+  // 注意别把「拖另一个压缩包进来」也当成追加——那看着更像要打开它，
+  // 用户拖一个包进来的意图是切换目标，不是把一个包塞进另一个包。
+  if (g_app.archiveMode && !g_app.homeMode) {
+    const bool allArchives =
+        paths.size() == 1 && arc::Archive::IsArchiveFile(paths[0]);
+    if (!allArchives) {
+      const std::wstring error = AppAddFilesToArchive(paths);
+      if (!error.empty()) {
+        AiUI::MessageBoxParams params;
+        params.title = L"爱压";
+        params.message = error;
+        params.icon = AiUI::MessageBoxIcon::kWarning;
+        AiUI::platform()->showMessageBox(g_app.mainWnd, params);
+      }
+      return;
+    }
+  }
+
   if (paths.size() == 1 && arc::Archive::IsArchiveFile(paths[0])) {
     AppOpenArchive(paths[0]);
   } else {

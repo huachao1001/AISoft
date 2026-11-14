@@ -65,6 +65,9 @@ class WindowsBackend final : public Backend {
   std::wstring pickOpenFile(NativeHandle owner, const std::wstring& title,
                             const std::wstring& initialDir,
                             const std::vector<std::wstring>& filters) override;
+  std::vector<std::wstring> pickOpenFiles(NativeHandle owner, const std::wstring& title,
+                                          const std::wstring& initialDir,
+                                          const std::vector<std::wstring>& filters) override;
 
   // ── 剪贴板 ──
   bool setClipboardText(const std::wstring& text) override;

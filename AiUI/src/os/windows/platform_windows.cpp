@@ -657,6 +657,49 @@ std::wstring WindowsBackend::pickOpenFile(NativeHandle owner, const std::wstring
   return std::wstring(file);
 }
 
+// 多选：OPENFILENAME 的多选结果是一段以 \0 分隔、以额外 \0 结尾的字符串，
+// 与单选共用一个缓冲区。MAX_PATH 装不下太多文件，给一个更大的缓冲。
+std::vector<std::wstring> WindowsBackend::pickOpenFiles(
+    NativeHandle owner, const std::wstring& title, const std::wstring& initialDir,
+    const std::vector<std::wstring>& filters) {
+  std::vector<wchar_t> buffer(64 * 1024, L'\0');
+  std::wstring filterBuffer = buildFilterString(filters);
+  std::wstring titleCopy = title;
+  std::wstring dirCopy = initialDir;
+
+  OPENFILENAMEW ofn{};
+  ofn.lStructSize = sizeof(ofn);
+  ofn.hwndOwner = static_cast<HWND>(owner);
+  ofn.lpstrFilter = filterBuffer.empty() ? nullptr : filterBuffer.c_str();
+  ofn.lpstrFile = buffer.data();
+  ofn.nMaxFile = static_cast<DWORD>(buffer.size());
+  ofn.lpstrTitle = titleCopy.empty() ? nullptr : titleCopy.c_str();
+  ofn.lpstrInitialDir = dirCopy.empty() ? nullptr : dirCopy.c_str();
+  ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_ALLOWMULTISELECT | OFN_EXPLORER;
+
+  std::vector<std::wstring> out;
+  if (!::GetOpenFileNameW(&ofn)) return out;
+
+  const wchar_t* p = buffer.data();
+  const std::wstring first = p;
+  p += first.size() + 1;
+
+  // 只选了一个文件时，第一段就是完整路径，后面直接是结尾的空串
+  if (*p == L'\0') {
+    out.push_back(first);
+    return out;
+  }
+
+  // 多选时第一段是目录，其后每段是文件名
+  for (; *p; p += std::wstring(p).size() + 1) {
+    std::wstring full = first;
+    if (!full.empty() && full.back() != L'\\' && full.back() != L'/') full += L'\\';
+    full += p;
+    out.push_back(std::move(full));
+  }
+  return out;
+}
+
 // ───────────────────────── Shell ─────────────────────────
 
 bool WindowsBackend::openWithSystem(const std::wstring& path) {  const HINSTANCE result = ::ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr,

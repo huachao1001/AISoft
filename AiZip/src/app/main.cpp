@@ -183,6 +183,10 @@ int AiUI::runApp() {
 
   const int code = AiUI::platform()->runEventLoop();
 
+  // 包内条目落地用的镜像目录是纯缓存，退出时整棵清掉：
+  // 留着只会让 temp 里堆一堆和用户当前操作无关的文件。
+  AppClearNestedArchives();
+
   AiUI::releaseFileIcons();
   AiUI::fonts.destroy();
   AiUI::shutdownPlatform();

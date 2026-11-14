@@ -100,6 +100,59 @@ bool EnsureDirectory(const std::wstring& path) {
   return IsDirectory(path);
 }
 
+bool RemoveDirectoryTree(const std::wstring& dir) {
+  if (dir.empty()) return true;
+  if (!IsDirectory(dir)) return true;  // 本来就不在，算删干净
+
+  // 先清子项再收自己：平台层只提供「空目录才删」，这里靠 listDirectory 递归。
+  // 删不掉的子项（被占用）不中止整个流程——剩下的留给下次调用或系统清理，
+  // 比停在半路、留下更难解释的残留要好。
+  for (const auto& entry : platform()->listDirectory(dir, false)) {
+    if (entry.isDir) {
+      RemoveDirectoryTree(entry.fullPath);
+    } else {
+      platform()->deleteFile(entry.fullPath);
+    }
+  }
+  return platform()->removeDirectoryIfEmpty(dir);
+}
+
+bool CopyFileTo(const std::wstring& from, const std::wstring& to) {
+  auto in = platform()->openFileStream(from, false);
+  if (!in) return false;
+  auto out = platform()->openFileStream(to, true);
+  if (!out) return false;
+
+  std::vector<char> buffer(1 << 20);
+  for (;;) {
+    const int64_t n = in->read(buffer.data(), static_cast<int64_t>(buffer.size()));
+    if (n < 0) return false;
+    if (n == 0) break;
+    if (out->write(buffer.data(), n) != n) return false;
+  }
+  return true;
+}
+
+bool CopyTreeInto(const std::wstring& from, const std::wstring& destDir, std::wstring& outPath) {
+  outPath.clear();
+  if (!PathExists(from)) return false;
+  if (!EnsureDirectory(destDir)) return false;
+
+  const std::wstring target = JoinPath(destDir, BaseName(from));
+  if (IsDirectory(from)) {
+    if (!EnsureDirectory(target)) return false;
+    for (const auto& entry : platform()->listDirectory(from, false)) {
+      std::wstring ignored;
+      if (!CopyTreeInto(entry.fullPath, target, ignored)) return false;
+    }
+    outPath = target;
+    return true;
+  }
+  if (!CopyFileTo(from, target)) return false;
+  outPath = target;
+  return true;
+}
+
 std::wstring AbsolutePath(const std::wstring& path) {
   // 已经是绝对路径（盘符或根分隔符）时原样返回
   if (path.size() >= 2 && path[1] == L':') return path;
