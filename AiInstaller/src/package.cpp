@@ -175,11 +175,6 @@ bool Package::readBlob(const std::wstring& path, std::vector<uint8_t>& out) cons
   return false;
 }
 
-std::wstring Package::installerFileName() const {
-  const std::wstring name = detail::fileNameOf(selfPath_);
-  return name.empty() ? std::wstring(L"AiSetup.exe") : name;
-}
-
 std::wstring Package::copyInstallerTo(const std::wstring& targetPath) const {
   const std::wstring parent = detail::directoryOf(targetPath);
   if (!parent.empty() && !detail::ensureDirectoryTree(parent)) {

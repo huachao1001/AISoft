@@ -72,8 +72,8 @@ file.2.install=0              ; 只随包携带，不落盘
 | 默认安装路径 | 跳过系统盘、按盘符字母序挑固定盘；子目录由清单给（不含盘符） |
 | 落盘 | 按清单 offset/size 从自身载荷解压，分块复制，允许子目录 |
 | 快捷方式 | 开始菜单 `.lnk` |
-| 卸载入口 | 「应用与功能」里的一项，`UninstallString` 指向安装器的 `--uninstall` |
-| 卸载 | 先撤销配置，再删清单登记的文件，最后删空目录 |
+| 卸载程序 | 安装目录里生成 `uninstall.exe`（安装器本体的裁剪副本），「应用与功能」里的「卸载」指向它 |
+| 卸载 | 先撤销配置，再删清单登记的文件，最后删空目录与安装器新建的父目录 |
 | 提权 | `--elevated-retry` 参数往返，用户只点一次 UAC |
 | 静默安装 | `--silent`，默认仅当前用户（无人可点 UAC） |
 
@@ -98,14 +98,42 @@ int AiSetupConfigVersion(void);
 |---|---|
 | （无） | 交互式安装 |
 | `--silent` | 不建界面，装到默认目录（仅当前用户） |
-| `--uninstall` | 卸载，安装目录即本程序所在目录 |
+| `--uninstall` | 卸载，安装目录即本程序所在目录（`uninstall.exe` 用它） |
 | `--elevated-retry …` | 提权后的新进程，按带过来的目录与范围直接装 |
+
+## 安装目录里有什么
+
+```
+<安装目录>\
+├── MyApp.exe              清单里 install=1 的文件
+├── my_config.dll
+├── uninstall.exe          安装器本体的裁剪副本，卸载入口
+├── installer.manifest     清单原文，卸载据此读回文件表
+├── installer.scope        安装范围（all-users / current-user）
+└── installer.dirs         安装器当年新建的目录层级，卸载据此收回父目录
+```
+
+`uninstall.exe` 不另编一个小程序，直接是安装器本体换个名字：它已经带好了应用
+图标与版本资源，也自带 `--uninstall` 通道。裁剪到 `dataOffset` 之后它不含载荷，
+卸载改从 `installer.manifest` 读文件表。名字固定成 `uninstall.exe` 而不是安装包
+的名字（`AiZipSetup.exe`）——卸载入口叫「卸载」才符合用户预期。
 
 ## 卸载为什么读 installer.manifest
 
 装进安装目录的安装器副本被裁到 `dataOffset`（不含载荷），它打不开自己末尾的
 包。所以安装时把清单另存成 `installer.manifest`，卸载从那里读文件表与配置
 模块。
+
+## 卸载要收回哪些目录
+
+安装时用 `missingDirectories()` 记下「这条路径上哪几级目录现在还不存在」，
+写进 `installer.dirs`；卸载按记录由内到外 `rd` 收回。**不按目录名猜系统目录**：
+每一级都是安装器实际创建的，`Programs`、`Users` 这些早就存在的目录根本不会
+进记录。
+
+收尾进程只用 `rd`（不带 `/s`）、只 `del` 安装目录里的 `uninstall.exe`：目录里
+用户自己放的东西必须留着。带子目录的清单文件（如 `config\x.dll`）删完会留下空
+子目录，卸载时按文件表推导出来一并清掉，否则安装目录永远非空。
 
 ## 目录约定
 

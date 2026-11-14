@@ -11,6 +11,7 @@
 #include "AiUI/install.h"
 #include "AiUI/platform.h"
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -23,6 +24,11 @@ namespace {
 // 不能靠「当前进程是否提权」推断——卸载器的清单里带 requireAdministrator，
 // 它几乎总是提权状态，那样永远会猜成「所有用户」。
 constexpr const wchar_t* kScopeMarkerName = L"installer.scope";
+
+// 安装时新建的目录层级。卸载要把它们收回，否则会留下空壳
+// （如 %USERPROFILE%\Programs\AISoft）。只写「确实由安装器创建」的那几级，
+// 已存在的目录（Program Files、Users 之类）根本不会进这个文件。
+constexpr const wchar_t* kCreatedDirsName = L"installer.dirs";
 
 AiUI::InstallScope toAiScope(Scope scope) {
   return scope == Scope::kAllUsers ? AiUI::InstallScope::kAllUsers
@@ -54,66 +60,121 @@ void writeScopeMarker(const std::wstring& installDir, Scope scope) {
   AiUI::platform()->writeFile(detail::joinPath(installDir, kScopeMarkerName), value);
 }
 
-// 收尾进程用的临时目录与脚本名。
-//
-// 名字带上进程 id：同一台机器上可能同时装两个应用，固定名字会互相覆盖，
-// 后启动的那个把前一个的副本删掉，卸载就断在半路。
-std::wstring cleanupHelperPath(const std::wstring& tempDir) {
-  return detail::joinPath(tempDir, L"aisetup_uninstall_" +
-                                       std::to_wstring(AiUI::platform()->processId()) + L".exe");
+// 读回记录的目录层级。记录缺失（升级前装的旧版本）时返回空。
+std::vector<std::wstring> readCreatedDirs(const std::wstring& installDir) {
+  std::vector<std::wstring> dirs;
+  if (installDir.empty()) return dirs;
+
+  const std::wstring path = detail::joinPath(installDir, kCreatedDirsName);
+  if (!AiUI::platform()->pathExists(path)) return dirs;
+
+  // 目录层级不会多，64 KB 上限足够；读不到就当没有记录
+  const std::wstring text = AiUI::platform()->fromUtf8(AiUI::platform()->readFile(path, 64u << 10));
+  std::wstring line;
+  for (const wchar_t c : text) {
+    if (c == L'\n') {
+      while (!line.empty() && (line.back() == L'\r' || line.back() == L' ')) line.pop_back();
+      if (!line.empty()) dirs.push_back(line);
+      line.clear();
+    } else {
+      line.push_back(c);
+    }
+  }
+  while (!line.empty() && (line.back() == L'\r' || line.back() == L' ')) line.pop_back();
+  if (!line.empty()) dirs.push_back(line);
+  return dirs;
 }
 
-// 自我删除：进程删不掉正在运行的自己。把自身复制到临时目录，
-// 由新进程等本进程退出后删除安装目录。
+// 记下本次安装新建的目录层级（外层在前），一行一个。
 //
-// 收尾逻辑写成 .cmd 文件而不是单行参数：需要循环、延时和条件跳转，
-// 挤在一行里既难读，cmd 对 `&` 与标签的处理也容易出错。
-void scheduleSelfCleanup(const std::wstring& installDir) {
-  if (installDir.empty()) return;
+// 与已有记录合并而不是覆盖：升级安装时目录都是上一轮建的，这一轮的
+// missingDirectories() 会是空表；直接覆盖就把「这些目录由安装器创建」
+// 这件事抹掉了，卸载后父目录又会空留着。
+void writeCreatedDirs(const std::wstring& installDir, const std::vector<std::wstring>& dirs) {
+  std::vector<std::wstring> merged = readCreatedDirs(installDir);
+  for (const auto& dir : dirs) {
+    if (dir.empty()) continue;
+    bool known = false;
+    for (const auto& existing : merged) {
+      if (AiUI::platform()->equalsPath(existing, dir)) {
+        known = true;
+        break;
+      }
+    }
+    if (!known) merged.push_back(dir);
+  }
 
-  const std::wstring self = AiUI::platform()->executablePath();
-  if (self.empty()) return;
+  std::wstring text;
+  for (const auto& dir : merged) {
+    text += dir;
+    text += L"\r\n";
+  }
+  AiUI::platform()->writeFile(detail::joinPath(installDir, kCreatedDirsName),
+                              AiUI::platform()->toUtf8(text));
+}
+
+// 收尾脚本的路径。
+//
+// 名字带上进程 id：同一台机器上可能同时卸载两个应用，固定名字会互相覆盖，
+// 后启动的那个把前一个的脚本删掉，收尾就断在半路。
+std::wstring cleanupScriptPath(const std::wstring& tempDir) {
+  return detail::joinPath(tempDir, L"aisetup_uninstall_" +
+                                       std::to_wstring(AiUI::platform()->processId()) + L".cmd");
+}
+
+// 自我删除：进程删不掉正在运行的自己。写一个脚本，由它在本进程退出后
+// 删掉安装目录。
+//
+// 脚本用 .cmd 而不是单行参数：需要循环、延时和条件跳转，挤在一行里既难读，
+// cmd 对 `&` 与标签的处理也容易出错。
+void scheduleSelfCleanup(const std::wstring& installDir,
+                         const std::vector<std::wstring>& createdDirs) {
+  if (installDir.empty()) return;
 
   const std::wstring tempDir = AiUI::platform()->tempDir();
   if (tempDir.empty()) return;
 
-  const std::wstring helper = cleanupHelperPath(tempDir);
-  if (!AiUI::copySelfTo(helper).empty()) return;
-
-  const std::wstring scriptPath =
-      detail::joinPath(tempDir, L"aisetup_uninstall_" +
-                                    std::to_wstring(AiUI::platform()->processId()) + L".cmd");
+  const std::wstring scriptPath = cleanupScriptPath(tempDir);
   std::wstring body;
   body += L"@echo off\r\n";
-  // 先等本进程退出：安装目录里的安装器正被自己占用，早一秒都删不掉
+  // 先等本进程退出：安装目录里的卸载程序正被自己占用，早一秒都删不掉
   body += L"ping 127.0.0.1 -n 4 >nul\r\n";
-  // 逐个删文件再删目录：rd /s /q 会因为个别文件被占用而整体失败。
-  // 资源管理器释放右键组件往往要几秒，所以重试到目录消失为止。
+  // 只重试删「本进程占着的那一个文件」，不用 del * 或 rd /s：
+  // 目录里可能有用户自己放的东西，按清单删才不会误伤。此时清单登记的
+  // 文件、快捷方式、注册表项都已在主流程里处理完，剩下的只有它。
   body += L"set /a tries=0\r\n";
   body += L":retry\r\n";
-  body += L"del /f /q \"" + installDir + L"\\*\" >nul 2>&1\r\n";
-  body += L"rd /s /q \"" + installDir + L"\" >nul 2>&1\r\n";
-  body += L"if not exist \"" + installDir + L"\" goto done\r\n";
+  body += L"if not exist \"" + installDir + L"\\" + Package::uninstallFileName() +
+          L"\" goto done\r\n";
+  body += L"del /f /q \"" + installDir + L"\\" + Package::uninstallFileName() +
+          L"\" >nul 2>&1\r\n";
   body += L"set /a tries+=1\r\n";
   body += L"if %tries% GEQ 10 goto done\r\n";
   body += L"ping 127.0.0.1 -n 3 >nul\r\n";
   body += L"goto retry\r\n";
   body += L":done\r\n";
-  // 收尾：复制出来的副本和脚本自己都要删。脚本用 (goto) 技巧让 cmd
-  // 释放文件句柄后再删自身，否则 Windows 会拒绝删除正在执行的 .cmd。
-  body += L"del /f /q \"" + helper + L"\" >nul 2>&1\r\n";
+  // 目录空了才删得掉；里面还剩用户文件时 rd 会失败，正是想要的结果。
+  // 安装目录没了，再收回当年新建的父目录：由内到外，外层目录里还装着
+  // 内层目录，顺序反了删不掉。同样只用 rd（不带 /s），绝不连内容一起删。
+  body += L"rd \"" + installDir + L"\" >nul 2>&1\r\n";
+  for (auto it = createdDirs.rbegin(); it != createdDirs.rend(); ++it) {
+    if (it->empty()) continue;
+    body += L"rd \"" + *it + L"\" >nul 2>&1\r\n";
+  }
+  // 脚本用 (goto) 技巧让 cmd 释放文件句柄后再删自身，
+  // 否则 Windows 会拒绝删除正在执行的 .cmd。
   body += L"(goto) 2>nul & del /f /q \"%~f0\"\r\n";
 
-  // writeFile 收的是窄字符串：cmd 不认 UTF-8 无 BOM，这里的路径是 ASCII，
-  // 脚本内容也刻意不含中文，逐字符收窄是安全的。
-  std::string narrow;
-  narrow.reserve(body.size());
-  for (const wchar_t c : body) narrow.push_back(static_cast<char>(c));
+  // cmd 按控制台代码页解析 .cmd，默认的 936/437 读不了 UTF-8。路径里可能
+  // 有中文用户名（%USERPROFILE%），所以写 UTF-8 并先切到 65001：纯 ASCII
+  // 路径在 65001 下逐字节相同，不受影响。
+  std::string script = "chcp 65001 >nul\r\n";
+  script += AiUI::platform()->toUtf8(body);
 
-  if (!AiUI::platform()->writeFile(scriptPath, narrow)) {
-    // 写不出脚本就没有收尾进程，退回「下次开机删除」这条更慢但可靠的路
-    AiUI::deleteFileOnReboot(self);
-    AiUI::deleteFileOnReboot(helper);
+  if (!AiUI::platform()->writeFile(scriptPath, script)) {
+    // 写不出脚本就没有收尾进程，退回「下次开机删除」这条更慢但可靠的路：
+    // 删不掉的那一个是卸载程序自身，不能让它在目录里永远留着。
+    AiUI::deleteFileOnReboot(detail::joinPath(installDir, Package::uninstallFileName()));
     return;
   }
 
@@ -144,6 +205,30 @@ void runAfterInstallCommand(const std::wstring& installDir, const std::wstring& 
     exe = detail::joinPath(installDir, exe);
   }
   AiUI::launchDetached(exe, args, installDir);
+}
+
+// 清单登记的文件可能带子目录（如 "config\x.dll"）。文件删掉之后这些
+// 子目录会空着，安装目录就删不掉、新建的父目录也收不回来。
+//
+// 按层级从深到浅排序：嵌套子目录要先删内层，否则外层永远非空。
+std::vector<std::wstring> subdirectoriesOf(const std::vector<std::wstring>& files) {
+  std::vector<std::wstring> dirs;
+  for (const auto& relative : files) {
+    const std::wstring parent = detail::directoryOf(relative);
+    if (parent.empty()) continue;
+    bool known = false;
+    for (const auto& existing : dirs) {
+      if (AiUI::platform()->equalsPath(existing, parent)) {
+        known = true;
+        break;
+      }
+    }
+    if (!known) dirs.push_back(parent);
+  }
+  std::sort(dirs.begin(), dirs.end(), [](const std::wstring& a, const std::wstring& b) {
+    return std::count(a.begin(), a.end(), L'\\') > std::count(b.begin(), b.end(), L'\\');
+  });
+  return dirs;
 }
 
 }  // namespace
@@ -224,6 +309,12 @@ std::wstring runInstall(const InstallPlan& plan) {
 
   if (request.targetDir.empty()) return L"安装目录为空";
 
+  // 先记下「哪几级目录现在还不存在」：往后每一步都会创建目录，等装完再
+  // 问就分不清哪些是本机原有、哪些是安装器新建的了。卸载靠这份记录决定
+  // 能收回哪几级，绝不按目录名去猜系统目录。
+  const std::vector<std::wstring> createdDirs =
+      detail::missingDirectories(request.targetDir);
+
   report(plan.progress, plan.progressUser, L"正在写入文件...");
 
   // 1. 落盘：从包里按偏移逐个写出。子目录（如 config\x.dll）自动创建。
@@ -242,12 +333,13 @@ std::wstring runInstall(const InstallPlan& plan) {
     if (!error.empty()) return error;
   }
 
-  // 2. 安装器自身：卸载入口指向安装目录里的它，用户从「应用与功能」
-  //    拉起时才能正确推算出安装目录。少了这一步，卸载会删错地方。
+  // 2. 安装器自身：卸载入口指向安装目录里的 uninstall.exe。它必须是
+  //    安装器本体的副本——只有它知道怎么按 installer.manifest 反向拆包。
+  //    名字固定成 uninstall.exe，用户看到的是「卸载」而不是「安装」。
   report(plan.progress, plan.progressUser, L"正在部署卸载程序...");
-  const std::wstring selfInstaller =
-      detail::joinPath(request.targetDir, package.installerFileName());
-  const std::wstring copyError = package.copyInstallerTo(selfInstaller);
+  const std::wstring uninstaller =
+      detail::joinPath(request.targetDir, Package::uninstallFileName());
+  const std::wstring copyError = package.copyInstallerTo(uninstaller);
   if (!copyError.empty()) return copyError;
 
   // 清单也留一份：卸载时从它读回文件表与配置模块名。
@@ -269,6 +361,8 @@ std::wstring runInstall(const InstallPlan& plan) {
   // 记下范围，卸载时据此清理正确的根键。必须在配置成功之后写：
   // 安装失败时留下的标记会让下次卸载去清一个没写过的东西。
   writeScopeMarker(request.targetDir, request.scope);
+  // 目录记录同样要在成功路径上写：失败时安装目录可能根本没用起来
+  writeCreatedDirs(request.targetDir, createdDirs);
 
   // 4. 快捷方式与卸载入口是安装器的通用职责
   report(plan.progress, plan.progressUser, L"正在创建快捷方式...");
@@ -279,7 +373,7 @@ std::wstring runInstall(const InstallPlan& plan) {
   report(plan.progress, plan.progressUser, L"正在登记卸载入口...");
   const std::wstring uninstallError = AiUI::registerUninstallEntry(
       request.app.displayName, request.app.version, request.app.publisher, request.targetDir,
-      selfInstaller, L"--uninstall", scope);
+      uninstaller, L"--uninstall", scope);
   if (!uninstallError.empty()) return uninstallError;
 
   // 5. 安装后命令：清单里写了才执行，失败不影响安装结果
@@ -314,17 +408,28 @@ std::wstring runRemove(const RemovePlan& plan) {
 
   // 3. 删文件
   report(plan.progress, plan.progressUser, L"正在删除文件...");
+  // 目录记录要先读出来：等会儿它自己也要被删掉
+  const std::vector<std::wstring> createdDirs = readCreatedDirs(request.targetDir);
   for (const auto& relative : plan.files) removeFile(request.targetDir, relative);
-  // 范围标记与安装清单都是清单之外的内部文件，一并删掉
+  // 卸载程序自身与几个内部记录文件都不在清单里，一并删掉。
+  // 卸载程序就是当前正在运行的进程，删不掉的部分交给收尾进程。
+  removeFile(request.targetDir, Package::uninstallFileName());
   removeFile(request.targetDir, kScopeMarkerName);
   removeFile(request.targetDir, Package::manifestFileName());
+  removeFile(request.targetDir, kCreatedDirsName);
 
-  // 4. 删空目录。安装器自己还在里面，删不掉的部分交给收尾进程。
+  // 4. 删空目录。带子目录的文件（如 config\x.dll）删完会留下空目录，
+  //    不清掉安装目录就永远非空，父目录也收不回来。
+  //    顺序：最内层子目录 → 安装目录 → 安装时新建的父目录（由内到外）。
   report(plan.progress, plan.progressUser, L"正在清理目录...");
+  for (const auto& relative : subdirectoriesOf(plan.files)) {
+    removeEmptyDir(detail::joinPath(request.targetDir, relative));
+  }
   removeEmptyDir(request.targetDir);
 
-  // 5. 自我删除：把自己复制到临时目录，由新进程删除原安装目录。
-  scheduleSelfCleanup(request.targetDir);
+  // 5. 自我删除：进程删不掉正在运行的自己，写脚本等本进程退出后收尾。
+  //    脚本同时负责删除安装目录与安装时新建的父目录。
+  scheduleSelfCleanup(request.targetDir, createdDirs);
   return firstError;
 }
 

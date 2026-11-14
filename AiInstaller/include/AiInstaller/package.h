@@ -55,15 +55,19 @@ class Package {
   //
   // 为什么不在安装目录里留完整安装包：那边已经有一份解压好的文件了，
   // 再存一份载荷等于每个应用多占一倍体积。卸载靠同目录的清单文件，
-  // 不需要再从 exe 里读。
+  // 不需要再从 exe 里读。复制出去的那份就是安装目录里的卸载程序。
   std::wstring copyInstallerTo(const std::wstring& targetPath) const;
 
   // 包内清单的原始文本（写进安装目录的清单文件，供卸载时读回）
   const std::wstring& manifestText() const { return manifestText_; }
 
-  // 安装目录里用来当卸载入口的那个文件名：安装器自身的文件名。
-  // 打包后可能叫 AiZipSetup.exe，不能写死成 AiSetup.exe。
-  std::wstring installerFileName() const;
+  // 安装目录里卸载程序的文件名。
+  //
+  // 直接用安装器本体换个名字：本体已经带好了应用图标与版本资源，用户可以
+  // 在目录里看到它、也可以在「应用与功能」里点到它，不必再编一个专用 exe。
+  // 名字固定成 uninstall.exe 而不是安装包的名字（AiZipSetup.exe）：卸载入口
+  // 叫「卸载」比叫「安装」符合用户预期。
+  static const wchar_t* uninstallFileName() { return L"uninstall.exe"; }
 
   // 安装目录里记录清单的文件名
   static const wchar_t* manifestFileName() { return L"installer.manifest"; }

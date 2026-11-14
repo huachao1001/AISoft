@@ -358,8 +358,13 @@ bool WindowsBackend::launchDetached(const std::wstring& exePath, const std::wstr
   std::vector<wchar_t> buffer(command.begin(), command.end());
   buffer.push_back(L'\0');
 
-  // 不继承句柄、不给控制台：卸载收尾进程要能活过调用方退出
-  const DWORD flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
+  // 不继承句柄：卸载收尾进程要能活过调用方退出。
+  //
+  // 用 CREATE_NO_WINDOW 而不是 DETACHED_PROCESS：后者会让子进程完全没有
+  // 控制台，cmd.exe 拿不到控制台会直接退出、一条命令都不执行——收尾脚本
+  // 就永远不会跑。CREATE_NO_WINDOW 只是不给窗口，标准句柄仍可用。
+  const DWORD flags = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP;
+
   const wchar_t* dir = workDir.empty() ? nullptr : workDir.c_str();
   if (!::CreateProcessW(appPath.c_str(), buffer.data(), nullptr, nullptr, FALSE, flags, nullptr,
                         dir, &si, &pi)) {
