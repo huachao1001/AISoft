@@ -39,7 +39,11 @@ std::unique_ptr<AiUI::TreeNode> makeNode(const std::wstring& label, const std::w
 }  // namespace
 
 std::wstring TreeModel::syncKey() {
-  return g_app.archiveMode ? g_app.archivePath : std::wstring(L"fs");
+  // 压缩包模式下树的「根结构」还会因为增删而变：加了目录要让新节点出现，
+  // 删了目录要让旧节点消失。改动清单变化时返回不同的 key，触发重建。
+  if (!g_app.archiveMode) return L"fs";
+  return g_app.archivePath + L"|" + std::to_wstring(g_app.edits.added.size()) + L"|" +
+         std::to_wstring(g_app.edits.deleted.size());
 }
 
 std::vector<std::unique_ptr<AiUI::TreeNode>> TreeModel::loadChildren(AiUI::TreeNode* node) {
@@ -58,8 +62,20 @@ std::vector<std::unique_ptr<AiUI::TreeNode>> TreeModel::loadChildren(AiUI::TreeN
       if (slash == std::wstring::npos && !entry.isDir) continue;
       const std::wstring name = (slash == std::wstring::npos) ? relative : relative.substr(0, slash);
       if (name.empty()) continue;
+      // 已删除（或父目录已删除）的不再挂到树上
+      const std::wstring inner = node->path.empty() ? name : node->path + L"\\" + name;
+      if (AppIsPathDeleted(App::NormalizeInner(inner))) continue;
       if (std::find(names.begin(), names.end(), name) == names.end()) names.push_back(name);
     }
+
+    // 新增的目录补进来：它们只存在于镜像里，中央目录里没有。
+    for (const auto& name : AppAddedChildNames(App::NormalizeInner(node->path))) {
+      const bool already = std::any_of(names.begin(), names.end(), [&](const std::wstring& v) {
+        return platform()->equalsPath(v, name);
+      });
+      if (!already) names.push_back(name);
+    }
+
     std::sort(names.begin(), names.end(), [](const std::wstring& a, const std::wstring& b) {
       return platform()->compareText(a, b) < 0;
     });

@@ -96,6 +96,10 @@ IOutArchive* CreateOutArchive(const GUID& clsId);
 // 按扩展名推断容器格式
 GUID FormatFromExtension(const std::wstring& ext);
 const wchar_t* FormatNameFromExtension(const std::wstring& ext);
+// 按「真正打开它的 handler」取格式显示名，未收录的返回 nullptr。
+// 扩展名会骗人（临时副本、无后缀文件、扩展名被改过的包都见过），
+// 能把包打开的那个 handler 才是事实。
+const wchar_t* FormatNameFromClsid(const GUID& clsId);
 
 // ── 可创建的压缩格式 ──
 // 格式列表顺序：ZIP/7Z 单列单选，其余进下拉。

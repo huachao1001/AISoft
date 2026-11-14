@@ -27,6 +27,77 @@ std::wstring TypeNameFor(const std::wstring& name, bool isDir) {
   return upper + L" 文件";
 }
 
+// ── 编辑会话的查询辅助 ──
+//
+// 列表要在导出前就把增删改反映出来，所以这些判断必须早于 LoadArchiveItems 可用。
+
+// 清单统一按「归一化路径」比较，但存进去的是原始大小写：
+// 列表要按原样显示名字，比较时忽略大小写。
+bool PathInList(const std::vector<std::wstring>& list, const std::wstring& normalized) {
+  for (const auto& v : list) {
+    if (App::NormalizeInner(v) == normalized) return true;
+  }
+  return false;
+}
+
+void AddUnique(std::vector<std::wstring>& list, const std::wstring& path) {
+  if (path.empty()) return;
+  if (PathInList(list, App::NormalizeInner(path))) return;
+  list.push_back(path);
+}
+
+// 新增清单里是否已有这条
+bool InAdded(const std::wstring& normalized) {
+  return PathInList(g_app.edits.added, normalized);
+}
+
+// 这条路径是否落在某个新增条目（或它下面）
+bool UnderAdded(const std::wstring& normalized) {
+  for (const auto& a : g_app.edits.added) {
+    const std::wstring norm = App::NormalizeInner(a);
+    if (norm == normalized) return true;
+    if (normalized.size() > norm.size() + 1 && normalized.compare(0, norm.size(), norm) == 0 &&
+        normalized[norm.size()] == L'\\') {
+      return true;
+    }
+  }
+  return false;
+}
+
+// 从新增清单里移除这条及其下级
+void EraseFromAdded(const std::wstring& normalized) {
+  auto& list = g_app.edits.added;
+  list.erase(std::remove_if(list.begin(), list.end(),
+                            [&normalized](const std::wstring& a) {
+                              const std::wstring norm = App::NormalizeInner(a);
+                              return norm == normalized ||
+                                     (norm.size() > normalized.size() + 1 &&
+                                      norm.compare(0, normalized.size(), normalized) == 0 &&
+                                      norm[normalized.size()] == L'\\');
+                            }),
+             list.end());
+}
+
+// 删除清单是否覆盖某个包内路径：同一条，或它是被删目录的下级
+bool IsDeletedPath(const std::wstring& normalized) {
+  for (const auto& d : g_app.edits.deleted) {
+    if (d == normalized) return true;
+    if (normalized.size() > d.size() + 1 && normalized.compare(0, d.size(), d) == 0 &&
+        normalized[d.size()] == L'\\') {
+      return true;
+    }
+  }
+  return false;
+}
+
+// 镜像目录里某个包内路径对应的磁盘位置
+std::wstring StagePathFor(const std::wstring& innerPath) {
+  if (g_app.stageDir.empty()) return {};
+  std::wstring rel = innerPath;
+  std::replace(rel.begin(), rel.end(), L'/', L'\\');
+  return util::JoinPath(g_app.stageDir, rel);
+}
+
 void LoadDirectoryItems(const std::wstring& dir) {
   g_app.items.clear();
   // 隐藏与系统项不进文件列表：与资源管理器默认观感一致
@@ -48,10 +119,26 @@ void LoadArchiveItems() {
   const auto& entries = g_app.archive.Entries();
   const std::wstring prefix = g_app.innerPath.empty() ? L"" : g_app.innerPath + L"\\";
 
-  // 收集当前层级的直接子项，目录去重
   std::vector<Item> dirItems;
-  std::map<std::wstring, size_t> dirIndex;
+  std::vector<Item> fileItems;
+  std::map<std::wstring, size_t> dirIndex;   // 小写名 → dirItems 下标
+  std::map<std::wstring, size_t> fileIndex;  // 小写名 → fileItems 下标
 
+  auto touchDir = [&](const std::wstring& name) -> size_t {
+    const std::wstring key = util::ToLower(name);
+    auto found = dirIndex.find(key);
+    if (found != dirIndex.end()) return found->second;
+    Item d;
+    d.name = name;
+    d.typeName = L"文件夹";
+    d.isDir = true;
+    dirIndex[key] = dirItems.size();
+    dirItems.push_back(std::move(d));
+    return dirItems.size() - 1;
+  };
+
+  // 1) 包内原有条目。被删除（含整目录删除）的不再出现：界面要像本地
+  //    文件浏览器，删掉的行必须马上消失，而不是等导出后重开才消失。
   for (size_t i = 0; i < entries.size(); ++i) {
     const auto& e = entries[i];
     std::wstring rel = e.path;
@@ -61,21 +148,13 @@ void LoadArchiveItems() {
       rel = rel.substr(prefix.size());
     }
     if (rel.empty()) continue;
+    if (IsDeletedPath(App::NormalizeInner(e.path))) continue;
 
     const size_t slash = rel.find_first_of(L"\\/");
     if (slash != std::wstring::npos) {
-      // 子目录
-      const std::wstring dirName = rel.substr(0, slash);
-      auto found = dirIndex.find(dirName);
-      if (found == dirIndex.end()) {
-        Item d;
-        d.name = dirName;
-        d.typeName = L"文件夹";
-        d.isDir = true;
-        dirIndex[dirName] = dirItems.size();
-        dirItems.push_back(std::move(d));
-      }
-      auto& agg = dirItems[dirIndex[dirName]];
+      // 子目录：只按名字去重，大小随时间聚合
+      const size_t at = touchDir(rel.substr(0, slash));
+      auto& agg = dirItems[at];
       agg.size += e.size;
       if (e.hasMtime) agg.modifiedMillis = e.modifiedMillis;
       continue;
@@ -83,16 +162,8 @@ void LoadArchiveItems() {
 
     if (e.isDir) {
       // 空目录条目本身
-      auto found = dirIndex.find(rel);
-      if (found == dirIndex.end()) {
-        Item d;
-        d.name = rel;
-        d.typeName = L"文件夹";
-        d.isDir = true;
-        d.modifiedMillis = e.modifiedMillis;
-        dirIndex[rel] = dirItems.size();
-        dirItems.push_back(std::move(d));
-      }
+      const size_t at = touchDir(rel);
+      if (e.hasMtime) dirItems[at].modifiedMillis = e.modifiedMillis;
       continue;
     }
 
@@ -107,11 +178,78 @@ void LoadArchiveItems() {
     it.method = e.method;
     it.encrypted = e.encrypted;
     it.entryIndex = static_cast<int>(i);
-    g_app.items.push_back(std::move(it));
+    fileIndex[util::ToLower(rel)] = fileItems.size();
+    fileItems.push_back(std::move(it));
+  }
+
+  // 2) 镜像里新增的条目：导出前它们只存在于临时目录，列表照样要能看见。
+  //
+  // 只遍历 edits.added（可能几十条），不去扫镜像目录：镜像里还躺着用户
+  // 双击时按需解出来的文件，那些是旧条目，混进来会变成重复行。
+  const std::wstring stage = g_app.stageDir;
+  if (!stage.empty() && util::PathExists(stage)) {
+    for (const auto& innerFull : g_app.edits.added) {
+      // rel 是相对当前这一层的路径；disk 要按包内全路径去找镜像里的文件
+      std::wstring rel = innerFull;
+      if (!prefix.empty()) {
+        if (rel.size() <= prefix.size()) continue;
+        if (!AiUI::platform()->isPathPrefix(prefix, rel)) continue;
+        rel = rel.substr(prefix.size());
+      }
+      if (rel.empty()) continue;
+
+      const std::wstring disk = util::JoinPath(stage, innerFull);
+      if (!util::PathExists(disk)) continue;
+      const bool diskIsDir = util::IsDirectory(disk);
+
+      // 还隔着层级：说明属于某个子目录，这一层只该出现那个目录行
+      const size_t slash = rel.find_first_of(L"\\/");
+      if (slash != std::wstring::npos) {
+        const size_t at = touchDir(rel.substr(0, slash));
+        if (!diskIsDir) dirItems[at].size += AiUI::platform()->fileSize(disk);
+        continue;
+      }
+
+      if (diskIsDir) {
+        touchDir(rel);
+        continue;
+      }
+
+      const std::wstring key = util::ToLower(rel);
+      Item it;
+      it.name = rel;
+      it.typeName = TypeNameFor(rel, false);
+      it.size = AiUI::platform()->fileSize(disk);
+      it.packSize = it.size;
+      it.modifiedMillis = AiUI::platform()->modifiedTime(disk);
+      // 同名旧条目被新内容覆盖：整行换成镜像里的这一份
+      auto found = fileIndex.find(key);
+      if (found != fileIndex.end()) {
+        fileItems[found->second] = std::move(it);
+      } else {
+        fileIndex[key] = fileItems.size();
+        fileItems.push_back(std::move(it));
+      }
+    }
+  }
+
+  // 3) 已经在镜像里被改过的文件：大小与时间按磁盘上的真实值显示，
+  //    否则用户改完了看不出任何变化。只查 modified 清单，不逐个 stat。
+  for (const auto& norm : g_app.edits.modified) {
+    auto found = fileIndex.find(norm);
+    if (found == fileIndex.end()) continue;
+    const std::wstring disk = StagePathFor(norm);
+    if (disk.empty() || !util::PathExists(disk) || util::IsDirectory(disk)) continue;
+    Item& it = fileItems[found->second];
+    it.size = AiUI::platform()->fileSize(disk);
+    it.packSize = it.size;
+    it.modifiedMillis = AiUI::platform()->modifiedTime(disk);
   }
 
   // 目录排在前面
-  g_app.items.insert(g_app.items.begin(), dirItems.begin(), dirItems.end());
+  g_app.items.reserve(dirItems.size() + fileItems.size());
+  g_app.items.insert(g_app.items.end(), dirItems.begin(), dirItems.end());
+  g_app.items.insert(g_app.items.end(), fileItems.begin(), fileItems.end());
 }
 
 // 本程序内的窗口才能当模态 owner；最小化时被 owner 的弹窗会一起隐藏，
@@ -173,6 +311,10 @@ bool OpenArchiveWithPassword(arc::Archive& a, const std::wstring& path,
 }  // namespace
 
 void AppRefreshView() {
+  // 先核实「打开过的文件有没有被外部改过」：列表要显示改动后的真实大小，
+  // 工具栏也要据此点亮「导出压缩包」。只 stat opened 清单，成本很小。
+  AppScanModifiedEntries();
+
   // 首页没有内容可载入：跳过列目录，界面只剩提示与两个按钮
   if (g_app.homeMode) {
     g_app.items.clear();
@@ -204,6 +346,10 @@ void AppNavigateTo(const std::wstring& dirIn) {
   }
 
   if (g_app.archiveMode) {
+    // 离开包之前把未导出的改动问清楚：这些改动只存在于镜像里，
+    // 一旦换到别的目录就再也写不回去了。
+    if (!AppConfirmDiscardEdits(DialogOwner())) return;
+    AppDiscardEdits();
     AppClearNestedArchives();
     g_app.archive.Close();
     g_app.archiveMode = false;
@@ -230,8 +376,11 @@ void AppNavigateTo(const std::wstring& dirIn) {
 }
 
 void AppOpenArchive(const std::wstring& path) {
-  // 换包前先清嵌套栈：临时文件属于上一个包，留着只会漏在 temp 里
+  // 换包前把上一个包未导出的改动问清楚，再清嵌套栈与镜像：
+  // 临时文件属于上一个包，留着只会漏在 temp 里。
+  if (!AppConfirmDiscardEdits(DialogOwner())) return;
   AppClearNestedArchives();
+  AppDiscardEdits();
 
   arc::OpenResult r;
   if (!OpenArchiveWithPassword(g_app.archive, path, DialogOwner(), r)) {
@@ -393,97 +542,309 @@ void AppClearNestedArchives() {
   g_app.stageDir.clear();
 }
 
-std::wstring AppOpenArchiveEntry(int entryIndex, const std::wstring& entryPath) {
-  if (!g_app.archiveMode || entryIndex < 0) return L"当前没有打开压缩包";
+// ───────────────────── 编辑会话 ─────────────────────
 
+std::wstring App::NormalizeInner(const std::wstring& path) {
+  std::wstring out = path;
+  std::replace(out.begin(), out.end(), L'/', L'\\');
+  while (!out.empty() && out.front() == L'\\') out.erase(out.begin());
+  while (!out.empty() && out.back() == L'\\') out.pop_back();
+  return util::ToLower(out);
+}
+
+bool App::HasPendingEdits() const {
+  return !edits.deleted.empty() || !edits.added.empty() || !edits.modified.empty();
+}
+
+std::wstring AppAddToArchive(const std::vector<std::wstring>& sources,
+                             const std::wstring& innerDir) {
+  if (!g_app.archiveMode) return L"当前没有打开压缩包";
+  if (sources.empty()) return {};
+  if (AppInNestedArchive()) {
+    return L"包内的压缩包是预览用的临时副本，改动无法保存。\n请先返回上一层再添加文件。";
+  }
+
+  const std::wstring dir = EnsureStageDir();
+  if (dir.empty()) return L"无法创建临时目录";
+
+  // 新文件只落到镜像里，包里原有内容一律不动：导出时再从原包直接解出来。
+  // 这就是打开大包不必先解压的原因。
+  const std::wstring relDir = innerDir;
+  const std::wstring destDir = relDir.empty() ? dir : util::JoinPath(dir, relDir);
+  if (!util::EnsureDirectory(destDir)) return L"无法创建目标文件夹";
+
+  for (const std::wstring& src : sources) {
+    if (!util::PathExists(src)) return L"找不到文件：" + src;
+
+    std::wstring landed;
+    if (!util::CopyTreeInto(src, destDir, landed)) return L"无法读入：" + util::BaseName(src);
+
+    // 登记每一个新条目（文件与目录都要）：空目录不进清单就会被丢掉。
+    // 用落地路径反推包内路径，保留原始大小写——列表要按它显示名字。
+    std::vector<util::SourceItem> collected;
+    util::CollectSources({landed}, collected);
+    for (const auto& item : collected) {
+      const std::wstring innerPath = util::JoinPath(relDir, item.relPath);
+      const std::wstring norm = App::NormalizeInner(innerPath);
+      AddUnique(g_app.edits.added, innerPath);
+      // 同名的旧条目如果原本在删除清单里，要撤销，否则新的会被一起删掉
+      g_app.edits.deleted.erase(
+          std::remove(g_app.edits.deleted.begin(), g_app.edits.deleted.end(), norm),
+          g_app.edits.deleted.end());
+    }
+  }
+  return {};
+}
+
+std::wstring AppDeleteFromArchive(const std::vector<std::wstring>& innerPaths) {
+  if (!g_app.archiveMode) return L"当前没有打开压缩包";
+  if (AppInNestedArchive()) {
+    return L"包内的压缩包是预览用的临时副本，改动无法保存。\n请先返回上一层再删除。";
+  }
+
+  for (const std::wstring& raw : innerPaths) {
+    const std::wstring norm = App::NormalizeInner(raw);
+    if (norm.empty()) continue;
+
+    // 新增的东西直接忘掉即可，不必登记删除
+    const bool wasAdded = UnderAdded(norm);
+    EraseFromAdded(norm);
+
+    // 镜像里可能已经解出来过，一并清掉（RemoveDirectoryTree 只认目录）
+    const std::wstring disk = StagePathFor(norm);
+    if (!disk.empty() && util::PathExists(disk)) {
+      if (util::IsDirectory(disk)) {
+        util::RemoveDirectoryTree(disk);
+      } else {
+        AiUI::platform()->deleteFile(disk);
+      }
+    }
+    // 已打开/已修改清单里也不用再留
+    g_app.edits.modified.erase(
+        std::remove_if(g_app.edits.modified.begin(), g_app.edits.modified.end(),
+                       [&norm](const std::wstring& v) {
+                         return v == norm || (v.size() > norm.size() + 1 &&
+                                              v.compare(0, norm.size(), norm) == 0 &&
+                                              v[norm.size()] == L'\\');
+                       }),
+        g_app.edits.modified.end());
+    g_app.edits.opened.erase(
+        std::remove_if(g_app.edits.opened.begin(), g_app.edits.opened.end(),
+                       [&norm](const App::EditSession::OpenedFile& o) {
+                         return o.inner == norm ||
+                                (o.inner.size() > norm.size() + 1 &&
+                                 o.inner.compare(0, norm.size(), norm) == 0 &&
+                                 o.inner[norm.size()] == L'\\');
+                       }),
+        g_app.edits.opened.end());
+
+    if (wasAdded) continue;
+    AddUnique(g_app.edits.deleted, norm);
+  }
+  return {};
+}
+
+std::wstring AppMakeEditable(int entryIndex, const std::wstring& entryPath) {
+  if (!g_app.archiveMode || entryIndex < 0) return L"当前没有打开压缩包";
   std::wstring error;
   const std::wstring landed = StageEntry(entryIndex, entryPath, error);
   if (landed.empty()) return error;
+
+  // 只是「解出来了」，不等于「改过了」：把解出时包内声明的大小与时间一起记下，
+  // 导出前再逐个核实。这样用户点开看一眼不会让界面冒出「导出压缩包」。
+  const std::wstring norm = App::NormalizeInner(entryPath);
+  bool tracked = InAdded(norm);
+  for (const auto& o : g_app.edits.opened) {
+    if (o.inner == norm) tracked = true;
+  }
+  if (!tracked) {
+    const auto& entries = g_app.archive.Entries();
+    if (entryIndex < static_cast<int>(entries.size())) {
+      const auto& e = entries[static_cast<size_t>(entryIndex)];
+      g_app.edits.opened.push_back({norm, e.size, e.modifiedMillis, e.hasMtime});
+    } else {
+      g_app.edits.opened.push_back({norm, 0, 0, false});
+    }
+  }
 
   if (!AiUI::platform()->openWithSystem(landed)) return L"没有程序可以打开这个文件";
   return {};
 }
 
-std::wstring AppAddFilesToArchive(const std::vector<std::wstring>& sources) {
-  if (!g_app.archiveMode) return L"当前没有打开压缩包";
-  if (sources.empty()) return {};
+void AppScanModifiedEntries() {
+  // 用户可能在外部编辑器里改完存盘，程序无从得知，只能按大小与时间比对。
+  // 解压时会回写原修改时间，所以时间不同就是用户在外部动过。
+  //
+  // 只检查 opened（点开过的）而不是整包：没点开过的文件根本不可能被改，
+  // 而十万条的包逐个 stat 会让导出前那一下明显卡顿。
+  for (const auto& o : g_app.edits.opened) {
+    if (IsDeletedPath(o.inner) || InAdded(o.inner)) continue;
 
-  // 嵌套层里的包只是一份临时副本，改它不会回到外层真正的包里。与其让用户
-  // 以为改动生效，不如直接说清楚。
-  if (AppInNestedArchive()) {
-    return L"包内的压缩包是预览用的临时副本，改动无法保存。\n请先返回上一层再添加文件。";
+    const std::wstring disk = StagePathFor(o.inner);
+    if (disk.empty() || !util::PathExists(disk) || util::IsDirectory(disk)) continue;
+
+    const uint64_t size = AiUI::platform()->fileSize(disk);
+    const int64_t mtime = AiUI::platform()->modifiedTime(disk);
+    if (size != o.size || (o.hasMtime && mtime != o.modifiedMillis)) {
+      AddUnique(g_app.edits.modified, o.inner);
+    }
   }
+}
+
+// ── 编辑清单查询 ──
+//
+// 左侧树按包内条目建节点，但清单里的增删只存在于编辑会话中：
+// 不查这三项，删掉的目录会一直挂在树上，新增的目录永远看不见。
+
+bool AppIsPathDeleted(const std::wstring& normalized) { return IsDeletedPath(normalized); }
+
+std::vector<std::wstring> AppAddedChildNames(const std::wstring& normalizedDir) {
+  std::vector<std::wstring> out;
+  const std::wstring prefix =
+      normalizedDir.empty() ? std::wstring() : normalizedDir + L"\\";
+
+  for (const auto& raw : g_app.edits.added) {
+    const std::wstring norm = App::NormalizeInner(raw);
+    if (norm.empty()) continue;
+    if (!prefix.empty() && !AiUI::platform()->isPathPrefix(prefix, norm)) continue;
+
+    // 相对当前这一层的第一段就是子项名。名字要用原始大小写，所以从 raw
+    // 里按相同位置截取，而不是拿 norm 显示。
+    std::wstring display = raw;
+    std::replace(display.begin(), display.end(), L'/', L'\\');
+    while (!display.empty() && display.front() == L'\\') display.erase(display.begin());
+    if (!prefix.empty()) {
+      if (display.size() <= prefix.size()) continue;
+      display = display.substr(prefix.size());
+    }
+    const size_t slash = display.find(L'\\');
+    if (slash != std::wstring::npos) display = display.substr(0, slash);
+    if (display.empty()) continue;
+
+    // 树只挂目录，和原有条目那条分支保持同一个口径：
+    // 新增文件不是节点，混进来会变成「点不开的目录」。
+    const std::wstring childInner = prefix.empty() ? display : prefix + display;
+    const std::wstring childDisk = StagePathFor(childInner);
+    if (childDisk.empty() || !util::IsDirectory(childDisk)) continue;
+
+    bool exists = false;
+    for (const auto& v : out) {
+      if (AiUI::platform()->equalsPath(v, display)) {
+        exists = true;
+        break;
+      }
+    }
+    if (!exists) out.push_back(display);
+  }
+  return out;
+}
+
+std::wstring AppExportArchive() {
+  if (!g_app.archiveMode) return L"当前没有打开压缩包";
+  if (AppInNestedArchive()) {
+    return L"包内的压缩包是预览用的临时副本，改动无法保存。\n请先返回上一层再导出。";
+  }
+  AppScanModifiedEntries();
+  if (!g_app.HasPendingEdits()) return {};
 
   const std::wstring original = g_app.archivePath;
   const std::wstring workRoot =
       util::JoinPath(AiUI::platform()->tempDir(),
-                     L"aizip_add_" + std::to_wstring(AiUI::platform()->processId()) + L"_" +
+                     L"aizip_export_" + std::to_wstring(AiUI::platform()->processId()) + L"_" +
                          std::to_wstring(AiUI::platform()->monotonicMillis()));
   const std::wstring unpackDir = util::JoinPath(workRoot, L"unpack");
-  // 输出放在独立目录并保留原文件名：Compress 靠扩展名决定容器格式
   const std::wstring outDir = util::JoinPath(workRoot, L"out");
   const std::wstring outPath = util::JoinPath(outDir, util::BaseName(original));
 
-  // 加密包：口令在解压回调里问一次，重压时沿用同一个
   std::wstring password;
   std::wstring error;
+  const auto deleted = g_app.edits.deleted;
+  const auto added = g_app.edits.added;
+  const auto modified = g_app.edits.modified;
+  const std::wstring stage = g_app.stageDir;
 
-  const bool ok = ui::ShowProgressDialog(g_app.mainWnd, L"正在添加文件", original,
+  const bool ok = ui::ShowProgressDialog(g_app.mainWnd, L"正在导出压缩包", original,
                                          [&](const arc::ProgressFn& prog) {
     if (!util::EnsureDirectory(unpackDir) || !util::EnsureDirectory(outDir)) {
       error = L"无法创建临时目录";
       return false;
     }
 
-    // 1) 整包解到临时目录：7-Zip 没有「往已压好的容器追加」的能力，
-    //    只能走「解开 → 合并 → 重新压回」这条路。
-    arc::ExtractOptions opts;
-    opts.targetDir = unpackDir;
-    const bool extracted = g_app.archive.Extract(
-        {}, opts, prog, nullptr,
-        [&password](std::wstring& out) -> bool {
-          bool accepted = false;
-          ui::RunOnUiThread([&] {
-            std::wstring pwd;
-            accepted = ui::PromptText(g_app.mainWnd, L"输入密码", L"压缩包已加密，请输入密码：",
-                                      pwd, true);
-            if (accepted) {
-              pwd.swap(password);
-              out = password;
-            }
-          });
-          return accepted;
-        },
-        error);
-    if (!extracted) {
-      if (error.empty()) error = L"无法解开原压缩包";
-      return false;
+    // 1) 解出原包中「没被删除」的条目。这是第一次全量解压——打开包时什么都没解，
+    //    所以超大包的打开速度不受影响。用 indices 精确跳过删除项，
+    //    省掉「解了再删」的无效工作。
+    std::vector<uint32_t> keep;
+    const auto& entries = g_app.archive.Entries();
+    keep.reserve(entries.size());
+    for (size_t i = 0; i < entries.size(); ++i) {
+      if (!IsDeletedPath(App::NormalizeInner(entries[i].path))) {
+        keep.push_back(static_cast<uint32_t>(i));
+      }
     }
 
-    // 2) 把新文件并到当前所在目录（不是包根）：用户是在这个目录里拖进来的，
-    //    文件就该落在眼前这一层。
-    const std::wstring destDir =
-        g_app.innerPath.empty() ? unpackDir : util::JoinPath(unpackDir, g_app.innerPath);
-    if (!util::EnsureDirectory(destDir)) {
-      error = L"无法创建目标文件夹";
-      return false;
-    }
-    for (const std::wstring& src : sources) {
-      std::wstring landed;
-      if (!util::CopyTreeInto(src, destDir, landed)) {
-        error = L"无法读入：" + util::BaseName(src);
+    if (!keep.empty()) {
+      arc::ExtractOptions opts;
+      opts.targetDir = unpackDir;
+      if (!g_app.archive.Extract(
+              keep, opts, prog, nullptr,
+              [&password](std::wstring& out) -> bool {
+                bool accepted = false;
+                ui::RunOnUiThread([&] {
+                  std::wstring pwd;
+                  accepted = ui::PromptText(g_app.mainWnd, L"输入密码",
+                                            L"压缩包已加密，请输入密码：", pwd, true);
+                  if (accepted) {
+                    pwd.swap(password);
+                    out = password;
+                  }
+                });
+                return accepted;
+              },
+              error)) {
+        if (error.empty()) error = L"无法解开原压缩包";
         return false;
       }
     }
 
-    // 3) 重新压回同格式。输出先写临时目录，成功后再替换原文件——
-    //    中途失败时原包仍然完好，不会出现「加到一半包坏了」。
+    // 2) 把镜像里新增/改动的条目盖到解压结果上。
+    //
+    //    目录只需建出来（子项各自在清单里，会逐个处理）；文件直接覆盖同名项。
+    //    不能对目录做整树复制——addtive 清单里已经有它的每一个子项，
+    //    整树复制会把同一批文件搬两遍。
+    if (!stage.empty() && util::PathExists(stage)) {
+      for (const auto& inner : added) {
+        const std::wstring src = util::JoinPath(stage, inner);
+        if (!util::PathExists(src)) continue;
+        const std::wstring dst = util::JoinPath(unpackDir, inner);
+        if (util::IsDirectory(src)) {
+          util::EnsureDirectory(dst);
+          continue;
+        }
+        util::EnsureDirectory(util::DirName(dst));
+        if (!util::CopyFileTo(src, dst)) {
+          error = L"无法写入：" + inner;
+          return false;
+        }
+      }
+      for (const auto& inner : modified) {
+        const std::wstring src = util::JoinPath(stage, inner);
+        if (!util::PathExists(src) || util::IsDirectory(src)) continue;
+        const std::wstring dst = util::JoinPath(unpackDir, inner);
+        util::EnsureDirectory(util::DirName(dst));
+        if (!util::CopyFileTo(src, dst)) {
+          error = L"无法写入：" + inner;
+          return false;
+        }
+      }
+    }
+
+    // 3) 压回同格式。输出先写临时目录，成功后才替换原文件。
     std::vector<std::wstring> contents;
     for (const auto& entry : AiUI::platform()->listDirectory(unpackDir, false)) {
       contents.push_back(entry.fullPath);
     }
     if (contents.empty()) {
-      error = L"没有可写回的内容";
+      error = L"导出后压缩包会是空的，已取消";
       return false;
     }
 
@@ -499,33 +860,30 @@ std::wstring AppAddFilesToArchive(const std::vector<std::wstring>& sources) {
 
   if (!ok) {
     util::RemoveDirectoryTree(workRoot);
-    return error.empty() ? L"添加失败" : error;
+    return error.empty() ? L"导出失败" : error;
   }
 
-  // 替换原包：必须先关句柄，否则 Windows 上换不掉
+  // 替换原包：先关句柄，否则 Windows 上换不掉
   g_app.archive.Close();
   bool replaced = false;
   for (int attempt = 0; attempt < 10 && !replaced; ++attempt) {
     replaced = AiUI::platform()->moveFile(outPath, original);
     if (!replaced) AiUI::platform()->sleepMillis(50);
   }
-  if (!replaced) {
-    // 换不掉时退回「复制覆盖」这一条路，用户数据不该因为锁文件而丢
-    replaced = util::CopyFileTo(outPath, original);
-  }
+  if (!replaced) replaced = util::CopyFileTo(outPath, original);
   util::RemoveDirectoryTree(workRoot);
 
   if (!replaced) {
-    // 原包还在，重新打开它，界面不至于变成空白
     arc::OpenResult r;
     OpenArchiveWithPassword(g_app.archive, original, DialogOwner(), r);
     AppRefreshView();
     return L"无法写回压缩包，原文件可能被占用";
   }
 
-  // 镜像目录里的旧内容已经过期（包变了），整棵清掉重新按需落地
+  // 包变了，镜像与待办清单都已过期
   util::RemoveDirectoryTree(g_app.stageDir);
   g_app.stageDir.clear();
+  g_app.edits = App::EditSession{};
 
   arc::OpenResult r;
   if (!OpenArchiveWithPassword(g_app.archive, original, DialogOwner(), r)) {
@@ -537,6 +895,25 @@ std::wstring AppAddFilesToArchive(const std::vector<std::wstring>& sources) {
   }
   AppRefreshView();
   return {};
+}
+
+void AppDiscardEdits() {
+  util::RemoveDirectoryTree(g_app.stageDir);
+  g_app.stageDir.clear();
+  g_app.edits = App::EditSession{};
+}
+
+bool AppConfirmDiscardEdits(AiUI::NativeHandle owner) {
+  if (!g_app.HasPendingEdits()) return true;
+  AiUI::MessageBoxParams params;
+  params.title = L"爱压";
+  params.message =
+      L"压缩包还有未导出的改动。\n\n直接离开会丢弃这些改动，原压缩包保持原样。\n"
+      L"要继续吗？";
+  params.icon = AiUI::MessageBoxIcon::kWarning;
+  params.buttons = AiUI::MessageBoxButtons::kYesNo;
+  params.defaultButton = AiUI::MessageBoxResult::kNo;
+  return AiUI::platform()->showMessageBox(owner, params) == AiUI::MessageBoxResult::kYes;
 }
 
 bool AppExtractArchive(AiUI::NativeHandle owner, const std::wstring& path) {

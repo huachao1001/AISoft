@@ -23,14 +23,19 @@ void HandleDroppedFiles(const std::vector<std::wstring>& paths) {
     const bool allArchives =
         paths.size() == 1 && arc::Archive::IsArchiveFile(paths[0]);
     if (!allArchives) {
-      const std::wstring error = AppAddFilesToArchive(paths);
+      const std::wstring error = AppAddToArchive(paths, g_app.innerPath);
       if (!error.empty()) {
         AiUI::MessageBoxParams params;
         params.title = L"爱压";
         params.message = error;
         params.icon = AiUI::MessageBoxIcon::kWarning;
         AiUI::platform()->showMessageBox(g_app.mainWnd, params);
+        return;
       }
+      // 拖进来只是「记在账上」：真正的重打包要等用户点「导出压缩包」。
+      // 这样超大包不会因为拖一个文件就整包解压重压一遍。
+      AppRefreshView();
+      if (mainActivity()) mainActivity()->refreshToolBar();
       return;
     }
   }

@@ -86,6 +86,9 @@ class MainActivity : public AiUI::Activity {
   bool canExtractSelected() const;
   void extractSelection();
   void deleteItems(const std::vector<int>& indices);
+  // 压缩包内：往当前所在目录加文件 / 加文件夹（只登记，导出时才真写回）
+  void addFilesToArchive();
+  void addFolderToArchive();
   AiUI::NativeHandle nativeWindow() const;
 
   // 控件由布局创建，这里只借用
@@ -103,7 +106,9 @@ class MainActivity : public AiUI::Activity {
   AiUI::Button* btnExtractSel_ = nullptr;
   AiUI::Button* btnExtractAll_ = nullptr;
   AiUI::Button* btnAdd_ = nullptr;
+  AiUI::Button* btnAddFolder_ = nullptr;
   AiUI::Button* btnDelete_ = nullptr;
+  AiUI::Button* btnExport_ = nullptr;
 
   FileListModel model_;
   // 适配器被 ListView 持有，这里也要留住，否则下一帧就问不到数据

@@ -720,9 +720,14 @@ Archive::Archive() = default;
 // 这些字段都是裸指针，默认的按位移动正好把所有权交出去；源对象必须清空，
 // 否则两边析构会 double-release。
 Archive::Archive(Archive&& other) noexcept
-    : stream_(other.stream_), archive_(other.archive_), entries_(std::move(other.entries_)) {
+    : stream_(other.stream_),
+      archive_(other.archive_),
+      entries_(std::move(other.entries_)),
+      handlerClsid_(other.handlerClsid_),
+      hasHandlerClsid_(other.hasHandlerClsid_) {
   other.stream_ = nullptr;
   other.archive_ = nullptr;
+  other.hasHandlerClsid_ = false;
 }
 
 Archive& Archive::operator=(Archive&& other) noexcept {
@@ -731,12 +736,31 @@ Archive& Archive::operator=(Archive&& other) noexcept {
   stream_ = other.stream_;
   archive_ = other.archive_;
   entries_ = std::move(other.entries_);
+  handlerClsid_ = other.handlerClsid_;
+  hasHandlerClsid_ = other.hasHandlerClsid_;
   other.stream_ = nullptr;
   other.archive_ = nullptr;
+  other.hasHandlerClsid_ = false;
   return *this;
 }
 
 Archive::~Archive() { Close(); }
+
+// 格式显示名要用「真正打开它的 handler」，而不是重新猜扩展名：
+// 临时副本没有后缀、用户改过后缀、包里套包时扩展名都不可信。
+std::wstring Archive::FormatName() const {
+  if (!hasHandlerClsid_) return {};
+  const wchar_t* name = z7::FormatNameFromClsid(handlerClsid_);
+  if (!name) return {};
+  std::wstring fmt(name);
+  // gzip 只压单个文件：里面装的是 tar 时，用户看到的整体其实是 TAR.GZ。
+  // 不这么合并，a.tar.gz 会显示成 GZ，看起来像「只解了一层」。
+  if (::IsEqualGUID(handlerClsid_, z7::kClsidGZip) && entries_.size() == 1 &&
+      util::FileExtension(entries_.front().path) == L".tar") {
+    fmt = L"TAR.GZ";
+  }
+  return fmt;
+}
 
 void Archive::Close() {
   if (archive_) {
@@ -749,6 +773,7 @@ void Archive::Close() {
     stream_ = nullptr;
   }
   entries_.clear();
+  hasHandlerClsid_ = false;
 }
 
 OpenResult Archive::Open(const std::wstring& filePath, const std::wstring& password) {
@@ -803,6 +828,7 @@ OpenResult Archive::Open(const std::wstring& filePath, const std::wstring& passw
   const uint64_t maxCheck = size > 0 ? size : (1ull << 23);
 
   z7::IInArchive* opened = nullptr;
+  GUID openedClsid = {};
   for (const GUID& cls : candidates) {
     // 上一个 handler 可能已经把流指针读走，必须回到开头再试
     inStream->Seek(0, STREAM_SEEK_SET, nullptr);
@@ -810,6 +836,7 @@ OpenResult Archive::Open(const std::wstring& filePath, const std::wstring& passw
     if (!a) continue;
     if (a->Open(inStream, &maxCheck, cb) == S_OK) {
       opened = a;
+      openedClsid = cls;
       break;
     }
     a->Release();
@@ -828,6 +855,8 @@ OpenResult Archive::Open(const std::wstring& filePath, const std::wstring& passw
 
   archive_ = opened;
   stream_ = inStream;
+  handlerClsid_ = openedClsid;
+  hasHandlerClsid_ = true;
 
   uint32_t count = 0;
   if (opened->GetNumberOfItems(&count) != S_OK) {

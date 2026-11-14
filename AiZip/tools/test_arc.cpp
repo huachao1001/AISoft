@@ -205,8 +205,11 @@ int wmain(int argc, wchar_t** argv) {
     arc::Archive a;
     const std::wstring pwd = argc > 3 ? argv[3] : L"";
     auto r = a.Open(argv[2], pwd);
+    // 格式以真正打开它的 handler 为准，扩展名只在 handler 没有名字时兜底
+    const std::wstring fmt = a.FormatName();
     printf("open=%d needsPwd=%d fmt=%ls err=%ls\n", r.ok, r.needsPassword,
-           z7::FormatNameFromExtension(util::FileExtension(argv[2])), r.error.c_str());
+           fmt.empty() ? z7::FormatNameFromExtension(util::FileExtension(argv[2])) : fmt.c_str(),
+           r.error.c_str());
     if (r.ok) Dump(a);
     return r.ok ? 0 : 1;
   }

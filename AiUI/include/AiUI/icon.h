@@ -21,6 +21,7 @@ enum class IconId {
   kExtractAll,   // 全部解压
   kAdd,          // 添加文件
   kTrash,        // 删除
+  kSave,         // 保存 / 导出
   kArrowBack,
   kChevron,      // 面包屑分隔
   kChevronUp,    // 表头升序

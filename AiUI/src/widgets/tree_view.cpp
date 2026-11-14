@@ -124,8 +124,12 @@ Rect TreeView::rowRect(int index) const {
   const int height = rowHeight();
   const int top = index * height - scrollOffset();
   const Rect rc = clientRect();
-  return Rect{style_.padLeft * d / 96 - 4 * d / 96, top,
-              rc.right - style_.padLeft * d / 96 + 4 * d / 96, top + height};
+  // 整行铺满模式：行矩形横向覆盖整个可视宽度，选中底色才能贴到两侧边缘。
+  // 药丸模式保留原来的左右内缩，让圆角两侧还有留白。
+  const int inset = (style_.selection == TreeSelectionStyle::kPill)
+                        ? style_.padLeft * d / 96 - 4 * d / 96
+                        : 0;
+  return Rect{inset, top, rc.right - inset, top + height};
 }
 
 int TreeView::hitRow(Point pt) const {
@@ -206,16 +210,22 @@ void TreeView::onPaint(Painter& painter, const Rect& rect) {
     const bool active = (node == active_);
     const bool hot = (hot_ == i);
 
-    // 选中/悬停都用圆角药丸，比整行铺色轻
-    Rect pill = rr;
-    pill.left += style_.pillInsetX * d / 96;
-    pill.right -= style_.pillInsetX * d / 96;
-    pill.top += style_.pillInsetY * d / 96;
-    pill.bottom -= style_.pillInsetY * d / 96;
-    if (active) {
-      painter.fillRoundRect(pill, selBg, style_.pillRadius * d / 96);
-    } else if (hot) {
-      painter.fillRoundRect(pill, hoverBg, style_.pillRadius * d / 96);
+    // 选中/悬停底色的形态由 style.selection 决定：
+    //   kFullRow → 整行铺满、左右无间距、无圆角（导航树常规观感）
+    //   kPill    → 两侧内缩的圆角药丸，视觉更轻
+    if (active || hot) {
+      const Color bg = active ? selBg : hoverBg;
+      if (style_.selection == TreeSelectionStyle::kPill) {
+        Rect pill = rr;
+        pill.left += style_.pillInsetX * d / 96;
+        pill.right -= style_.pillInsetX * d / 96;
+        pill.top += style_.pillInsetY * d / 96;
+        pill.bottom -= style_.pillInsetY * d / 96;
+        painter.fillRoundRect(pill, bg, style_.pillRadius * d / 96);
+      } else {
+        // 接到滚动条为止：铺满整个可视宽度，不留缝
+        painter.fillRect(rr, bg);
+      }
     }
 
     // 只平移图标与文字：药丸始终铺满可视宽度，横向滚动不会把它推走

@@ -57,7 +57,37 @@ const wchar_t* FormatNameFromExtension(const std::wstring& extIn) {
   if (e == L".rar") return L"RAR";
   if (e == L".iso") return L"ISO";
   if (e == L".wim") return L"WIM";
-  return L"7Z";
+  // 认不出来就返回空串，让调用方不画标签。
+  // 以前这里兜底返回 "7Z"，任何认不出的后缀都会被标成 7z 格式，
+  // 界面上等于报了个假消息；宁可空着也不能写错。
+  return L"";
+}
+
+const wchar_t* FormatNameFromClsid(const GUID& clsId) {
+  struct Pair {
+    const GUID* clsid;
+    const wchar_t* name;
+  };
+  // 只列能出现在浏览界面的容器格式。7-Zip 还有些 handler 是「分析器」而非
+  // 归档格式（ELF、PE、FAT 之类），它们没有用户可读的名字，返回 nullptr
+  // 让调用方退回扩展名推断。
+  static const Pair kNames[] = {
+      {&kClsidZip, L"ZIP"},   {&kClsid7z, L"7Z"},     {&kClsidRar, L"RAR"},
+      {&kClsidRar5, L"RAR"},  {&kClsidTar, L"TAR"},   {&kClsidGZip, L"GZ"},
+      {&kClsidBZip2, L"BZ2"}, {&kClsidXz, L"XZ"},     {&kClsidZstd, L"ZSTD"},
+      {&kClsidLzma, L"LZMA"}, {&kClsidCab, L"CAB"},   {&kClsidIso, L"ISO"},
+      {&kClsidUdf, L"UDF"},   {&kClsidWim, L"WIM"},   {&kClsidLzh, L"LZH"},
+      {&kClsidArj, L"ARJ"},   {&kClsidZ, L"Z"},       {&kClsidNsis, L"NSIS"},
+      {&kClsidChm, L"CHM"},   {&kClsidCpio, L"CPIO"}, {&kClsidRpm, L"RPM"},
+      {&kClsidAr, L"AR"},     {&kClsidXar, L"XAR"},   {&kClsidDmg, L"DMG"},
+      {&kClsidHfs, L"HFS"},   {&kClsidApfs, L"APFS"}, {&kClsidSquashfs, L"SQUASHFS"},
+      {&kClsidVhd, L"VHD"},   {&kClsidVhdx, L"VHDX"}, {&kClsidVdi, L"VDI"},
+      {&kClsidVmdk, L"VMDK"}, {&kClsidQcow, L"QCOW"},
+  };
+  for (const Pair& p : kNames) {
+    if (::IsEqualGUID(*p.clsid, clsId)) return p.name;
+  }
+  return nullptr;
 }
 
 // ── 可创建格式表 ──

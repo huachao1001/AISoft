@@ -303,26 +303,39 @@ void MainActivity::attachToolBar() {
     btnExtractAll_->setOnClick([] { ShowExtractDialog(g_app.mainWnd, {}); });
   }
 
-  btnAdd_ = toolBar_->addButton(makeButtonSpec(L"添加文件", AiUI::IconId::kAdd), 2);
+  btnAdd_ = toolBar_->addButton(makeButtonSpec(L"添加", AiUI::IconId::kAdd), 2);
   if (btnAdd_) {
     btnAdd_->setOnClick([this] {
-      // 在压缩包里时是「把文件加进这个包」，走多选；在文件系统里是新建压缩包
+      // 在压缩包里时是「把文件加进这个包」，在文件系统里是新建压缩包
       if (g_app.archiveMode) {
-        const std::vector<std::wstring> picked = AiUI::platform()->pickOpenFiles(
-            nativeWindow(), L"添加到压缩包",
-            g_app.curDir.empty() ? util::DirName(g_app.archivePath) : g_app.curDir,
-            {L"所有文件 (*.*)|*.*"});
-        if (picked.empty()) return;
-        const std::wstring error = AppAddFilesToArchive(picked);
-        if (!error.empty()) warn(error, nativeWindow());
+        addFilesToArchive();
         return;
       }
       ShowCompressDialog(g_app.mainWnd, selectedPaths());
     });
   }
 
+  btnAddFolder_ = toolBar_->addButton(makeButtonSpec(L"添加文件夹", AiUI::IconId::kFolder), 2);
+  if (btnAddFolder_) {
+    btnAddFolder_->setOnClick([this] { addFolderToArchive(); });
+  }
+
   btnDelete_ = toolBar_->addButton(makeButtonSpec(L"删除选中", AiUI::IconId::kTrash), 2);
   if (btnDelete_) btnDelete_->setOnClick([this] { deleteItems(selectedItemIndices()); });
+
+  // 「导出压缩包」只在有未导出的改动时可用：所有增删改都只落在临时镜像里，
+  // 用户点这里才真正重打包，原包在此之前一个字节都没动。
+  AiUI::ButtonSpec exportSpec = makeButtonSpec(L"导出压缩包", AiUI::IconId::kSave);
+  exportSpec.style = AiUI::ButtonStyle::kPrimary;
+  btnExport_ = toolBar_->addButton(exportSpec, 3);
+  if (btnExport_) {
+    btnExport_->setOnClick([this] {
+      if (!g_app.HasPendingEdits()) return;
+      const std::wstring error = AppExportArchive();
+      if (!error.empty()) warn(error, nativeWindow());
+      refreshToolBar();
+    });
+  }
 
   refreshToolBar();
 }
@@ -508,7 +521,12 @@ void MainActivity::refreshStatusBar() {
     } else {
       fields.left = g_app.archivePath;
     }
-    fields.tag = z7::FormatNameFromExtension(util::FileExtension(g_app.archivePath));
+    // 格式以真正打开它的 handler 为准；handler 没有可读名字时才退回扩展名。
+    // 扩展名在临时副本、改过后缀的包上都会说谎。
+    fields.tag = g_app.archive.FormatName();
+    if (fields.tag.empty()) {
+      fields.tag = z7::FormatNameFromExtension(util::FileExtension(g_app.archivePath));
+    }
     fields.size = util::FormatSize(AiUI::platform()->fileSize(g_app.archivePath));
     fields.showHome = true;
   } else {
@@ -552,12 +570,22 @@ void MainActivity::refreshStatusBar() {
 
 void MainActivity::refreshToolBar() {
   if (!toolBar_) return;
-  if (btnExtractSel_) btnExtractSel_->setEnabled(canExtractSelected());
-  if (btnDelete_) btnDelete_->setEnabled(!selectedItemIndices().empty());
-  // 「添加文件」在两种模式下都可用：文件系统里是新建压缩包，包里是往里加文件
-  if (btnAdd_) btnAdd_->setEnabled(true);
+  // 首页没有内容可操作
+  const bool browsing = !g_app.homeMode;
+  if (btnExtractSel_) {
+    btnExtractSel_->setEnabled(browsing && canExtractSelected());
+  }
+  if (btnDelete_) {
+    btnDelete_->setEnabled(browsing && !selectedItemIndices().empty());
+  }
+  // 「添加」在两种模式下都可用：文件系统里是新建压缩包，包里是往里加东西
+  if (btnAdd_) btnAdd_->setEnabled(browsing);
+  if (btnAddFolder_) btnAddFolder_->setEnabled(browsing && g_app.archiveMode);
   if (btnRefresh_) btnRefresh_->setEnabled(true);
-  if (btnExtractAll_) btnExtractAll_->setEnabled(true);
+  if (btnExtractAll_) btnExtractAll_->setEnabled(browsing);
+  // 导出按钮始终可见，但只有真的攒下改动才可点：常态下不该出现一个
+  // 看起来能按却没反应的按钮。
+  if (btnExport_) btnExport_->setEnabled(g_app.archiveMode && g_app.HasPendingEdits());
   toolBar_->relayout();
 }
 
@@ -680,10 +708,16 @@ void MainActivity::onRowActivated(int row) {
       return;
     }
 
-    // 其余文件：解到临时镜像再用系统默认程序打开。
+    // 其余文件：解到临时镜像，再用系统默认程序打开。
     // 包内条目没有磁盘路径，直接交给 shell 是打不开的。
-    const std::wstring error = AppOpenArchiveEntry(item->entryIndex, entryPath);
-    if (!error.empty()) warn(error, host);
+    // 同时登记进 modified 清单：之后导出时按大小/时间判断它是否真被改过，
+    // 没改就只是多解了一次，不会写回包。
+    const std::wstring error = AppMakeEditable(item->entryIndex, entryPath);
+    if (!error.empty()) {
+      warn(error, host);
+      return;
+    }
+    refreshToolBar();
     return;
   }
 
@@ -706,21 +740,44 @@ void MainActivity::showListContextMenu() {
 
   // 顺序即下标：showPopupMenu 返回的也是下标
   std::vector<AiUI::MenuItem> menu;
+  const int extractAt = static_cast<int>(menu.size());
   AiUI::MenuItem extractItem;
   extractItem.label = L"解压到...";
   extractItem.enabled = canExtract;
   menu.push_back(extractItem);
 
+  const int compressAt = static_cast<int>(menu.size());
   AiUI::MenuItem compressItem;
   compressItem.label = L"压缩为...";
   menu.push_back(compressItem);
+
+  // 压缩包里额外给「加文件 / 加文件夹」：右键是最顺手的入口，
+  // 用户不该为了加东西先去点工具栏。
+  int addFilesAt = -1;
+  int addFolderAt = -1;
+  if (g_app.archiveMode) {
+    AiUI::MenuItem sepAdd;
+    sepAdd.separator = true;
+    menu.push_back(sepAdd);
+
+    addFilesAt = static_cast<int>(menu.size());
+    AiUI::MenuItem addFilesItem;
+    addFilesItem.label = L"添加文件...";
+    menu.push_back(addFilesItem);
+
+    addFolderAt = static_cast<int>(menu.size());
+    AiUI::MenuItem addFolderItem;
+    addFolderItem.label = L"添加文件夹...";
+    menu.push_back(addFolderItem);
+  }
 
   AiUI::MenuItem sep1;
   sep1.separator = true;
   menu.push_back(sep1);
 
+  const int deleteAt = static_cast<int>(menu.size());
   AiUI::MenuItem deleteItem;
-  deleteItem.label = L"删除";
+  deleteItem.label = g_app.archiveMode ? L"从压缩包删除" : L"删除";
   deleteItem.enabled = hasSelection;
   menu.push_back(deleteItem);
 
@@ -728,10 +785,12 @@ void MainActivity::showListContextMenu() {
   sep2.separator = true;
   menu.push_back(sep2);
 
+  const int refreshAt = static_cast<int>(menu.size());
   AiUI::MenuItem refreshItem;
   refreshItem.label = L"刷新";
   menu.push_back(refreshItem);
 
+  const int propsAt = static_cast<int>(menu.size());
   AiUI::MenuItem propsItem;
   propsItem.label = L"属性";
   propsItem.enabled = hasSelection;
@@ -742,31 +801,37 @@ void MainActivity::showListContextMenu() {
   platform->bringToFront(host);
   const int command = platform->showPopupMenu(host, platform->cursorPosition(), menu);
 
-  switch (command) {
-    case 0:
-      extractSelection();
-      break;
-    case 1: {
-      if (g_app.archiveMode) {
-        info(L"压缩包内无法直接创建新压缩包，请先解压。", host);
-        break;
-      }
-      ShowCompressDialog(host, selectedPaths());
-      break;
+  if (command < 0) return;
+  if (command == addFilesAt) {
+    addFilesToArchive();
+    return;
+  }
+  if (command == addFolderAt) {
+    addFolderToArchive();
+    return;
+  }
+  if (command == extractAt) {
+    extractSelection();
+    return;
+  }
+  if (command == compressAt) {
+    if (g_app.archiveMode) {
+      info(L"压缩包内无法直接创建新压缩包，请先解压。", host);
+      return;
     }
-    case 3:
-      deleteItems(selected);
-      break;
-    case 5:
-      AppRefreshView();
-      break;
-    case 7:
-      if (hasSelection && !g_app.archiveMode) {
-        platform->showProperties(host, g_app.items[selected[0]].fullPath);
-      }
-      break;
-    default:
-      break;
+    ShowCompressDialog(host, selectedPaths());
+    return;
+  }
+  if (command == deleteAt) {
+    deleteItems(selected);
+    return;
+  }
+  if (command == refreshAt) {
+    AppRefreshView();
+    return;
+  }
+  if (command == propsAt && hasSelection && !g_app.archiveMode) {
+    platform->showProperties(host, g_app.items[selected[0]].fullPath);
   }
 }
 
@@ -818,14 +883,75 @@ void MainActivity::extractSelection() {
   ShowExtractDialog(host, {}, path);
 }
 
-void MainActivity::deleteItems(const std::vector<int>& indices) {
+// 加文件/文件夹对话框的起始目录。
+// 注意不能用 curDir：打开压缩包时并不会更新 curDir，它还停在上一次浏览的目录，
+// 于是对话框会莫名其妙地开在 C:\Users。压缩包模式下应当以包所在目录为准。
+static std::wstring AddSourceInitialDir() {
+  if (g_app.archiveMode && !g_app.archivePath.empty()) {
+    const std::wstring dir = util::DirName(g_app.archivePath);
+    if (!dir.empty() && util::IsDirectory(dir)) return dir;
+  }
+  return g_app.curDir;
+}
+
+void MainActivity::addFilesToArchive() {
   const AiUI::NativeHandle host = nativeWindow();
-  if (g_app.archiveMode) {
-    info(L"压缩包内的条目不支持直接删除。\n请解压后重新打包。", host);
+  const std::vector<std::wstring> picked = AiUI::platform()->pickOpenFiles(
+      host, L"添加到压缩包", AddSourceInitialDir(), {L"所有文件 (*.*)|*.*"});
+  if (picked.empty()) return;
+
+  const std::wstring error = AppAddToArchive(picked, g_app.innerPath);
+  if (!error.empty()) {
+    warn(error, host);
     return;
   }
+  AppRefreshView();
+}
+
+void MainActivity::addFolderToArchive() {
+  const AiUI::NativeHandle host = nativeWindow();
+  const std::wstring picked = AiUI::platform()->pickFolder(
+      host, L"添加文件夹到压缩包", AddSourceInitialDir());
+  if (picked.empty()) return;
+
+  const std::wstring error = AppAddToArchive({picked}, g_app.innerPath);
+  if (!error.empty()) {
+    warn(error, host);
+    return;
+  }
+  AppRefreshView();
+}
+
+void MainActivity::deleteItems(const std::vector<int>& indices) {
+  const AiUI::NativeHandle host = nativeWindow();
   if (indices.empty()) {
     info(L"请先选择要删除的文件或文件夹。", host);
+    return;
+  }
+
+  // 压缩包里：不真删，只记一份删除清单。原包保持原样，直到用户点「导出压缩包」。
+  if (g_app.archiveMode) {
+    std::vector<std::wstring> innerPaths;
+    innerPaths.reserve(indices.size());
+    for (int index : indices) {
+      if (index < 0 || index >= static_cast<int>(g_app.items.size())) continue;
+      const std::wstring& name = g_app.items[index].name;
+      innerPaths.push_back(g_app.innerPath.empty() ? name
+                                                  : g_app.innerPath + L"\\" + name);
+    }
+    if (innerPaths.empty()) return;
+
+    const std::wstring message =
+        L"确定从压缩包里删除选中的 " + std::to_wstring(innerPaths.size()) +
+        L" 项吗？\n\n改动先记在临时目录里，点「导出压缩包」后才会真正写回。";
+    if (!confirm(L"确认删除", message, host)) return;
+
+    const std::wstring error = AppDeleteFromArchive(innerPaths);
+    if (!error.empty()) {
+      warn(error, host);
+      return;
+    }
+    AppRefreshView();
     return;
   }
 
@@ -909,6 +1035,9 @@ bool MainActivity::onKeyDown(const AiUI::Key& key, const AiUI::Modifiers& mods) 
 }
 
 bool MainActivity::onCloseRequest() {
+  // 有未导出的改动时先问一句：直接关掉会静默丢掉用户刚做的增删改
+  if (!AppConfirmDiscardEdits(nativeWindow())) return false;
+
   // 关闭前保存窗口状态；正常尺寸取还原态，最大化时也记下来
   if (AiUI::Window* win = window()) {
     if (AiUI::PlatformWindow* pw = win->platformWindow()) {

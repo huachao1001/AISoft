@@ -77,6 +77,7 @@ constexpr wchar_t glyphFor(IconId id) {
     case IconId::kExtractAll: return 0xE896;
     case IconId::kAdd: return 0xE710;
     case IconId::kTrash: return 0xE74D;
+    case IconId::kSave: return 0xE74E;
     case IconId::kArrowBack: return 0xE72B;
     case IconId::kChevron: return 0xE76C;
     case IconId::kChevronDown: return 0xE70D;

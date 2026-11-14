@@ -76,6 +76,9 @@ class Archive {
 
   const std::vector<Entry>& Entries() const { return entries_; }
   bool IsOpen() const { return archive_ != nullptr; }
+  // 真正把包打开的那个 handler 对应的格式显示名（如 L"ZIP"）。
+  // 没开包或该 handler 没有可读名字时返回空串。
+  std::wstring FormatName() const;
 
   // indices 为空表示全部
   bool Extract(const std::vector<uint32_t>& indices, const ExtractOptions& opts,
@@ -92,6 +95,9 @@ class Archive {
   void* stream_ = nullptr;  // z7::IInStream*
   z7::IInArchive* archive_ = nullptr;
   std::vector<Entry> entries_;
+  // 打开成功的那个 handler。格式标签要用它，而不是猜扩展名。
+  GUID handlerClsid_ = {};
+  bool hasHandlerClsid_ = false;
 };
 
 // 压缩一组路径到新压缩包

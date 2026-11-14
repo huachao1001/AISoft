@@ -57,6 +57,45 @@ struct App {
   // 同一个文件双击两次只解一次。目录延迟创建——只是看列表时不该在 temp 里留东西。
   std::wstring stageDir;
 
+  // ── 编辑会话 ──
+  //
+  // 打开包时不解压任何东西（超大包也能秒开）：列表只读中央目录。用户点开哪个
+  // 文件才解那一个，改了也只在镜像里改。新增文件直接复制进镜像，删除只记一份
+  // 名字清单——删掉的内容不必再解出来，导出时跳过即可。
+  //
+  // 所有改动都攒到用户点「导出压缩包」才真正重打包。这样：
+  //   - 打开大包不需要等解压；
+  //   - 用户改错了关掉窗口就行，原包一个字节都没动；
+  //   - 中途崩溃也不会留下半个写坏的包。
+  struct EditSession {
+    // 包内路径（归一化后），含其下所有内容
+    std::vector<std::wstring> deleted;
+    // 新增条目的包内路径（保留原始大小写，导出时要按它找镜像里的文件，
+    // 列表也要按它显示名字）。比较前用 NormalizeInner 归一。
+    std::vector<std::wstring> added;
+    // 已解到镜像、且确实被改动过的文件（归一化路径）
+    std::vector<std::wstring> modified;
+    // 已经解到镜像里的原有文件（双击打开过），连同解出时包内声明的大小与
+    // 修改时间。
+    //
+    // 单独记一份是为了「只看不改」不算改动：打开文件不该让界面冒出
+    // 「导出压缩包」。真要判断改动时拿磁盘上的现状和这里记的值比对即可——
+    // 不用回头扫整包的条目表，十万条的包也不会因此卡住界面。
+    struct OpenedFile {
+      std::wstring inner;  // 归一化包内路径
+      uint64_t size = 0;
+      int64_t modifiedMillis = 0;
+      bool hasMtime = false;
+    };
+    std::vector<OpenedFile> opened;
+  };
+  EditSession edits;
+
+  // 包内路径归一到可比较形式（小写、'\' 分隔、去首尾分隔）
+  static std::wstring NormalizeInner(const std::wstring& path);
+  // 是否有待导出的改动（纯查询，不改状态）
+  bool HasPendingEdits() const;
+
   // 嵌套预览：点进包内的压缩包时，当前这一层的状态整体压栈，内层在栈顶工作。
   //
   // 为什么解到临时文件而不是直接开内存流：7-Zip 只接受随机访问输入流，而
@@ -102,20 +141,52 @@ bool AppInNestedArchive();
 // 关窗/换包时彻底清空嵌套栈与临时文件
 void AppClearNestedArchives();
 
-// 用系统默认程序打开包内某个文件。
+// ── 编辑会话 ──
 //
-// 包内条目没有磁盘路径，先按包内路径解到当前层的镜像目录（stageDir）再交给
-// shell。同一个文件第二次点击时直接复用已解出的副本，不重复解压。
-// 返回空串表示成功；非空是可读原因。
-std::wstring AppOpenArchiveEntry(int entryIndex, const std::wstring& entryPath);
+// 这些操作都不碰原包，只改临时镜像与一份待办清单。用户点「导出压缩包」
+// 才会真正重打包（AppExportArchive）。
+//
+// 「查看」与「编辑」走同一条路：包内条目没有磁盘路径，都是先按包内路径解到
+// 当前层的镜像目录（stageDir）再交给系统。解出来时顺手记下它原本的大小与
+// 时间，导出前用这份记录判断用户到底改没改——只是点开看一眼不算改动。
 
-// 往当前打开的压缩包里的当前目录追加文件/目录。
+// 往当前所在目录（或指定包内目录）加入磁盘上的文件/文件夹。
 //
-// 7-Zip 内核不支持「往已有容器追加并保持原压缩流」，所以实现是：整包解到
-// 临时目录 → 把新文件并进去 → 按原格式重新压回原位。用户看到的是一个进度框，
-// 语义上就是「加进这个包」。
+// 只把新文件复制进镜像，并登记它们的包内路径；原包一个字节都不动。
 // 返回空串表示成功；非空是可读原因。
-std::wstring AppAddFilesToArchive(const std::vector<std::wstring>& sources);
+std::wstring AppAddToArchive(const std::vector<std::wstring>& sources,
+                             const std::wstring& innerDir);
+
+// 从包里标记删除条目（目录则连其下全部内容）。只记清单，不碰原包。
+std::wstring AppDeleteFromArchive(const std::vector<std::wstring>& innerPaths);
+
+// 把包内条目解到镜像，记下它原本的大小与时间，之后用户改它就能被检测到。
+// 双击打开文件走这里。返回空串表示成功；非空是可读原因。
+std::wstring AppMakeEditable(int entryIndex, const std::wstring& entryPath);
+
+// 比对「打开过的文件」当前在磁盘上的大小/时间，把真被改过的登记进 modified。
+// 由 AppRefreshView 与 AppExportArchive 自动调用，界面不必手动触发。
+void AppScanModifiedEntries();
+
+// ── 编辑清单查询（供左侧树等只需要名字清单的地方使用）──
+//
+// 树的节点只关心「这一层有哪些目录」，不必走完整的 Item 列表，
+// 所以直接暴露两个查询，避免把 LoadArchiveItems 的逻辑复制一份。
+// 参数与返回都是归一化路径。
+bool AppIsPathDeleted(const std::wstring& normalized);
+// 新增清单里落在该目录之下的直接子目录名（保留原始大小写）
+std::vector<std::wstring> AppAddedChildNames(const std::wstring& normalizedDir);
+
+// 真正重打包：解压未删除条目 → 叠加镜像 → 压回原位。
+// 会弹进度框；返回空串表示成功。
+std::wstring AppExportArchive();
+
+// 放弃所有未导出的改动
+void AppDiscardEdits();
+
+// 有待导出的改动时向用户确认，返回 false 表示用户选择留下继续编辑
+bool AppConfirmDiscardEdits(AiUI::NativeHandle owner);
+
 void AppGoUp();
 void AppGoBack();
 void AppGoForward();

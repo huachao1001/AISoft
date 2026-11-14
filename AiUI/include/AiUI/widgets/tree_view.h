@@ -16,6 +16,12 @@
 
 namespace AiUI {
 
+// 选中行底色的画法
+enum class TreeSelectionStyle {
+  kFullRow,  // 整行铺满：左右贴边、无圆角（导航树的常规观感）
+  kPill,     // 内缩圆角药丸：视觉更轻
+};
+
 // 树节点：只存展示数据，子节点由外部懒加载
 struct TreeNode {
   std::wstring label;
@@ -36,9 +42,16 @@ struct TreeStyle {
   int padLeft = 14;
   int iconSize = 16;
   int iconGap = 6;
+  // kPill 专用的内缩与圆角（仅 selection == kPill 时生效）
   int pillInsetX = 6;
   int pillInsetY = 2;
   int pillRadius = 5;
+  // 选中/悬停底色的形态。
+  //
+  // kFullRow：整行铺满、左右无间距、无圆角。文件浏览器与导航树的常规观感
+  //           （资源管理器、VS Code 都是这样），选中项一眼能看出范围。
+  // kPill：两侧内缩的圆角药丸，视觉更轻，适合悬浮在页面里的短导航列表。
+  TreeSelectionStyle selection = TreeSelectionStyle::kFullRow;
   // 颜色：kNoColor 表示跟随主题
   Color background = kNoColor;
   Color hoverBg = kNoColor;
