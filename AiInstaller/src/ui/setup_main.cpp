@@ -83,11 +83,20 @@ int AiUI::runApp() {
   const bool packaged = package.openSelf(packageError);
 
   bool uninstall = false;
+  bool forceInstall = false;
   bool silent = false;
   for (const auto& arg : AiUI::platform()->commandLineArgs()) {
     if (arg == L"--uninstall") uninstall = true;
+    if (arg == L"--install") forceInstall = true;
     if (arg == L"--silent") silent = true;
   }
+
+  // 双击卸载程序时命令行一个参数都没有（只有「应用与功能」才会带
+  // --uninstall）。而卸载程序本身就是「安装器本体 + 清单、载荷为空」的
+  // 合法安装包，光看参数会把它当成安装包渲染安装界面。所以按「打包过但
+  // 没有载荷」判定它就是卸载程序；真正的安装包一定带载荷，不会误判。
+  // --install 留给极端情况：有人想从卸载副本再装一次。
+  if (packaged && !package.hasPayload() && !forceInstall) uninstall = true;
 
   // 界面放进内层作用域：退出时要先让 Activity 析构，图片句柄才会释放，
   // 否则临时 logo 还被 GDI+ 占着，删不掉。
@@ -96,6 +105,7 @@ int AiUI::runApp() {
   std::wstring logoPath;
   {
     AiInstaller::ui::SetupActivity activity;
+    activity.setSilent(silent);
 
     // 卸载时清单就在自己末尾：装进目录的 uninstall.exe 是一个载荷为空的
     // 合法安装包，openSelf() 读到的就是当初装了什么。不再需要旁边放
@@ -159,6 +169,8 @@ int AiUI::runApp() {
 
     activity.show();
     code = AiUI::platform()->runEventLoop();
+    // 静默安装没有界面可看，失败只能靠退出码告诉调用方
+    if (code == 0) code = activity.exitCode();
     activity.close();
   }
 

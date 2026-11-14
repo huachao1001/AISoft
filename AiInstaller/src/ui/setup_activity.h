@@ -46,6 +46,15 @@ class SetupActivity : public AiUI::Activity {
   // 提权后由新进程直接执行安装，不再要求用户点第二次「安装」
   void setAutoInstall(const std::wstring& dir, Scope scope);
 
+  // 静默安装：装完不留在完成页等点击，直接退出。
+  //
+  // 它们是同一个「自动安装」入口，但收尾不同：提权重试后面还坐着一个人，
+  // 会自己点「完成」；--silent 是无人值守部署，等下去就是永远不回。
+  void setSilent(bool silent) { silent_ = silent; }
+
+  // 静默安装失败时用退出码告知调用方：没有界面可看，退出码是唯一信号。
+  int exitCode() const { return exitCode_; }
+
   // 卸载通道：不建界面，执行后退出
   void setAutoUninstall(const std::wstring& installDir, const Manifest& manifest);
 
@@ -118,6 +127,10 @@ class SetupActivity : public AiUI::Activity {
   std::wstring autoDir_;
   Scope autoScope_ = Scope::kAllUsers;
 
+  // 静默安装：装完直接退出，不等「完成」按钮。见 setSilent()。
+  bool silent_ = false;
+  // 静默失败时留给入口的退出码
+  int exitCode_ = 0;
   bool autoUninstall_ = false;
   std::wstring uninstallDir_;
 

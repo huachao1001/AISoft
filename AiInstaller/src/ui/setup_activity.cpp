@@ -355,6 +355,12 @@ void SetupActivity::onWorkFinished() {
   }
 
   if (!ok) {
+    // 静默安装：没人能看见这个框，弹出来就是挂住。用退出码报失败即可。
+    if (silent_) {
+      exitCode_ = 1;
+      close();
+      return;
+    }
     // 失败不留在进度页：那看着像还在装。回到配置页并说明原因。
     showStage(Stage::kConfig);
     // 进度条归零：下次重试要从 0 开始，留着半截会让人以为接着上次跑
@@ -365,6 +371,13 @@ void SetupActivity::onWorkFinished() {
   }
   // 成功：进度条补满再切完成页
   setProgress(1.0f, L"安装完成");
+
+  // 静默安装没人会来点「完成」，停在完成页等于让调用方永远等下去。
+  // 也不执行 afterInstall：无人值守部署拉起 GUI 应用没有意义。
+  if (silent_) {
+    close();
+    return;
+  }
   showStage(Stage::kDone);
 }
 

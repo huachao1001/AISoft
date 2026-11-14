@@ -45,6 +45,13 @@ class Package {
   bool isPackaged() const { return packaged_; }
   const Manifest& manifest() const { return manifest_; }
 
+  // 是否带着待安装的文件。
+  //
+  // 卸载程序是「安装器本体 + 清单」的副本，载荷为空；安装包一定带载荷。
+  // 所以「打包过但没有载荷」= 这是安装目录里那份卸载程序。双击时没有
+  // 命令行参数，只能靠这个区分该走安装还是卸载。
+  bool hasPayload() const { return payloadSize_ > 0; }
+
   // 把某个载荷文件写到 targetPath（父目录自动创建）。返回空串表示成功。
   std::wstring extractFile(const ManifestFile& file, const std::wstring& targetPath) const;
 
