@@ -81,6 +81,18 @@ std::wstring registerUninstallEntry(const std::wstring& displayName,
 // 撤销卸载入口
 std::wstring unregisterUninstallEntry(const std::wstring& displayName, InstallScope scope);
 
+// 安装时新建的目录层级：记在卸载项里（不是安装目录的文件里），卸载时据此
+// 收回空壳父目录。安装目录因此只有应用自己的东西。
+void writeInstallDirectories(const std::wstring& displayName,
+                             const std::vector<std::wstring>& dirs, InstallScope scope);
+std::vector<std::wstring> readInstallDirectories(const std::wstring& displayName,
+                                                 InstallScope scope);
+
+// 这个程序装过没：已装则带出当初的位置与范围。
+// 用来防止重复安装到第二个位置——同一个应用装两份会互相覆盖注册表项，
+// 卸载其中一个就把另一个的菜单也摘了。
+void queryInstalled(const std::wstring& displayName, InstallScope scope, bool& found,
+                    std::wstring& installDir, InstallScope& installedScope);
 // 把当前可执行文件复制到 destPath（覆盖同名文件）。卸载程序要删掉自己所在的
 // 目录，只能先把自己复制到临时位置再执行真正的删除。
 std::wstring copySelfTo(const std::wstring& destPath);
@@ -108,6 +120,21 @@ std::wstring installSingleResource(int resourceId, const std::wstring& targetPat
 // 从 targetDir 里删除安装的文件（卸载）。返回空串表示成功。
 std::wstring removeInstalledFiles(const std::wstring& targetDir,
                                   const std::vector<InstallFile>& files);
+
+// 想借用哪个系统图标
+enum class SystemIcon {
+  kRecycleBin,
+};
+
+// 把一个系统图标写进 exe 的资源表，替换它原来的图标。
+//
+// 卸载程序属于系统「应用与功能」里的一个条目，用回收站图标比用应用自己的
+// 品牌图标更容易让人一眼认出「这是卸载」。但 EXE 的图标是构建期编进资源
+// 段的，卸载程序又是运行期从安装器复制出来的，只能在复制之后改写资源。
+//
+// 必须在追加清单之前调用：UpdateResource 会重排 PE 映像，已经追加到末尾的
+// 数据会被丢掉。成功返回空串。
+std::wstring setExecutableSystemIcon(const std::wstring& exePath, SystemIcon icon);
 
 // 在资源管理器 / 开始菜单里为已装程序创建快捷方式。
 // exeName 是 targetDir 里的可执行文件名，displayName 用作 .lnk 名。

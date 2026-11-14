@@ -27,6 +27,7 @@ class WindowsBackend final : public Backend {
   bool deleteFile(const std::wstring& path) override;
   bool moveToTrash(const std::wstring& path) override;
   std::unique_ptr<FileStream> openFileStream(const std::wstring& path, bool openWrite) override;
+  std::unique_ptr<FileStream> openFileStreamForUpdate(const std::wstring& path) override;
   bool moveFile(const std::wstring& from, const std::wstring& to) override;
   std::wstring absolutePath(const std::wstring& path) override;
   std::wstring tempDir() override;
@@ -113,6 +114,17 @@ class WindowsBackend final : public Backend {
                                       InstallScope scope) override;
   std::wstring unregisterUninstallEntry(const std::wstring& displayName,
                                         InstallScope scope) override;
+  // 改写 exe 的图标资源：卸载程序用系统的回收站图标
+  std::wstring setExecutableSystemIcon(const std::wstring& exePath, SystemIcon icon) override;
+  // 安装时新建的目录层级记在卸载项里：安装目录该只有应用自己的东西
+  void writeInstallDirectories(const std::wstring& displayName,
+                               const std::vector<std::wstring>& dirs,
+                               InstallScope scope) override;
+  std::vector<std::wstring> readInstallDirectories(const std::wstring& displayName,
+                                                   InstallScope scope) override;
+  // 是否已装过：看卸载项里的 InstallLocation 指向的目录还在不在
+  void queryInstalled(const std::wstring& displayName, InstallScope scope, bool& found,
+                      std::wstring& installDir, InstallScope& installedScope) override;
 
   // ── 卸载收尾 ──
   std::wstring copySelfTo(const std::wstring& destPath) override;

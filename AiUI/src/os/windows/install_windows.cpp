@@ -19,6 +19,10 @@ namespace os {
 namespace windows {
 namespace {
 
+// 卸载项里存「安装时新建的目录层级」的值名。
+// 用 REG_MULTI_SZ，路径本身可以含任何分隔符，不需要转义。
+constexpr const wchar_t* kInstallDirsValue = L"InstallCreatedDirs";
+
 // 取已知目录；不存在时返回空
 std::wstring knownFolder(const KNOWNFOLDERID& id) {
   wchar_t* base = nullptr;
@@ -330,6 +334,63 @@ std::wstring WindowsBackend::unregisterUninstallEntry(const std::wstring& displa
   const HKEY root = scope == InstallScope::kAllUsers ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;
   regDeleteTree(root, L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\" + displayName);
   return {};
+}
+
+namespace {
+
+// 卸载项在注册表里的键名。用显示名：同一程序只该有一个入口，
+// 也方便「装过没」这种查询直接用清单里的名字问。
+std::wstring uninstallKeyOf(const std::wstring& displayName) {
+  return L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\" + displayName;
+}
+
+HKEY rootOf(InstallScope scope) {
+  return scope == InstallScope::kAllUsers ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;
+}
+
+}  // namespace
+
+void WindowsBackend::writeInstallDirectories(const std::wstring& displayName,
+                                             const std::vector<std::wstring>& dirs,
+                                             InstallScope scope) {
+  if (displayName.empty()) return;
+  regSetMultiString(rootOf(scope), uninstallKeyOf(displayName), kInstallDirsValue, dirs);
+}
+
+std::vector<std::wstring> WindowsBackend::readInstallDirectories(const std::wstring& displayName,
+                                                                 InstallScope scope) {
+  if (displayName.empty()) return {};
+  return regGetMultiString(rootOf(scope), uninstallKeyOf(displayName), kInstallDirsValue);
+}
+
+void WindowsBackend::queryInstalled(const std::wstring& displayName, InstallScope scope,
+                                    bool& found, std::wstring& installDir,
+                                    InstallScope& installedScope) {
+  found = false;
+  installDir.clear();
+  installedScope = scope;
+  if (displayName.empty()) return;
+
+  // 先查请求的范围，再查另一边。两边都装了（先装所有用户又装当前用户）
+  // 时优先报请求的那一边，安装器据此复用它自己的位置。
+  const InstallScope order[2] = {scope, scope == InstallScope::kAllUsers
+                                            ? InstallScope::kCurrentUser
+                                            : InstallScope::kAllUsers};
+  for (const InstallScope candidate : order) {
+    const HKEY root = rootOf(candidate);
+    const std::wstring key = uninstallKeyOf(displayName);
+    // InstallLocation 是判断「装过没」的依据：只有安装器写它，
+    // 手工往这里塞一个同名项不会误判成我们的安装。
+    const std::wstring location = regGetString(root, key, L"InstallLocation");
+    if (location.empty()) continue;
+    // 目录已经不在了就不算装过：用户可能手工删了目录，直接重装即可
+    if (!isDirectory(location)) continue;
+
+    found = true;
+    installDir = location;
+    installedScope = candidate;
+    return;
+  }
 }
 
 std::wstring WindowsBackend::copySelfTo(const std::wstring& destPath) {

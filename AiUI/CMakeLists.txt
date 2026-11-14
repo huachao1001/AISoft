@@ -65,6 +65,7 @@ if(WIN32)
     src/os/windows/platform_windows.cpp
     src/os/windows/shell_menu_register.cpp
     src/os/windows/install_windows.cpp
+    src/os/windows/exe_icon_windows.cpp
   )
 elseif(APPLE)
   message(FATAL_ERROR "AiUI 的 macOS 后端尚未实现（src/os/macos/macos_backend.h）")

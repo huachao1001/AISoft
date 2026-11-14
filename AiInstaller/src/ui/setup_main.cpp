@@ -97,16 +97,24 @@ int AiUI::runApp() {
   {
     AiInstaller::ui::SetupActivity activity;
 
-    // 卸载时不能指望包里还有清单：装进目录的那份副本被裁掉了载荷，
-    // 它回答不了「当初装了什么」。清单另存在 installer.manifest 里。
+    // 卸载时清单就在自己末尾：装进目录的 uninstall.exe 是一个载荷为空的
+    // 合法安装包，openSelf() 读到的就是当初装了什么。不再需要旁边放
+    // installer.manifest 这种用户看不懂的记录文件。
     AiInstaller::Manifest installManifest;
     std::wstring manifestError;
     bool haveManifest = false;
     if (uninstall) {
-      haveManifest = AiInstaller::loadManifestFile(
-          AiInstaller::detail::joinPath(selfDirectory(),
-                                        AiInstaller::Package::manifestFileName()),
-          installManifest, manifestError);
+      if (packaged) {
+        installManifest = package.manifest();
+        haveManifest = true;
+      } else {
+        // 旧版本装的：只有 installer.manifest 能说明当初装了什么，
+        // 没它就不知道要删哪些文件。
+        haveManifest = AiInstaller::loadManifestFile(
+            AiInstaller::detail::joinPath(selfDirectory(),
+                                          AiInstaller::Package::manifestFileName()),
+            installManifest, manifestError);
+      }
     }
 
     if (uninstall && haveManifest) {

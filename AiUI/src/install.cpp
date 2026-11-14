@@ -83,6 +83,24 @@ std::wstring unregisterUninstallEntry(const std::wstring& displayName, InstallSc
   return platform()->unregisterUninstallEntry(displayName, scope);
 }
 
+void writeInstallDirectories(const std::wstring& displayName,
+                             const std::vector<std::wstring>& dirs, InstallScope scope) {
+  platform()->writeInstallDirectories(displayName, dirs, scope);
+}
+
+std::vector<std::wstring> readInstallDirectories(const std::wstring& displayName,
+                                                 InstallScope scope) {
+  return platform()->readInstallDirectories(displayName, scope);
+}
+
+std::wstring setExecutableSystemIcon(const std::wstring& exePath, SystemIcon icon) {
+  return platform()->setExecutableSystemIcon(exePath, icon);
+}
+void queryInstalled(const std::wstring& displayName, InstallScope scope, bool& found,
+                    std::wstring& installDir, InstallScope& installedScope) {
+  platform()->queryInstalled(displayName, scope, found, installDir, installedScope);
+}
+
 std::wstring copySelfTo(const std::wstring& destPath) { return platform()->copySelfTo(destPath); }
 
 bool launchDetached(const std::wstring& exePath, const std::wstring& arguments,

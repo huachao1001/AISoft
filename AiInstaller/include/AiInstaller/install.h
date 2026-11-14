@@ -90,13 +90,25 @@ bool isConfigurationReady(const std::wstring& installDir, const std::wstring& ho
 // 由完成页的复选框决定。命令相对安装目录解析，脱离式启动。
 void runAfterInstall(const std::wstring& installDir, const std::wstring& command);
 
-// ── 范围记录 ──
+// ── 安装状态查询 ──
 
-// 读回某次安装记录的范围。记录缺失或损坏时返回 fallback。
+// 读回某次安装用的范围。先看卸载项登记在 HKLM 还是 HKCU，再看旧版本留下的
+// installer.scope。两处都没有时返回 fallback。
 //
 // 卸载必须用它而不是「当前是否提权」：卸载器的清单带 requireAdministrator，
 // 它几乎总是提权状态，靠这个推断会永远清错根键。
-Scope readInstalledScope(const std::wstring& installDir, Scope fallback);
+Scope readInstalledScope(const std::wstring& displayName, const std::wstring& installDir,
+                         Scope fallback);
+
+// 这个应用装过没。已装则带出当初的目录与范围，供安装页锁定位置、
+// 提示升级而不是再装一份。
+struct InstalledInfo {
+  bool found = false;
+  std::wstring dir;
+  Scope scope = Scope::kAllUsers;
+};
+
+InstalledInfo queryInstalled(const std::wstring& displayName, Scope preferred);
 
 // ── 提权 ──
 

@@ -143,6 +143,42 @@ void SetupActivity::onCreate() {
   // 提权重试时目录由命令行带来，不能被默认值覆盖，所以这里只刷提示、不重算目录
   applyScope(manifest_.showScope ? Scope::kAllUsers : Scope::kCurrentUser, !autoInstall_);
 
+  // 已经装过就别再让人挑第二个位置。
+  //
+  // 同一个应用装两份会互相覆盖注册表项与快捷方式，卸载其中一份就把另一份的
+  // 菜单也摘了，用户看到的是「装好的程序不见了」。所以这里不是再问一遍
+  // 「装哪里」，而是直接指着原位置做覆盖升级。
+  if (!autoUninstall_) {
+    const InstalledInfo installed = queryInstalled(app_.displayName, selectedScope());
+    if (installed.found) {
+      // 范围也要回到登记它的那个根键：装成 HKCU 却按 HKLM 再装一遍，
+      // 两边各留一条卸载项，卸载只清一边，另一条就永远留着。
+      // 先切范围再填目录：切范围会触发 onChange 重算默认目录。
+      if (scopeGroup_) scopeGroup_->setCheckedIndex(installed.scope == Scope::kAllUsers ? 1 : 0);
+
+      if (autoInstall_) {
+        // 静默安装与提权重试都没有「用户当场改主意」这回事：既然装过，
+        // 目录与范围都回到原处，否则会变成「文件写到旧目录、卸载项登记到
+        // 另一个根键」，卸载时只清一边。
+        autoScope_ = installed.scope;
+        autoDir_ = installed.dir;
+      } else {
+        if (dirBox_) {
+          dirBox_->setText(installed.dir);
+          dirBox_->setEnabled(false);
+        }
+        if (auto* browseButton = findView<AiUI::Button>("btnBrowse")) {
+          browseButton->setEnabled(false);
+        }
+        if (scopeGroup_) scopeGroup_->setEnabled(false);
+        if (hint_) {
+          hint_->setText(L"检测到已经安装，点「安装」将覆盖升级到原目录。");
+          hint_->show(true);
+        }
+      }
+    }
+  }
+
   if (auto* browseButton = findView<AiUI::Button>("btnBrowse")) {
     browseButton->setOnClick([this] { browse(); });
   }
@@ -412,11 +448,12 @@ void SetupActivity::runUninstall() {
   RemovePlan plan;
   plan.request.app = app_;
   plan.request.targetDir = uninstallDir_;
-  // 范围以安装时记录在目录里的为准。不能靠「当前是否提权」猜：
+  // 范围以卸载项登记在哪个根键为准。不能靠「当前是否提权」猜：
   // 卸载器带 requireAdministrator，几乎总是提权状态。
-  plan.request.scope = readInstalledScope(uninstallDir_, Scope::kAllUsers);
+  plan.request.scope =
+      readInstalledScope(app_.displayName, uninstallDir_, Scope::kAllUsers);
 
-  // 删哪些文件以清单为准：装好的 exe 已被裁掉载荷，回答不了这个问题。
+  // 删哪些文件以清单为准：卸载副本自己末尾带着清单。
   // 只列真正装到磁盘的那些，品牌素材本来就不在用户目录里。
   for (const auto& file : manifest_.files) {
     if (file.install) plan.files.push_back(file.path);

@@ -290,6 +290,15 @@ std::unique_ptr<FileStream> WindowsBackend::openFileStream(const std::wstring& p
   return std::make_unique<WinFileStream>(handle);
 }
 
+std::unique_ptr<FileStream> WindowsBackend::openFileStreamForUpdate(const std::wstring& path) {
+  // GENERIC_WRITE 也能读，但显式带上 GENERIC_READ 更清楚：调用方要读回原内容
+  // 定位「正文末尾」再追加。OPEN_EXISTING 保证不清空。
+  HANDLE handle = ::CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+                                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (handle == INVALID_HANDLE_VALUE) return nullptr;
+  return std::make_unique<WinFileStream>(handle);
+}
+
 bool WindowsBackend::moveFile(const std::wstring& from, const std::wstring& to) {
   return ::MoveFileW(from.c_str(), to.c_str()) != FALSE;
 }

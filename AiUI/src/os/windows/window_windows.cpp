@@ -1003,6 +1003,9 @@ class WindowsPlatform : public Platform {
   std::unique_ptr<FileStream> openFileStream(const std::wstring& path, bool openWrite) override {
     return os::backend().openFileStream(path, openWrite);
   }
+  std::unique_ptr<FileStream> openFileStreamForUpdate(const std::wstring& path) override {
+    return os::backend().openFileStreamForUpdate(path);
+  }
   bool moveFile(const std::wstring& from, const std::wstring& to) override {
     return os::backend().moveFile(from, to);
   }
@@ -1112,6 +1115,19 @@ class WindowsPlatform : public Platform {
                                         InstallScope scope) override {
     return os::backend().unregisterUninstallEntry(displayName, scope);
   }
+  void writeInstallDirectories(const std::wstring& displayName,
+                               const std::vector<std::wstring>& dirs,
+                               InstallScope scope) override {
+    os::backend().writeInstallDirectories(displayName, dirs, scope);
+  }
+  std::vector<std::wstring> readInstallDirectories(const std::wstring& displayName,
+                                                   InstallScope scope) override {
+    return os::backend().readInstallDirectories(displayName, scope);
+  }
+  void queryInstalled(const std::wstring& displayName, InstallScope scope, bool& found,
+                      std::wstring& installDir, InstallScope& installedScope) override {
+    os::backend().queryInstalled(displayName, scope, found, installDir, installedScope);
+  }
   std::wstring copySelfTo(const std::wstring& destPath) override {
     return os::backend().copySelfTo(destPath);
   }
@@ -1121,6 +1137,9 @@ class WindowsPlatform : public Platform {
   }
   bool deleteFileOnReboot(const std::wstring& path) override {
     return os::backend().deleteFileOnReboot(path);
+  }
+  std::wstring setExecutableSystemIcon(const std::wstring& exePath, SystemIcon icon) override {
+    return os::backend().setExecutableSystemIcon(exePath, icon);
   }
   std::wstring installSingleResource(int resourceId, const std::wstring& targetPath) override {
     return os::backend().installSingleResource(resourceId, targetPath);

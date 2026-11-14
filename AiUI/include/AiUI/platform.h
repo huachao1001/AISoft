@@ -466,6 +466,15 @@ class Platform {
     (void)openWrite;
     return nullptr;
   }
+  // 以读写方式打开已有文件，不清空内容；文件不存在时失败。
+  //
+  // 和 openFileStream(path, true) 的区别：那个是「新建/覆盖」，一打开就把内容
+  // 清空。给已存在的文件改末尾（比如给卸载程序副本追加清单）必须用这个，
+  // 否则读到一半文件就空了。
+  virtual std::unique_ptr<FileStream> openFileStreamForUpdate(const std::wstring& path) {
+    (void)path;
+    return nullptr;
+  }
   // 移走或改名；目标已存在时失败
   virtual bool moveFile(const std::wstring& from, const std::wstring& to) {
     (void)from;
@@ -646,6 +655,29 @@ class Platform {
     (void)scope;
     return L"当前平台不支持";
   }
+  // 安装时新建的目录层级：记在卸载项里，卸载时据此收回空壳父目录
+  virtual void writeInstallDirectories(const std::wstring& displayName,
+                                       const std::vector<std::wstring>& dirs,
+                                       InstallScope scope) {
+    (void)displayName;
+    (void)dirs;
+    (void)scope;
+  }
+  virtual std::vector<std::wstring> readInstallDirectories(const std::wstring& displayName,
+                                                           InstallScope scope) {
+    (void)displayName;
+    (void)scope;
+    return {};
+  }
+  // 是否已经装过；默认当作没装
+  virtual void queryInstalled(const std::wstring& displayName, InstallScope scope, bool& found,
+                              std::wstring& installDir, InstallScope& installedScope) {
+    (void)displayName;
+    (void)scope;
+    found = false;
+    installDir.clear();
+    installedScope = scope;
+  }
   virtual std::wstring copySelfTo(const std::wstring& destPath) {
     (void)destPath;
     return L"当前平台不支持";
@@ -660,6 +692,12 @@ class Platform {
   virtual bool deleteFileOnReboot(const std::wstring& path) {
     (void)path;
     return false;
+  }
+  // 改写 exe 图标：默认不支持
+  virtual std::wstring setExecutableSystemIcon(const std::wstring& exePath, SystemIcon icon) {
+    (void)exePath;
+    (void)icon;
+    return L"当前平台不支持";
   }
   virtual std::wstring installSingleResource(int resourceId, const std::wstring& targetPath) {
     (void)resourceId;

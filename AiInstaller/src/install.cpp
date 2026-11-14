@@ -18,17 +18,14 @@
 namespace AiInstaller {
 namespace {
 
-// 安装范围记录文件。卸载时必须知道当初装在哪个范围，否则会去清另一个根键：
-// 装成 HKCU 却按 HKLM 清，用户看到的是「卸载了但菜单还在」。
+// 三个旧版本遗留的记录文件。
 //
-// 不能靠「当前进程是否提权」推断——卸载器的清单里带 requireAdministrator，
-// 它几乎总是提权状态，那样永远会猜成「所有用户」。
-constexpr const wchar_t* kScopeMarkerName = L"installer.scope";
-
-// 安装时新建的目录层级。卸载要把它们收回，否则会留下空壳
-// （如 %USERPROFILE%\Programs\AISoft）。只写「确实由安装器创建」的那几级，
-// 已存在的目录（Program Files、Users 之类）根本不会进这个文件。
-constexpr const wchar_t* kCreatedDirsName = L"installer.dirs";
+// 早期版本把范围、文件表、目录层级写在安装目录里的这三个文件里。现在这些
+// 信息分别改存「卸载项所在根键」与卸载项的注册表值，安装目录只剩应用自己的
+// 东西。三个名字保留，仅供卸载时清理旧安装留下的残余：老版本装的用户升级后
+// 不该在目录里看到它们。
+constexpr const wchar_t* kLegacyScopeName = L"installer.scope";
+constexpr const wchar_t* kLegacyDirsName = L"installer.dirs";
 
 AiUI::InstallScope toAiScope(Scope scope) {
   return scope == Scope::kAllUsers ? AiUI::InstallScope::kAllUsers
@@ -82,18 +79,14 @@ void removeEmptyDir(const std::wstring& dir) {
   AiUI::platform()->removeDirectoryIfEmpty(dir);
 }
 
-// 记下本次安装用的范围，供卸载时读回。
-void writeScopeMarker(const std::wstring& installDir, Scope scope) {
-  const std::string value = scope == Scope::kAllUsers ? "all-users" : "current-user";
-  AiUI::platform()->writeFile(detail::joinPath(installDir, kScopeMarkerName), value);
-}
-
-// 读回记录的目录层级。记录缺失（升级前装的旧版本）时返回空。
-std::vector<std::wstring> readCreatedDirs(const std::wstring& installDir) {
+// 读旧版本留下的 installer.dirs 记录。只用于升级场景：老版本把这个文件
+// 写在安装目录里，新版本装到同一目录时得把旧记录接过来，否则卸载后
+// 父目录会空留着。
+std::vector<std::wstring> readLegacyCreatedDirs(const std::wstring& installDir) {
   std::vector<std::wstring> dirs;
   if (installDir.empty()) return dirs;
 
-  const std::wstring path = detail::joinPath(installDir, kCreatedDirsName);
+  const std::wstring path = detail::joinPath(installDir, kLegacyDirsName);
   if (!AiUI::platform()->pathExists(path)) return dirs;
 
   // 目录层级不会多，64 KB 上限足够；读不到就当没有记录
@@ -113,13 +106,39 @@ std::vector<std::wstring> readCreatedDirs(const std::wstring& installDir) {
   return dirs;
 }
 
-// 记下本次安装新建的目录层级（外层在前），一行一个。
+// 读回「安装时新建的目录层级」。
+//
+// 记录存在卸载项的注册表值里，安装目录因此只有应用自己的东西。旧版本装在
+// 文件里，两处都读并按路径去重：升级安装会把旧记录并入新记录。
+std::vector<std::wstring> readCreatedDirs(const std::wstring& displayName,
+                                         const std::wstring& installDir, Scope scope) {
+  std::vector<std::wstring> dirs =
+      AiUI::readInstallDirectories(displayName, toAiScope(scope));
+  for (const auto& legacy : readLegacyCreatedDirs(installDir)) {
+    bool known = false;
+    for (const auto& existing : dirs) {
+      if (AiUI::platform()->equalsPath(existing, legacy)) {
+        known = true;
+        break;
+      }
+    }
+    if (!known) dirs.push_back(legacy);
+  }
+  return dirs;
+}
+
+// 记下本次安装新建的目录层级。
 //
 // 与已有记录合并而不是覆盖：升级安装时目录都是上一轮建的，这一轮的
 // missingDirectories() 会是空表；直接覆盖就把「这些目录由安装器创建」
 // 这件事抹掉了，卸载后父目录又会空留着。
-void writeCreatedDirs(const std::wstring& installDir, const std::vector<std::wstring>& dirs) {
-  std::vector<std::wstring> merged = readCreatedDirs(installDir);
+//
+// 必须在写卸载项之后调用：记录就存在卸载项里，键不存在时 RegCreateKeyEx
+// 会新建一个只有这一个值、没有 DisplayName 的残项，「应用与功能」里就会
+// 出现一条空名字目。调用顺序见 runInstall()。
+void writeCreatedDirs(const std::wstring& displayName, const std::wstring& installDir,
+                      const std::vector<std::wstring>& dirs, Scope scope) {
+  std::vector<std::wstring> merged = readCreatedDirs(displayName, installDir, scope);
   for (const auto& dir : dirs) {
     if (dir.empty()) continue;
     bool known = false;
@@ -132,13 +151,7 @@ void writeCreatedDirs(const std::wstring& installDir, const std::vector<std::wst
     if (!known) merged.push_back(dir);
   }
 
-  std::wstring text;
-  for (const auto& dir : merged) {
-    text += dir;
-    text += L"\r\n";
-  }
-  AiUI::platform()->writeFile(detail::joinPath(installDir, kCreatedDirsName),
-                              AiUI::platform()->toUtf8(text));
+  AiUI::writeInstallDirectories(displayName, merged, toAiScope(scope));
 }
 
 // 收尾脚本的路径。
@@ -334,9 +347,25 @@ void runAfterInstall(const std::wstring& installDir, const std::wstring& command
   AiUI::launchDetached(exe, args, installDir);
 }
 
-Scope readInstalledScope(const std::wstring& installDir, Scope fallback) {
+Scope readInstalledScope(const std::wstring& displayName, const std::wstring& installDir,
+                         Scope fallback) {
+  // 先查卸载项：卸载项写在 HKLM 还是 HKCU 就代表当初装的范围，不需要另存标记。
+  // 两边都查，因为调用方传进来的 fallback 可能正好猜错那一边。
+  if (!displayName.empty()) {
+    bool found = false;
+    std::wstring installedDir;
+    AiUI::InstallScope installedScope = AiUI::InstallScope::kCurrentUser;
+    AiUI::queryInstalled(displayName, toAiScope(fallback), found, installedDir, installedScope);
+    if (found) {
+      return installedScope == AiUI::InstallScope::kAllUsers ? Scope::kAllUsers
+                                                            : Scope::kCurrentUser;
+    }
+  }
+
+  // 旧版本装的：读 installer.scope。升级前装的用户只有这个文件能说明范围，
+  // 不看它就会去清另一个根键，用户看到「卸载了但菜单还在」。
   if (installDir.empty()) return fallback;
-  const std::wstring path = detail::joinPath(installDir, kScopeMarkerName);
+  const std::wstring path = detail::joinPath(installDir, kLegacyScopeName);
   if (!AiUI::platform()->pathExists(path)) return fallback;
 
   // 值不认识时退回 fallback：最保守的选择是不会因为猜错而失败的那边。
@@ -348,6 +377,22 @@ Scope readInstalledScope(const std::wstring& installDir, Scope fallback) {
 
 bool needsElevation(Scope scope) {
   return scope == Scope::kAllUsers && !AiUI::isRunningElevated();
+}
+
+InstalledInfo queryInstalled(const std::wstring& displayName, Scope preferred) {
+  InstalledInfo info;
+  if (displayName.empty()) return info;
+
+  bool found = false;
+  std::wstring dir;
+  AiUI::InstallScope scope = AiUI::InstallScope::kCurrentUser;
+  AiUI::queryInstalled(displayName, toAiScope(preferred), found, dir, scope);
+  if (!found) return info;
+
+  info.found = true;
+  info.dir = std::move(dir);
+  info.scope = scope == AiUI::InstallScope::kAllUsers ? Scope::kAllUsers : Scope::kCurrentUser;
+  return info;
 }
 
 std::wstring buildElevatedArgs(const InstallRequest& request) {
@@ -449,21 +494,32 @@ std::wstring runInstall(const InstallPlan& plan) {
   }
 
   // 2. 安装器自身：卸载入口指向安装目录里的 uninstall.exe。它必须是
-  //    安装器本体的副本——只有它知道怎么按 installer.manifest 反向拆包。
-  //    名字固定成 uninstall.exe，用户看到的是「卸载」而不是「安装」。
+  //    安装器本体的副本——只有它知道怎么反向拆包。名字固定成
+  //    uninstall.exe，用户看到的是「卸载」而不是「安装」。
   const wchar_t* kDeployUninstaller = L"正在部署卸载程序...";
   progress.report(kDeployUninstaller);
   const std::wstring uninstaller =
       detail::joinPath(request.targetDir, Package::uninstallFileName());
   const std::wstring copyError = package.copyInstallerTo(uninstaller);
   if (!copyError.empty()) return copyError;
-  progress.step(kDeployUninstaller);
 
-  // 清单也留一份：卸载时从它读回文件表与配置模块名。
-  // 装好的 exe 已经被裁掉了载荷，不能再靠它自己回答「当初装了什么」。
-  AiUI::platform()->writeFile(
-      detail::joinPath(request.targetDir, Package::manifestFileName()),
-      AiUI::platform()->toUtf8(package.manifestText()));
+  // 卸载程序用系统的回收站图标，不用安装器的品牌图标：它在「应用与功能」
+  // 里是个条目，回收站的样子让人一眼知道那是「卸载」而不是「打开」。
+  //
+  // 必须赶在写清单之前：改资源会重排 PE 映像，已经追加到末尾的数据会丢。
+  const std::wstring iconError =
+      AiUI::setExecutableSystemIcon(uninstaller, AiUI::SystemIcon::kRecycleBin);
+  // 图标只是外观，取不到不算失败：某些精简系统里 shell 图标服务不可用，
+  // 那时留着安装器原图标也比装不上强。
+  (void)iconError;
+
+  // 清单写进卸载程序自己末尾，而不是旁边放一个 installer.manifest：
+  // 安装目录里不该出现用户看不懂的记录文件，而且卸载程序本来就该能回答
+  // 「当初装了什么」。写入后它就是一个载荷为空的安装包，走同一套读取路径。
+  const std::wstring embedError =
+      package.embedManifest(uninstaller, package.manifestText());
+  if (!embedError.empty()) return embedError;
+  progress.step(kDeployUninstaller);
 
   // 3. 应用配置：右键菜单、文件关联等由标准 ABI 的配置模块完成。
   //    安装器不知道这些细节，只知道「装完了叫它一声」。
@@ -490,12 +546,6 @@ std::wstring runInstall(const InstallPlan& plan) {
     progress.step(stage.c_str());
   }
 
-  // 记下范围，卸载时据此清理正确的根键。必须在配置成功之后写：
-  // 安装失败时留下的标记会让下次卸载去清一个没写过的东西。
-  writeScopeMarker(request.targetDir, request.scope);
-  // 目录记录同样要在成功路径上写：失败时安装目录可能根本没用起来
-  writeCreatedDirs(request.targetDir, createdDirs);
-
   // 5. 快捷方式与卸载入口是安装器的通用职责
   const wchar_t* kShortcut = L"正在创建快捷方式...";
   progress.report(kShortcut);
@@ -510,6 +560,13 @@ std::wstring runInstall(const InstallPlan& plan) {
       request.app.displayName, request.app.version, request.app.publisher, request.targetDir,
       uninstaller, L"--uninstall", scope);
   if (!uninstallError.empty()) return uninstallError;
+
+  // 目录记录写在卸载项里面，所以必须在登记之后：键还没建时写会留下一个
+  // 只有 InstallCreatedDirs、没有 DisplayName 的残项，「应用与功能」里
+  // 就会多出一条空名字目。
+  //
+  // 记录只在成功路径上写：失败时安装目录可能根本没用起来。
+  writeCreatedDirs(request.app.displayName, request.targetDir, createdDirs, request.scope);
   progress.step(kUninstallEntry);
 
   // 注意：[run] afterInstall 不在这里执行。装完立刻弹出程序会打断用户，
@@ -522,9 +579,10 @@ std::wstring runInstall(const InstallPlan& plan) {
 std::wstring runRemove(const RemovePlan& plan) {
   const InstallRequest& request = plan.request;
 
-  // 范围以安装时记录的为准。请求里带的 scope 只是「记录缺失时的兜底」，
+  // 范围以安装时登记的卸载项为准。请求里带的 scope 只是「查不到时的兜底」，
   // 因为它多半来自「当前是否提权」这类猜测。
-  const Scope scopeValue = readInstalledScope(request.targetDir, request.scope);
+  const Scope scopeValue =
+      readInstalledScope(request.app.displayName, request.targetDir, request.scope);
   const AiUI::InstallScope scope = toAiScope(scopeValue);
 
   // 卸载也按步推进：撤销配置、删文件、清目录各占一段。
@@ -541,22 +599,27 @@ std::wstring runRemove(const RemovePlan& plan) {
     firstError = removeConfiguration(request.targetDir, hostExe, plan.configModule, scopeValue);
   }
 
-  // 2. 撤销安装器自己的登记
+  // 2. 目录记录要先读出来：它就在卸载项里，下一行撤销登记会把它一起删掉。
+  //    顺序反过来就永远读不到「安装时新建了哪几级」，父目录会一直空留着。
+  const std::vector<std::wstring> createdDirs =
+      readCreatedDirs(request.app.displayName, request.targetDir, scopeValue);
+
+  // 3. 撤销安装器自己的登记
   AiUI::removeShortcuts(request.app.displayName, scope);
   AiUI::unregisterUninstallEntry(request.app.displayName, scope);
   progress.step(L"正在撤销系统集成...");
 
-  // 3. 删文件
+  // 4. 删文件
   progress.report(L"正在删除文件...");
-  // 目录记录要先读出来：等会儿它自己也要被删掉
-  const std::vector<std::wstring> createdDirs = readCreatedDirs(request.targetDir);
   for (const auto& relative : plan.files) removeFile(request.targetDir, relative);
-  // 卸载程序自身与几个内部记录文件都不在清单里，一并删掉。
-  // 卸载程序就是当前正在运行的进程，删不掉的部分交给收尾进程。
+  // 卸载程序自身不在清单里，单独删；它就是当前正在运行的进程，
+  // 删不掉的部分交给收尾脚本。
   removeFile(request.targetDir, Package::uninstallFileName());
-  removeFile(request.targetDir, kScopeMarkerName);
+  // 旧版本把范围、清单、目录层级放在这三个文件里。这里只是顺手清掉升级前
+  // 的残余：新装的目录里不会再有它们。
+  removeFile(request.targetDir, kLegacyScopeName);
+  removeFile(request.targetDir, kLegacyDirsName);
   removeFile(request.targetDir, Package::manifestFileName());
-  removeFile(request.targetDir, kCreatedDirsName);
   progress.step(L"正在删除文件...");
 
   // 4. 删空目录。带子目录的文件（如 config\x.dll）删完会留下空目录，

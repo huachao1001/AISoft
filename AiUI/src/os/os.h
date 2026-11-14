@@ -44,6 +44,8 @@ class Backend {
   virtual bool deleteFile(const std::wstring& path) = 0;
   virtual bool moveToTrash(const std::wstring& path) = 0;
   virtual std::unique_ptr<FileStream> openFileStream(const std::wstring& path, bool openWrite) = 0;
+  // 读写打开已有文件，不清空；不存在时失败
+  virtual std::unique_ptr<FileStream> openFileStreamForUpdate(const std::wstring& path) = 0;
   virtual bool moveFile(const std::wstring& from, const std::wstring& to) = 0;
   virtual std::wstring absolutePath(const std::wstring& path) = 0;
   virtual std::wstring tempDir() = 0;
@@ -131,11 +133,30 @@ class Backend {
                                               InstallScope scope) = 0;
   virtual std::wstring unregisterUninstallEntry(const std::wstring& displayName,
                                                 InstallScope scope) = 0;
+  // 记下安装时新建的目录层级（卸载时收回空壳父目录用）。
+  // 存在卸载项里而不是安装目录的文件里：安装目录该只有应用自己的东西，
+  // 记录文件既碍眼又会被用户误删。
+  virtual void writeInstallDirectories(const std::wstring& displayName,
+                                       const std::vector<std::wstring>& dirs,
+                                       InstallScope scope) = 0;
+  // 读回上面记的目录层级；没有记录（旧版本装的）返回空表
+  virtual std::vector<std::wstring> readInstallDirectories(const std::wstring& displayName,
+                                                           InstallScope scope) = 0;
+  // 查询是否已经装过。found 为 false 时其余字段无意义。
+  // 先查请求的范围，再查另一个范围：用户可能上次装成「所有用户」，
+  // 这次默认「仅当前用户」，只看一边会漏掉已存在的安装。
+  virtual void queryInstalled(const std::wstring& displayName, InstallScope scope,
+                             bool& found, std::wstring& installDir,
+                             InstallScope& installedScope) = 0;
   // 卸载收尾：复制自身、脱离式启动、下次开机删除
   virtual std::wstring copySelfTo(const std::wstring& destPath) = 0;
   virtual bool launchDetached(const std::wstring& exePath, const std::wstring& arguments,
                               const std::wstring& workDir) = 0;
   virtual bool deleteFileOnReboot(const std::wstring& path) = 0;
+  // 改写 exe 的图标资源（卸载程序用系统回收站图标）。
+  // 必须在追加数据之前调用：更新资源会重排 PE 映像，已追加的尾巴会丢。
+  virtual std::wstring setExecutableSystemIcon(const std::wstring& exePath,
+                                               SystemIcon icon) = 0;
 
   // ── 清单式落盘 ──
   // 把单个内嵌资源写到完整路径（允许带子目录）

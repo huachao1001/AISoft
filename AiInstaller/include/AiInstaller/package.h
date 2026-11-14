@@ -58,6 +58,14 @@ class Package {
   // 不需要再从 exe 里读。复制出去的那份就是安装目录里的卸载程序。
   std::wstring copyInstallerTo(const std::wstring& targetPath) const;
 
+  // 把清单写进一个已经复制好的安装器副本末尾（载荷为空）。
+  //
+  // 为什么写进 exe 自己而不是旁边放个 installer.manifest：卸载程序就是
+  // 这个 exe，它得能回答「当初装了什么」。旁边放文件意味着安装目录里有
+  // 一份用户看不懂的记录，还可能被误删。写进自己末尾后，卸载程序打开
+  // 自身即可拿到清单——和安装包是同一套格式，读取代码不必分叉。
+  std::wstring embedManifest(const std::wstring& exePath, const std::wstring& manifestText) const;
+
   // 包内清单的原始文本（写进安装目录的清单文件，供卸载时读回）
   const std::wstring& manifestText() const { return manifestText_; }
 
@@ -69,7 +77,11 @@ class Package {
   // 叫「卸载」比叫「安装」符合用户预期。
   static const wchar_t* uninstallFileName() { return L"uninstall.exe"; }
 
-  // 安装目录里记录清单的文件名
+  // 旧版本记录清单的文件名。
+  //
+  // 现在清单直接追加在卸载程序自己末尾，安装目录不再有记录文件。这个名字
+  // 只为升级场景保留：卸载时顺手清掉老版本留下的这个文件。读取仍保留一条
+  // 回退路径，否则升级前装的用户会卸载不掉。
   static const wchar_t* manifestFileName() { return L"installer.manifest"; }
 
  private:
@@ -83,7 +95,11 @@ class Package {
   uint64_t payloadSize_ = 0;
 };
 
-// 从文件读清单（卸载时用：安装目录里的 installer.manifest）
+// 从文件读清单。
+//
+// 现在卸载从 `uninstall.exe` 自带的清单读，不需要这个函数。保留它只为升级
+// 场景：老版本把清单写在安装目录的 installer.manifest 里，升级前装的用户
+// 只有那份文件能说明当初装了什么。
 bool loadManifestFile(const std::wstring& path, Manifest& out, std::wstring& error);
 
 }  // namespace AiInstaller
