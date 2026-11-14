@@ -17,10 +17,19 @@
 # 都由本函数按平台分支，应用侧一行不用改。
 
 function(aiui_add_shell_menu_dll target)
-  cmake_parse_arguments(ARG "" "APP;APP_NAME;CLSID" "SOURCES" ${ARGN})
+  cmake_parse_arguments(ARG "" "APP;APP_NAME;CLSID;EMBED_INTO" "SOURCES" ${ARGN})
   if(NOT ARG_APP OR NOT ARG_APP_NAME OR NOT ARG_CLSID OR NOT ARG_SOURCES)
     message(FATAL_ERROR
       "aiui_add_shell_menu_dll 需要 APP / APP_NAME / CLSID / SOURCES")
+  endif()
+
+  # 组件默认内嵌在应用主程序里；EMBED_INTO 可以换成别的目标（例如应用的
+  # 配置 DLL），这样「注册系统集成」的代码与资源都落在同一个模块里，
+  # 安装器与主程序调同一份实现。
+  if(ARG_EMBED_INTO)
+    set(_embed_target "${ARG_EMBED_INTO}")
+  else()
+    set(_embed_target "${ARG_APP}")
   endif()
 
   set(_root "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/..")
@@ -91,11 +100,11 @@ function(aiui_add_shell_menu_dll target)
 AIUI_SHELL_MENU_RESOURCE_ID RCDATA AIUI_SHELL_MENU_DLL_PATH
 ")
   # .rc 的编码必须是 ASCII/本地代码页，上面的内容刻意不含中文
-  target_sources(${ARG_APP} PRIVATE "${_out}/aiui_shell_menu_embed.rc")
-  target_include_directories(${ARG_APP} PRIVATE "${_out}")
+  target_sources(${_embed_target} PRIVATE "${_out}/aiui_shell_menu_embed.rc")
+  target_include_directories(${_embed_target} PRIVATE "${_out}")
 
-  # 组件重建后必须重新打进宿主 exe，否则升级后释放的还是旧组件
+  # 组件重建后必须重新打进宿主，否则升级后释放的还是旧组件
   set_source_files_properties("${_out}/aiui_shell_menu_embed.rc" PROPERTIES
     OBJECT_DEPENDS "${_out}/${target}.dll")
-  add_dependencies(${ARG_APP} ${target})
+  add_dependencies(${_embed_target} ${target})
 endfunction()

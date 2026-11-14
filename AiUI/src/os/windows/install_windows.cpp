@@ -5,6 +5,7 @@
 // 组件是它的内嵌资源，安装器不该再维护一份同样的注册逻辑。
 #include "backend.h"
 #include "windows_backend.h"
+#include "registry_util.h"
 
 #include <shellapi.h>
 #include <shlobj.h>
@@ -42,7 +43,14 @@ bool ensureDir(const std::wstring& dir) {
 
 // 从自身资源取出一个 RCDATA 并整块写出
 bool writeResource(int resourceId, const std::wstring& path) {
-  HMODULE self = ::GetModuleHandleW(nullptr);
+  // 按「代码所在模块」找资源：安装器与配置修复 DLL 都可能调用安装文件落地，
+  // 各自的资源在自己的映像里，不能一律当成当前进程的主 exe。
+  HMODULE self = nullptr;
+  if (!::GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            reinterpret_cast<LPCWSTR>(&writeResource), &self)) {
+    return false;
+  }
   HRSRC res = ::FindResourceW(self, MAKEINTRESOURCEW(resourceId), RT_RCDATA);
   if (!res) return false;
 
@@ -71,9 +79,16 @@ std::wstring startMenuPrograms(InstallScope scope) {
 // 用 IShellLink 写一个 .lnk；工作目录设成程序目录，免得相对路径解析到别处
 bool createShellLink(const std::wstring& linkPath, const std::wstring& target,
                      const std::wstring& workDir, const std::wstring& description) {
+  // IShellLink 是 COM 对象：本模块可能是被一个尚未初始化 COM 的 dll 调用的，
+  // 不能假定调用方已经建好套间。这里自己配对初始化，失败（含
+  // RPC_E_CHANGED_MODE：线程已有套间）就沿用现有套间继续。
+  const HRESULT comInit = ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+  const bool ownCom = SUCCEEDED(comInit);
+
   IShellLinkW* link = nullptr;
   if (FAILED(::CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_IShellLinkW,
                                 reinterpret_cast<void**>(&link)))) {
+    if (ownCom) ::CoUninitialize();
     return false;
   }
 
@@ -88,6 +103,7 @@ bool createShellLink(const std::wstring& linkPath, const std::wstring& target,
     file->Release();
   }
   link->Release();
+  if (ownCom) ::CoUninitialize();
   return ok;
 }
 
@@ -175,9 +191,8 @@ std::wstring WindowsBackend::installFiles(const std::wstring& targetDir, const s
   for (const auto& file : files) {
     if (file.fileName.empty()) continue;
     const std::wstring path = targetDir + L"\\" + file.fileName;
-    if (!writeResource(file.resourceId, path)) {
-      return L"无法写出文件：" + path;
-    }
+    const std::wstring error = installSingleResource(file.resourceId, path);
+    if (!error.empty()) return error;
   }
   return {};
 }
@@ -243,6 +258,146 @@ int WindowsBackend::runAndWait(const std::wstring& exePath, const std::wstring& 
   ::CloseHandle(pi.hThread);
   ::CloseHandle(pi.hProcess);
   return static_cast<int>(code);
+}
+
+void* WindowsBackend::loadModule(const std::wstring& path) {
+  if (path.empty()) return nullptr;
+  // LOAD_WITH_ALTERED_SEARCH_PATH：模块可能在安装目录里，依赖同目录的其它
+  // 文件。默认按系统目录优先搜索会加载到别处的同名组件。
+  return ::LoadLibraryExW(path.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+}
+
+void* WindowsBackend::moduleSymbol(void* module, const char* name) {
+  if (!module || !name) return nullptr;
+  return reinterpret_cast<void*>(
+      ::GetProcAddress(static_cast<HMODULE>(module), name));
+}
+
+void WindowsBackend::unloadModule(void* module) {
+  if (module) ::FreeLibrary(static_cast<HMODULE>(module));
+}
+
+std::wstring WindowsBackend::registerUninstallEntry(const std::wstring& displayName,
+                                                    const std::wstring& displayVersion,
+                                                    const std::wstring& publisher,
+                                                    const std::wstring& installDir,
+                                                    const std::wstring& uninstallCommand,
+                                                    const std::wstring& uninstallArgs,
+                                                    InstallScope scope) {
+  if (displayName.empty() || uninstallCommand.empty()) return L"卸载项描述不完整";
+
+  const HKEY root = scope == InstallScope::kAllUsers ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;
+  // 卸载项放在 Uninstall 下；键名用显示名，保证同一程序只有一个入口
+  const std::wstring key = L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\" + displayName;
+
+  // 命令行拆成「可执行文件」与「参数」两个值，系统在「应用与功能」里
+  // 直接用它们拉起卸载程序。忽略的键会让条目变成无法点击的僵尸项，所以全部要写。
+  if (!regSetString(root, key, L"DisplayName", displayName)) return L"无法登记卸载项名称";
+  if (!displayVersion.empty() && !regSetString(root, key, L"DisplayVersion", displayVersion)) {
+    return L"无法登记卸载项版本";
+  }
+  if (!publisher.empty() && !regSetString(root, key, L"Publisher", publisher)) {
+    return L"无法登记卸载项发布者";
+  }
+  if (!installDir.empty() && !regSetString(root, key, L"InstallLocation", installDir)) {
+    return L"无法登记卸载项安装位置";
+  }
+  if (!regSetString(root, key, L"UninstallString",
+                    L"\"" + uninstallCommand + L"\" " + uninstallArgs)) {
+    return L"无法登记卸载命令";
+  }
+  // 有些系统工具只读 QuietUninstallString；没有静默卸载时留空不写
+  if (!regSetString(root, key, L"DisplayIcon", uninstallCommand + L",0")) {
+    return L"无法登记卸载项图标";
+  }
+  return {};
+}
+
+std::wstring WindowsBackend::unregisterUninstallEntry(const std::wstring& displayName,
+                                                      InstallScope scope) {
+  if (displayName.empty()) return {};
+  const HKEY root = scope == InstallScope::kAllUsers ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;
+  regDeleteTree(root, L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\" + displayName);
+  return {};
+}
+
+std::wstring WindowsBackend::copySelfTo(const std::wstring& destPath) {
+  if (destPath.empty()) return L"目标路径为空";
+  const std::wstring self = executablePath();
+  if (self.empty()) return L"无法取得自身路径";
+  if (::CopyFileW(self.c_str(), destPath.c_str(), FALSE) == 0) {
+    return L"无法复制到：" + destPath;
+  }
+  return {};
+}
+
+bool WindowsBackend::launchDetached(const std::wstring& exePath, const std::wstring& arguments,
+                                    const std::wstring& workDir) {
+  if (exePath.empty()) return false;
+
+  // CreateProcessW 的 lpApplicationName 必须是完整路径：它不查 PATH，
+  // 传裸名字（如 "cmd.exe"）会直接失败。调用方写裸名字是合理的期待，
+  // 所以在这里补一次解析。
+  std::wstring appPath = exePath;
+  if (appPath.find_first_of(L"\\/") == std::wstring::npos) {
+    wchar_t resolved[MAX_PATH] = {};
+    const DWORD len = ::SearchPathW(nullptr, appPath.c_str(), L".exe", MAX_PATH, resolved, nullptr);
+    if (len == 0 || len >= MAX_PATH) return false;
+    appPath = resolved;
+  }
+
+  std::wstring command = L'"' + appPath + L'"';
+  if (!arguments.empty()) {
+    command += L' ';
+    command += arguments;
+  }
+
+  STARTUPINFOW si = {};
+  si.cb = sizeof(si);
+  PROCESS_INFORMATION pi = {};
+  std::vector<wchar_t> buffer(command.begin(), command.end());
+  buffer.push_back(L'\0');
+
+  // 不继承句柄、不给控制台：卸载收尾进程要能活过调用方退出
+  const DWORD flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
+  const wchar_t* dir = workDir.empty() ? nullptr : workDir.c_str();
+  if (!::CreateProcessW(appPath.c_str(), buffer.data(), nullptr, nullptr, FALSE, flags, nullptr,
+                        dir, &si, &pi)) {
+    return false;
+  }
+  ::CloseHandle(pi.hThread);
+  ::CloseHandle(pi.hProcess);
+  return true;
+}
+
+bool WindowsBackend::deleteFileOnReboot(const std::wstring& path) {
+  if (path.empty()) return false;
+  // MOVEFILE_DELAY_UNTIL_REBOOT 要求管理员权限；失败时上层会放弃清理，
+  // 留下的文件不影响功能，比假装成功更好。
+  return ::MoveFileExW(path.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT) != 0;
+}
+
+std::wstring WindowsBackend::installSingleResource(int resourceId,
+                                                   const std::wstring& targetPath) {
+  if (targetPath.empty()) return L"目标路径为空";
+
+  // 允许清单里写带子目录的路径（如 config\x.dll），先把父目录建出来
+  const size_t slash = targetPath.find_last_of(L'\\');
+  if (slash != std::wstring::npos && slash > 2) {
+    const std::wstring parent = targetPath.substr(0, slash);
+    if (!ensureDir(parent)) return L"无法创建目录：" + parent;
+  }
+
+  if (!writeResource(resourceId, targetPath)) {
+    return L"无法写出文件：" + targetPath;
+  }
+  return {};
+}
+
+bool WindowsBackend::removeDirectoryIfEmpty(const std::wstring& dir) {
+  if (dir.empty()) return false;
+  // RemoveDirectory 只在目录为空时成功，正好是我们要的语义
+  return ::RemoveDirectoryW(dir.c_str()) != 0;
 }
 
 }  // namespace windows

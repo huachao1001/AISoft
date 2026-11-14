@@ -1093,7 +1093,41 @@ class WindowsPlatform : public Platform {
   int runAndWait(const std::wstring& exePath, const std::wstring& arguments) override {
     return os::backend().runAndWait(exePath, arguments);
   }
-
+  void* loadModule(const std::wstring& path) override { return os::backend().loadModule(path); }
+  void* moduleSymbol(void* module, const char* name) override {
+    return os::backend().moduleSymbol(module, name);
+  }
+  void unloadModule(void* module) override { os::backend().unloadModule(module); }
+  std::wstring registerUninstallEntry(const std::wstring& displayName,
+                                      const std::wstring& displayVersion,
+                                      const std::wstring& publisher,
+                                      const std::wstring& installDir,
+                                      const std::wstring& uninstallCommand,
+                                      const std::wstring& uninstallArgs,
+                                      InstallScope scope) override {
+    return os::backend().registerUninstallEntry(displayName, displayVersion, publisher, installDir,
+                                                 uninstallCommand, uninstallArgs, scope);
+  }
+  std::wstring unregisterUninstallEntry(const std::wstring& displayName,
+                                        InstallScope scope) override {
+    return os::backend().unregisterUninstallEntry(displayName, scope);
+  }
+  std::wstring copySelfTo(const std::wstring& destPath) override {
+    return os::backend().copySelfTo(destPath);
+  }
+  bool launchDetached(const std::wstring& exePath, const std::wstring& arguments,
+                      const std::wstring& workDir) override {
+    return os::backend().launchDetached(exePath, arguments, workDir);
+  }
+  bool deleteFileOnReboot(const std::wstring& path) override {
+    return os::backend().deleteFileOnReboot(path);
+  }
+  std::wstring installSingleResource(int resourceId, const std::wstring& targetPath) override {
+    return os::backend().installSingleResource(resourceId, targetPath);
+  }
+  bool removeDirectoryIfEmpty(const std::wstring& dir) override {
+    return os::backend().removeDirectoryIfEmpty(dir);
+  }
   std::unique_ptr<PlatformTray> createTrayIcon(PlatformTrayHost& host) override {
     return os::backend().createTrayIcon(host);
   }

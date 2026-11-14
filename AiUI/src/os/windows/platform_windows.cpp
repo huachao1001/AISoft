@@ -475,6 +475,12 @@ std::wstring WindowsBackend::specialFolder(SpecialFolder folder) {
 
 std::vector<DriveInfo> WindowsBackend::listDrives() {
   std::vector<DriveInfo> out;
+  // 系统盘：Windows 目录所在盘。用系统目录反推，不写死 C——
+  // 有人把系统装在 D 盘，写死会把「系统盘」判错，进而装到真正该跳过的盘上。
+  wchar_t winDir[MAX_PATH] = {};
+  const wchar_t systemLetter =
+      (::GetWindowsDirectoryW(winDir, MAX_PATH) != 0 && winDir[0]) ? winDir[0] : L'C';
+
   const DWORD drives = ::GetLogicalDrives();
   for (int i = 0; i < 26; ++i) {
     if (!(drives & (1u << i))) continue;
@@ -490,6 +496,7 @@ std::vector<DriveInfo> WindowsBackend::listDrives() {
     DriveInfo info;
     info.path = root;
     info.removable = removable;
+    info.system = (static_cast<wchar_t>(L'A' + i) == systemLetter);
     wchar_t volume[MAX_PATH] = {};
     if (::GetVolumeInformationW(root.c_str(), volume, MAX_PATH, nullptr, nullptr, nullptr, nullptr,
                                 0) &&

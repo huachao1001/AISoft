@@ -117,6 +117,31 @@ class Backend {
                                        const std::wstring& displayName, InstallScope scope) = 0;
   virtual std::wstring removeShortcuts(const std::wstring& displayName, InstallScope scope) = 0;
   virtual int runAndWait(const std::wstring& exePath, const std::wstring& arguments) = 0;
+  // 动态加载模块（Windows DLL / macOS dylib / Linux .so）与取导出符号
+  virtual void* loadModule(const std::wstring& path) = 0;
+  virtual void* moduleSymbol(void* module, const char* name) = 0;
+  virtual void unloadModule(void* module) = 0;
+  // 系统「应用与功能」卸载入口
+  virtual std::wstring registerUninstallEntry(const std::wstring& displayName,
+                                              const std::wstring& displayVersion,
+                                              const std::wstring& publisher,
+                                              const std::wstring& installDir,
+                                              const std::wstring& uninstallCommand,
+                                              const std::wstring& uninstallArgs,
+                                              InstallScope scope) = 0;
+  virtual std::wstring unregisterUninstallEntry(const std::wstring& displayName,
+                                                InstallScope scope) = 0;
+  // 卸载收尾：复制自身、脱离式启动、下次开机删除
+  virtual std::wstring copySelfTo(const std::wstring& destPath) = 0;
+  virtual bool launchDetached(const std::wstring& exePath, const std::wstring& arguments,
+                              const std::wstring& workDir) = 0;
+  virtual bool deleteFileOnReboot(const std::wstring& path) = 0;
+
+  // ── 清单式落盘 ──
+  // 把单个内嵌资源写到完整路径（允许带子目录）
+  virtual std::wstring installSingleResource(int resourceId, const std::wstring& targetPath) = 0;
+  // 目录为空时删除
+  virtual bool removeDirectoryIfEmpty(const std::wstring& dir) = 0;
 
   // ── 托盘 ──
   virtual std::unique_ptr<PlatformTray> createTrayIcon(PlatformTrayHost& host) = 0;

@@ -7,6 +7,7 @@
 // 但分发时只该给一个 exe。首次运行时释放是唯一两全的做法。
 #include "backend.h"
 #include "windows_backend.h"
+#include "registry_util.h"
 
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -103,6 +104,34 @@ std::wstring placeComponent(const std::wstring& dir, const std::wstring& fileNam
   return path;
 }
 
+// 删掉本组件在 dir 里的全部版本（含当前指纹那份）。
+//
+// 只在注销时用：注册表已经不再指向它们，留着只会让安装目录永远删不掉。
+// 删不掉的（资源管理器仍持有）跳过，留给下次。
+//
+// 命名规则由 placeComponent 决定（stem_XXXXXXXX.ext），所以清理也放在这里：
+// 让调用方去猜「aizip_08D0F419.dll」这种名字，等于把内部约定散播出去。
+void removeAllComponentVersions(const std::wstring& dir, const std::wstring& componentName) {
+  if (dir.empty() || componentName.empty()) return;
+
+  const size_t dot = componentName.find_last_of(L'.');
+  if (dot == std::wstring::npos) return;
+  const std::wstring stem = componentName.substr(0, dot);
+  const std::wstring ext = componentName.substr(dot);
+
+  const std::wstring pattern = dir + L"\\" + stem + L"_*" + ext;
+  WIN32_FIND_DATAW data{};
+  HANDLE find = ::FindFirstFileW(pattern.c_str(), &data);
+  if (find == INVALID_HANDLE_VALUE) return;
+  do {
+    ::DeleteFileW((dir + L"\\" + data.cFileName).c_str());
+  } while (::FindNextFileW(find, &data));
+  ::FindClose(find);
+
+  // 不带指纹的那份（早年版本直接放 aizip.dll）也要清
+  ::DeleteFileW((dir + L"\\" + componentName).c_str());
+}
+
 // 清掉不属于本次注册的组件：旧命名的 aicmd_*.dll 与旧指纹的 aizip_*.dll。
 // 资源管理器可能还加载着它们，删不掉就跳过：注册表已经指向新文件，
 // 旧文件留着不影响功能，下次重装还能再试。
@@ -124,7 +153,15 @@ void removeLegacyComponents(const std::wstring& dir, const std::wstring& keepPat
 }
 
 bool readEmbedded(int resourceId, std::vector<BYTE>& out) {
-  HMODULE self = ::GetModuleHandleW(nullptr);
+  // 资源不一定是当前进程的主 exe 内嵌的：组件可以内嵌在别处（例如配置
+  // 修复用的 DLL），注册动作又是从那里发起的。所以按「代码所在模块」找，
+  // 谁编译进了这段实现，就读谁的内嵌资源。
+  HMODULE self = nullptr;
+  if (!::GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            reinterpret_cast<LPCWSTR>(&readEmbedded), &self)) {
+    return false;
+  }
   HRSRC res = ::FindResourceW(self, MAKEINTRESOURCEW(resourceId), RT_RCDATA);
   if (!res) return false;
 
@@ -166,25 +203,6 @@ HKEY classRoot(const ShellMenuHandler& handler) {
   return handler.scope == InstallScope::kAllUsers ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;
 }
 
-bool regSetString(HKEY root, const std::wstring& subKey, const wchar_t* name,
-                  const std::wstring& value) {
-  HKEY key = nullptr;
-  if (::RegCreateKeyExW(root, subKey.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, &key, nullptr) !=
-      ERROR_SUCCESS) {
-    return false;
-  }
-  const LONG r = ::RegSetValueExW(key, name, 0, REG_SZ,
-                                  reinterpret_cast<const BYTE*>(value.c_str()),
-                                  static_cast<DWORD>((value.size() + 1) * sizeof(wchar_t)));
-  ::RegCloseKey(key);
-  return r == ERROR_SUCCESS;
-}
-
-bool regDeleteTree(HKEY root, const std::wstring& subKey) {
-  const LONG r = ::RegDeleteTreeW(root, subKey.c_str());
-  return r == ERROR_SUCCESS || r == ERROR_FILE_NOT_FOUND || r == ERROR_PATH_NOT_FOUND;
-}
-
 // 删单个值；值不存在等同于已清理
 bool regDeleteValue(HKEY root, const std::wstring& subKey, const wchar_t* name) {
   HKEY key = nullptr;
@@ -210,19 +228,6 @@ bool hasUserChoice(const std::wstring& ext) {
   return false;
 }
 
-// 读一个字符串值；不存在或类型不对返回空
-std::wstring regGetString(HKEY root, const std::wstring& subKey, const wchar_t* name) {
-  HKEY key = nullptr;
-  if (::RegOpenKeyExW(root, subKey.c_str(), 0, KEY_READ, &key) != ERROR_SUCCESS) return {};
-
-  wchar_t buffer[MAX_PATH * 2] = {};
-  DWORD size = sizeof(buffer);
-  const LONG r =
-      ::RegQueryValueExW(key, name, nullptr, nullptr, reinterpret_cast<LPBYTE>(buffer), &size);
-  ::RegCloseKey(key);
-  return r == ERROR_SUCCESS ? std::wstring(buffer) : std::wstring();
-}
-
 // 生效对象 → 挂 shellex 的位置
 std::vector<std::wstring> classRootsFor(const std::vector<std::wstring>& targets) {
   std::vector<std::wstring> roots;
@@ -240,6 +245,12 @@ std::vector<std::wstring> classRootsFor(const std::vector<std::wstring>& targets
 
 std::wstring handlerKey(const ShellMenuHandler& handler, const std::wstring& root) {
   return L"Software\\Classes\\" + root + L"\\shellex\\ContextMenuHandlers\\AIUI_" + handler.id;
+}
+
+// 注册该指向哪个宿主程序：显式给了就用它（安装器、修复工具都是替别人注册），
+// 只有留空时才是当前进程自己。
+std::wstring hostExePath(const std::wstring& explicitPath) {
+  return explicitPath.empty() ? os::backend().executablePath() : explicitPath;
 }
 
 }  // namespace
@@ -260,7 +271,7 @@ std::wstring WindowsBackend::registerShellMenuHandler(const ShellMenuHandler& ha
   if (dll.empty()) return L"无法释放右键菜单组件";
   removeLegacyComponents(dir, dll);
 
-  const std::wstring exe = executablePath();
+  const std::wstring exe = hostExePath(handler.hostExePath);
   if (exe.empty()) return L"无法取得程序路径";
 
   const HKEY root = classRoot(handler);
@@ -300,7 +311,17 @@ std::wstring WindowsBackend::unregisterShellMenuHandler(const ShellMenuHandler& 
   if (!handler.clsid.empty()) {
     regDeleteTree(root, L"Software\\Classes\\CLSID\\" + handler.clsid);
   }
-  // 组件文件保留：资源管理器可能仍加载着它，删除会失败并留下半残注册
+
+  // 组件文件也要清：安装好的程序把组件放在自己目录里，不删就会出现
+  // 「卸载后目录删不掉」的残渣。只是注销菜单（准备立刻重新注册）时，
+  // 调用方不该走这里——重新注册会重新释放同一份。
+  //
+  // 这里不用 componentDir(handler)：它会顺手建目录，而卸载不该创建任何东西。
+  const std::wstring dir = handler.componentDir;
+  if (!dir.empty() && !handler.componentName.empty() && ::PathFileExistsW(dir.c_str())) {
+    removeAllComponentVersions(dir, handler.componentName);
+  }
+
   ::SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
   return {};
 }
@@ -332,7 +353,7 @@ bool WindowsBackend::isShellMenuHandlerRegistered(const ShellMenuHandler& handle
   if (slash == std::wstring::npos || actualDll.substr(0, slash) != dir) return false;
   if (!fileMatches(actualDll, payload)) return false;
 
-  const std::wstring exe = WindowsBackend::executablePath();
+  const std::wstring exe = hostExePath(handler.hostExePath);
   if (exe.empty()) return false;
   const std::wstring registeredExe =
       regGetString(root, L"Software\\Classes\\CLSID\\" + handler.clsid + L"\\AppPath", nullptr);
@@ -342,11 +363,11 @@ bool WindowsBackend::isShellMenuHandlerRegistered(const ShellMenuHandler& handle
 InstallScope WindowsBackend::detectShellMenuScope(const ShellMenuHandler& handler) {
   if (handler.clsid.empty()) return InstallScope::kCurrentUser;
 
-  // 只认「已挂载、指向本 CLSID、且 AppPath 就是当前程序」的根键。
+  // 只认「已挂载、指向本 CLSID、且 AppPath 就是目标宿主」的根键。
   // 少一个条件都不行：同一台机器可能装着另一份（比如 D 盘的安装版与
   // 开发构建并存），按别人的范围去校准只会让本进程去写自己没权限的根键。
   const std::wstring mountKey = handlerKey(handler, L"*");
-  const std::wstring exe = WindowsBackend::executablePath();
+  const std::wstring exe = hostExePath(handler.hostExePath);
   if (exe.empty()) return InstallScope::kCurrentUser;
 
   const std::wstring appPathKey = L"Software\\Classes\\CLSID\\" + handler.clsid + L"\\AppPath";
@@ -379,7 +400,7 @@ std::wstring WindowsBackend::registerFileAssociations(const FileAssociation& ass
     return L"文件关联描述不完整";
   }
 
-  const std::wstring exe = WindowsBackend::executablePath();
+  const std::wstring exe = hostExePath(association.hostExePath);
   if (exe.empty()) return L"无法取得程序路径";
 
   const InstallScope scope = currentInstallScope();
@@ -466,7 +487,7 @@ std::wstring WindowsBackend::unregisterFileAssociations(const FileAssociation& a
 bool WindowsBackend::areFileAssociationsRegistered(const FileAssociation& association) {
   if (association.progId.empty() || association.extensions.empty()) return false;
 
-  const std::wstring exe = WindowsBackend::executablePath();
+  const std::wstring exe = hostExePath(association.hostExePath);
   if (exe.empty()) return false;
 
   const InstallScope scope = currentInstallScope();

@@ -68,11 +68,15 @@
 | 菜单图标 | 每项带宿主程序图标（按 DPI 缩放，150% 下为 24px，位图 32bpp 带 alpha） |
 | 多选退化 | 已消除：判定逻辑在组件里逐项检查，不依赖注册表条件表达式 |
 | 菜单可见性 | Win10 直接出现在右键第一层。Win11 的紧凑菜单只接受带包标识（MSIX/稀疏包）的 `IExplorerCommand`，未打包的 Win32 程序一律归入「显示更多选项」，7-Zip、WinRAR 同样如此；本项目不引入稀疏包，故 Win11 需点「显示更多选项」 |
-| 安装包 | `AiZipSetup.exe` 自建，内嵌 `AiZip.exe`。默认装到 `D:\AISoft\AIZip`（优先非系统盘，从 D 起按字母序找固定盘，只有 C 盘可用时才用 C），安装范围默认选「所有用户」，也可选「仅当前用户」 |
-| 安装范围 | 当前用户写 HKCU；所有用户写 HKLM（需提权）。点一次「安装」后自动请求提权，新实例按 `--elevated-retry --dir=` 直接完成安装，无需再点第二次。安装器把选择用 `--scope=` 传给已落地的程序，程序启动时再从注册表探测实际落在哪个根键，不会重复注册到另一边 |
-| 组件位置 | 组件与宿主 exe 同目录（安装版在程序目录，开发期在构建目录），文件名带内容指纹，如 `aizip_5705E357.dll`；不需要任何标记文件 |
-| 安装后行为 | 装完不弹提示框，直接打开目标目录里的 `AiZip.exe` |
-| 启动自愈 | 每次启动校对右键菜单与文件关联，失败静默忽略。范围探测要求注册项指向本程序，避免与另一份安装互相误判；注册失败的报错只经安装器的 `--register-shell-menu` 退出码上报 |
+| 安装包 | `AiZipSetup.exe` 由**通用安装器 + 追加数据**合成：`AiSetup.exe` 本体一字不改，构建期把 `setup.ini` 清单与 `AiZip.exe`、`aizip_config.dll`、`logo.png` 追加到它末尾，并改写图标与版本资源。安装包本身**只负责解压与删除**。默认装到非系统盘（策略内嵌在 `AiInstaller` 库：跳过系统盘，按盘符字母序找固定盘，只有系统盘可用时才用它），安装子目录 `AISoft\AIZip` 不含盘符 |
+| 安装范围 | 当前用户写 HKCU；所有用户写 HKLM（需提权）。点一次「安装」后自动请求提权，新实例按 `--elevated-retry --dir=` 直接完成安装，无需再点第二次。安装时把范围记进安装目录的 `installer.scope`，卸载按它读回——**不靠「当前是否提权」推断**，因为卸载器带 `requireAdministrator`，那样永远会猜成「所有用户」而清错根键 |
+| 配置模块 | 右键菜单与文件关联封装在 `aizip_config.dll`，按标准 ABI 导出 `AiSetupConfigApply / Remove / IsReady / Version`（见 `AiInstaller/include/AiInstaller/config_abi.h`）。安装包只「按 ABI 调用」它，自己不写注册表；爱压主程序也调同一份实现，因此能自愈菜单 |
+| 安装器库 | 通用能力（清单解析、包读取、路径策略、落盘、快捷方式、卸载入口、提权、卸载收尾、通用界面）在 `AiInstaller`，与 `AiUI` 同样定位，可被其它应用用 CMake 引入 |
+| 界面 | 只有一个通用模板（图标 + 文案 + 安装范围 + 目录），品牌化全靠 `setup.ini` 的 `[ui]` 与 `logo.png`。不引入运行时 XML 解析：布局构建期编译，清单是 INI |
+| 安装后行为 | 装完不弹提示框，按清单 `[run] afterInstall` 启动目标目录里的 `AiZip.exe` |
+| 组件位置 | 组件与宿主 exe 同目录（安装版在程序目录，开发期在构建目录），文件名带内容指纹，如 `aizip_5705E357.dll`；指纹与清理规则都在 AiUI 内部，调用方不必知道 |
+| 卸载 | 从「应用与功能」拉起安装目录里的 `AiZipSetup.exe --uninstall`：先调配置模块撤销菜单与关联，再删清单文件、快捷方式、卸载项，最后删空目录。安装器自身由「复制到临时目录 + 延迟脚本重试删除」收尾，被资源管理器占用时也能清干净。卸载读安装目录里的 `installer.manifest`——那份副本已被裁掉载荷，打不开自己末尾的包 |
+| 启动自愈 | 每次启动检查配置模块是否就绪，不就绪则调 `Apply` 修一次，失败静默忽略。范围仍从注册表探测（要求注册项指向本程序），避免与另一份安装互相误判 |
 | 打开压缩文件 | 无动作开关启动 → 主窗口浏览包内内容；按压缩包路径区分窗口：同一个包再次打开复用已有窗口并前置，不同的包各开独立窗口与进程；新窗口显式置顶，焦点不会被资源管理器留住 |
 | 解压到当前目录 | 包内有公共顶层目录时复用它，否则新建同名目录并剥离该层，不出现 `a\a\`；冲突逐个询问 |
 | 进度窗口 | 主行固定为「正在压缩/解压：包名」（压缩取输出包、解压取输入包），当前成员跟在副行尾部；短任务也走完 900ms 进度动画 |
@@ -135,11 +139,30 @@ AiUI/
 ├─ tools/layoutgen/       XML → C++ 布局代码生成器
 └─ cmake/                 aiui_add_layouts() 构建规则
 
+AiInstaller/
+├─ CMakeLists.txt         通用安装器 AiSetup.exe + 打包器 aiinstaller_pack
+├─ include/AiInstaller/   公开接口：清单 / 包布局 / 安装卸载 / 路径策略 / 配置 ABI
+├─ src/
+│  ├─ manifest.cpp        INI 清单解析与序列化（自带 UTF-8 转换，不依赖 AiUI）
+│  ├─ package.cpp         从自身末尾定位 trailer、解析清单、按偏移解压
+│  ├─ path_policy.cpp     默认装到非系统盘、子目录不含盘符
+│  ├─ install.cpp         安装/卸载编排、提权、配置调用、自我删除收尾
+│  ├─ config_module.cpp   按标准 ABI 加载并调用应用的配置 dll
+│  ├─ ui/                 通用安装界面（布局在 assets/layouts/dlg_setup.xml）
+│  └─ os/windows/         平台差异（卷与系统盘判定由 AiUI 回答）
+├─ tools/pack/            打包器：改图标与版本资源，再追加清单与载荷
+├─ cmake/                 aiinstaller_add_package() 打包规则
+└─ README.md / AGENTS.md
+
 AiZip/
-├─ CMakeLists.txt         add_subdirectory(../AiUI) 引入同级 UI 库
+├─ CMakeLists.txt         add_subdirectory(../AiUI ../AiInstaller)
+├─ setup.ini              安装清单：文案、logo、配置模块、afterInstall、文件表
+├─ assets/logo.png        安装界面里的品牌图片（只随包携带，不落盘）
 ├─ assets/layouts/        XML 界面布局（构建期自动转 C++）
 ├─ src/
-│  ├─ main.cpp            程序入口、单实例、命令行分发
+│  ├─ app/main.cpp        程序入口、单实例、命令行分发、系统集成自愈
+│  ├─ app/config_client   加载 aizip_config.dll（主程序不碰注册表）
+│  ├─ config/aizip_config 右键菜单与文件关联的标准 ABI 实现（独立 dll）
 │  ├─ app.h/.cpp          应用状态、视图/导航编排、启动请求分发
 │  ├─ archive.h/.cpp      7-Zip 封装：打开/枚举/解压/压缩
 │  ├─ ui_main.h/.cpp      主窗口：装配生成的 MainFrame、拖放、窗口消息

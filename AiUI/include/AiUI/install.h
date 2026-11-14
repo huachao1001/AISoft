@@ -40,9 +40,70 @@ std::wstring defaultInstallDir(InstallScope scope);
 // 程序组显示名，用于默认目录名（如 "AIZip"）
 std::wstring applicationDisplayName();
 
+// 动态加载一个模块（Windows 上是 DLL），供「配置能力单独封一个模块」的场景：
+// 安装器与主程序都不该把注册表、COM 那套代码各编一份。模块里的导出函数
+// 由调用方按自己的约定取用，AiUI 只负责加载与卸载。
+//
+// 返回的句柄在失败时为空；调用方必须用 unloadModule 释放。
+class Module {
+ public:
+  Module() = default;
+  ~Module();
+
+  Module(const Module&) = delete;
+  Module& operator=(const Module&) = delete;
+  Module(Module&& other) noexcept;
+  Module& operator=(Module&& other) noexcept;
+
+  // 加载 path 指向的模块；失败返回 false，reason 里是可读原因。
+  bool load(const std::wstring& path, std::wstring& reason);
+
+  // 取导出符号；不存在返回 nullptr。调用方自己按函数签名转换。
+  void* symbol(const char* name) const;
+
+  bool isLoaded() const { return handle_ != nullptr; }
+
+  void unload();
+
+ private:
+  void* handle_ = nullptr;
+};
+
+// 在系统「应用与功能」里登记卸载入口。uninstallArgs 是卸载程序的命令行参数，
+// 系统据此拉起卸载流程。scope 决定写 HKLM 还是 HKCU。
+std::wstring registerUninstallEntry(const std::wstring& displayName,
+                                    const std::wstring& displayVersion,
+                                    const std::wstring& publisher,
+                                    const std::wstring& installDir,
+                                    const std::wstring& uninstallCommand,
+                                    const std::wstring& uninstallArgs, InstallScope scope);
+
+// 撤销卸载入口
+std::wstring unregisterUninstallEntry(const std::wstring& displayName, InstallScope scope);
+
+// 把当前可执行文件复制到 destPath（覆盖同名文件）。卸载程序要删掉自己所在的
+// 目录，只能先把自己复制到临时位置再执行真正的删除。
+std::wstring copySelfTo(const std::wstring& destPath);
+
+// 启动一个与当前进程无关的进程，不等待它结束。用于「退出后继续收尾」。
+// workDir 为空时用该程序所在目录。
+bool launchDetached(const std::wstring& exePath, const std::wstring& arguments,
+                    const std::wstring& workDir = {});
+
+// 标记一个文件在下次开机时删除。删不掉自己时的最后手段，失败返回 false。
+bool deleteFileOnReboot(const std::wstring& path);
+
+// 目录为空时删掉；非空或不存在都返回 false。卸载时清理安装目录用。
+bool removeDirectoryIfEmpty(const std::wstring& dir);
+
 // 把内嵌资源写到 targetDir。成功返回空串，失败返回可读原因。
 // 目录不存在时自动创建；同名文件会被覆盖。
 std::wstring installFiles(const std::wstring& targetDir, const std::vector<InstallFile>& files);
+
+// 把单个内嵌资源写到指定路径（含子目录时自动创建）。成功返回空串。
+// 与 installFiles 的区别是不限定目标目录：安装器的清单里允许
+// "config\\x.dll" 这类带子目录的相对路径。
+std::wstring installSingleResource(int resourceId, const std::wstring& targetPath);
 
 // 从 targetDir 里删除安装的文件（卸载）。返回空串表示成功。
 std::wstring removeInstalledFiles(const std::wstring& targetDir,

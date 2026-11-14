@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  通用安装界面的配色。
+
+  只写需要改的字段，其余沿用 AiUI 的浅色主题。安装器不做深色模式：
+  它在用户机器上只活几秒，跟随系统设置带来的复杂度不值得。
+-->
+<themes>
+
+  <Theme name="light" controlBorder="#d0d5dd"
+         accent="#2563eb" accentHover="#1d4ed8" accentDown="#1a43bd" accentInk="#ffffff"/>
+
+</themes>

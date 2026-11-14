@@ -2,6 +2,7 @@
 //
 // 不出现任何平台 API：DPI、公共控件、消息循环、窗口状态都走 AiUI::Platform。
 #include "app.h"
+#include "config_client.h"
 #include "main_activity.h"
 #include "dlg_progress.h"
 #include "shell_menu.h"
@@ -30,36 +31,31 @@ std::wstring BrowseInstanceId(const std::wstring& path) {
   return std::wstring(L"AIZip.Browser.") + suffix;
 }
 
+// 系统集成的自愈：发现菜单或关联不对就调配置模块修一次。
+//
+// 三个前提都从「自己所在目录」推出，不写死任何路径：
+//   - 安装目录 = 本 exe 所在目录（与安装器把组件放在这里一致）
+//   - 宿主路径 = 本 exe
+//   - 安装范围 = 安装时记录的标记；开发期没有标记，按当前用户处理
+void RepairSystemIntegration() {
+  const std::wstring hostExe = AiUI::platform()->executablePath();
+  if (hostExe.empty()) return;
+
+  const size_t slash = hostExe.find_last_of(L'\\');
+  if (slash == std::wstring::npos) return;
+  const std::wstring installDir = hostExe.substr(0, slash);
+
+  const bool allUsers = shell::InstalledScope() == AiUI::InstallScope::kAllUsers;
+
+  if (config_client::isReady(installDir, hostExe, allUsers)) return;
+  config_client::apply(installDir, hostExe, allUsers);
+}
+
 }  // namespace
 
 int AiUI::runApp() {
   AiUI::initHostProcess();
   AiUI::startupPlatform();
-
-  // 安装程序的注册通道：装好文件后由它拉起本程序，写完注册表就退出。
-  // 放在读配置、建窗口之前，退出码就是注册结果，安装器据此判断成败。
-  // --scope=all-users 由安装器按用户选择传入：注册表写 HKLM 还是 HKCU
-  // 只有安装那一刻知道，程序自己猜不出来。
-  {
-    const auto args = AiUI::platform()->commandLineArgs();
-    bool registering = false;
-    for (const auto& arg : args) {
-      if (arg == L"--register-shell-menu") registering = true;
-      else if (arg == L"--scope=all-users") AiUI::setCurrentInstallScope(AiUI::InstallScope::kAllUsers);
-      else if (arg == L"--scope=current-user") {
-        AiUI::setCurrentInstallScope(AiUI::InstallScope::kCurrentUser);
-      }
-    }
-    if (registering) {
-      // 文件关联失败不算致命：右键菜单才是主功能，关联只是「打开方式」
-      // 里的候选。只要菜单注册成功就报成功，否则用户会看到一个装完却
-      // 打不开的提示，而实际上程序完全可用。
-      std::wstring err = shell::RegisterContextMenu(AiUI::currentInstallScope());
-      shell::RegisterFileAssociations();
-      AiUI::shutdownPlatform();
-      return err.empty() ? 0 : 1;
-    }
-  }
 
   g_app.settings = util::LoadSettings();
   g_app.dpi = AiUI::platform()->screenDpi();
@@ -70,22 +66,14 @@ int AiUI::runApp() {
   AiUI::Activity::setDefaultTheme(
       &AiUI::ThemeRegistry::getOr(g_app.settings.theme, AiUI::kLightTheme));
 
-  // 右键菜单默认注册到当前用户（不需要管理员，也不改任何文件关联）。
-  // 程序换位置后旧菜单会指向失效路径，所以每次启动都校对一遍。
-  // 安装版按安装时选的范围注册，否则「所有用户」装的程序会又往 HKCU 写一份。
+  // 右键菜单与文件关联的自愈：实现都在同目录的 aizip_config.dll 里。
   //
-  // 这里是自愈性质的后台动作，失败一律静默：用户点的是「打开压缩文件」，
-  // 不该因为写不了注册表而被弹窗拦住。注册失败的真实报错由安装器的
-  // --register-shell-menu 通道通过退出码上报。
-  AiUI::setCurrentInstallScope(shell::InstalledScope());
-  if (!shell::IsContextMenuRegistered(AiUI::currentInstallScope())) {
-    shell::RegisterContextMenu(AiUI::currentInstallScope());
-  }
-  // 文件关联同样是自愈性质：登记为受支持后缀的候选打开方式。
-  // 静默处理，失败不影响主流程。
-  if (!shell::AreFileAssociationsRegistered()) {
-    shell::RegisterFileAssociations();
-  }
+  // 为什么主程序也要做这件事：这两个能力挂在系统里，会被别的软件清掉、
+  // 会因程序换位置而指向失效路径。让主程序每次启动校对一次，用户不必
+  // 为了修好右键菜单而重装一遍。
+  //
+  // 失败一律静默：用户点的是「打开压缩文件」，不该因为写不了注册表被拦下。
+  RepairSystemIntegration();
 
   LaunchRequest req = ParseLaunchArgs();
 

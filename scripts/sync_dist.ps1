@@ -1,4 +1,4 @@
-# 把构建产物同步到 dist\：复制有变化的 exe，并清掉已删掉程序的旧副本。
+﻿# 把构建产物同步到 dist\：复制有变化的 exe，并清掉已删掉程序的旧副本。
 #
 # 用法：powershell -NoProfile -File scripts\sync_dist.ps1
 # 只同步发布产物（AiZip.exe）；test_arc 这类自检工具不发布。
@@ -14,9 +14,13 @@ $dist = Join-Path $root "dist"
 $buildDir = if ([System.IO.Path]::IsPathRooted($Config)) { $Config } else { Join-Path $root "AiZip\$Config" }
 
 # 发布清单：源文件 → dist 里的名字
+#
+# aizip_config.dll 必须随主程序一起发布：右键菜单、文件关联的实现都在
+# 它里面，少了它主程序就修不了菜单，安装包也打不进这份能力。
 $artifacts = @(
   @{ Source = Join-Path $buildDir "AiZipSetup.exe"; Name = "AiZipSetup.exe" }
   @{ Source = Join-Path $buildDir "AiZip.exe"; Name = "AiZip.exe" }
+  @{ Source = Join-Path $buildDir "aizip_config.dll"; Name = "aizip_config.dll" }
 )
 
 New-Item -ItemType Directory -Force -Path $dist | Out-Null

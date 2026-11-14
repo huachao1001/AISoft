@@ -1,30 +1,18 @@
-// 资源管理器右键菜单的注册状态
+// 安装范围的探测
 //
-// 组件形态、注册位置、释放流程都在 AiUI 的后端里（src/os/<platform>/），
-// 这里只描述「用哪个组件、挂到哪些对象上」。应用不碰任何系统 API。
+// 这里只回答一个问题：本程序当初装在哪个范围（HKCU 还是 HKLM）。
+// 右键菜单、文件关联的注册与修复已经搬到 aizip_config.dll——那边才是
+// 唯一的事实来源，主程序不该再存一份 CLSID、组件名和注册逻辑。
+//
+// 为什么范围还要在这里：配置模块不负责「装在哪」，它只按调用方给的
+// 范围去写。谁来告诉它？主程序启动时得先自己知道。
 #pragma once
-
-#include <string>
 
 #include "AiUI/shell.h"
 
 namespace shell {
 
-// 写入 / 撤销系统右键菜单。成功后返回空串，失败返回原因。
-// scope 决定写 HKCU 还是 HKLM；默认跟随后端的当前范围。
-std::wstring RegisterContextMenu(AiUI::InstallScope scope = AiUI::currentInstallScope());
-std::wstring UnregisterContextMenu(AiUI::InstallScope scope = AiUI::currentInstallScope());
-
-// 菜单是否已注册且指向当前可执行文件
-bool IsContextMenuRegistered(AiUI::InstallScope scope = AiUI::currentInstallScope());
-
 // 安装时选定的范围（安装版从注册表探测，开发期为当前用户）。
-// 程序每次启动都按这个范围校对菜单，避免重复注册到另一个根键。
 AiUI::InstallScope InstalledScope();
-
-// 把本程序登记为受支持压缩包的候选打开方式，并校验是否仍有效。
-// 现代系统不允许静默抢占默认应用，用户需在系统提示里确认一次。
-std::wstring RegisterFileAssociations();
-bool AreFileAssociationsRegistered();
 
 }  // namespace shell

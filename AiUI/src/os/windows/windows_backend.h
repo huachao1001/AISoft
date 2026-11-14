@@ -98,6 +98,32 @@ class WindowsBackend final : public Backend {
   std::wstring removeShortcuts(const std::wstring& displayName, InstallScope scope) override;
   int runAndWait(const std::wstring& exePath, const std::wstring& arguments) override;
 
+  // ── 模块加载 ──
+  void* loadModule(const std::wstring& path) override;
+  void* moduleSymbol(void* module, const char* name) override;
+  void unloadModule(void* module) override;
+
+  // ── 卸载入口 ──
+  std::wstring registerUninstallEntry(const std::wstring& displayName,
+                                      const std::wstring& displayVersion,
+                                      const std::wstring& publisher,
+                                      const std::wstring& installDir,
+                                      const std::wstring& uninstallCommand,
+                                      const std::wstring& uninstallArgs,
+                                      InstallScope scope) override;
+  std::wstring unregisterUninstallEntry(const std::wstring& displayName,
+                                        InstallScope scope) override;
+
+  // ── 卸载收尾 ──
+  std::wstring copySelfTo(const std::wstring& destPath) override;
+  bool launchDetached(const std::wstring& exePath, const std::wstring& arguments,
+                      const std::wstring& workDir) override;
+  bool deleteFileOnReboot(const std::wstring& path) override;
+
+  // ── 清单式落盘 ──
+  std::wstring installSingleResource(int resourceId, const std::wstring& targetPath) override;
+  bool removeDirectoryIfEmpty(const std::wstring& dir) override;
+
   // ── 托盘 ──
   std::unique_ptr<PlatformTray> createTrayIcon(PlatformTrayHost& host) override;
 

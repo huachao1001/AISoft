@@ -73,6 +73,9 @@ struct DriveInfo {
   std::wstring label;  // 显示名，如「本地磁盘 (C:)」
   std::wstring path;   // 根路径，如 "C:\\"
   bool removable = false;
+  // 是否是系统所在卷（Windows 的系统盘、macOS 的启动盘、Linux 的根分区）。
+  // 安装器用它决定「默认不装在系统盘上」，这个判断必须由平台回答。
+  bool system = false;
 };
 
 // ── 文件流 ──
@@ -608,6 +611,64 @@ class Platform {
     (void)exePath;
     (void)arguments;
     return -1;
+  }
+  // 动态加载模块。默认不支持，各平台后端覆盖后才有行为。
+  virtual void* loadModule(const std::wstring& path) {
+    (void)path;
+    return nullptr;
+  }
+  virtual void* moduleSymbol(void* module, const char* name) {
+    (void)module;
+    (void)name;
+    return nullptr;
+  }
+  virtual void unloadModule(void* module) { (void)module; }
+  // 系统卸载入口；默认不支持
+  virtual std::wstring registerUninstallEntry(const std::wstring& displayName,
+                                              const std::wstring& displayVersion,
+                                              const std::wstring& publisher,
+                                              const std::wstring& installDir,
+                                              const std::wstring& uninstallCommand,
+                                              const std::wstring& uninstallArgs,
+                                              InstallScope scope) {
+    (void)displayName;
+    (void)displayVersion;
+    (void)publisher;
+    (void)installDir;
+    (void)uninstallCommand;
+    (void)uninstallArgs;
+    (void)scope;
+    return L"当前平台不支持";
+  }
+  virtual std::wstring unregisterUninstallEntry(const std::wstring& displayName,
+                                                InstallScope scope) {
+    (void)displayName;
+    (void)scope;
+    return L"当前平台不支持";
+  }
+  virtual std::wstring copySelfTo(const std::wstring& destPath) {
+    (void)destPath;
+    return L"当前平台不支持";
+  }
+  virtual bool launchDetached(const std::wstring& exePath, const std::wstring& arguments,
+                              const std::wstring& workDir) {
+    (void)exePath;
+    (void)arguments;
+    (void)workDir;
+    return false;
+  }
+  virtual bool deleteFileOnReboot(const std::wstring& path) {
+    (void)path;
+    return false;
+  }
+  virtual std::wstring installSingleResource(int resourceId, const std::wstring& targetPath) {
+    (void)resourceId;
+    (void)targetPath;
+    return L"当前平台不支持";
+  }
+  virtual bool removeDirectoryIfEmpty(const std::wstring& dir) {
+    (void)dir;
+    return false;
   }
 
 

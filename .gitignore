@@ -18,3 +18,4 @@ dist/
 CMakeUserPresets.json
 Thumbs.db
 desktop.ini
+.codegraph/

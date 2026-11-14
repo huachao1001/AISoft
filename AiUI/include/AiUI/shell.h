@@ -94,6 +94,11 @@ struct ShellMenuHandler {
   // 组件落地目录。留空时由后端按 scope 选默认位置；
   // 应用可以显式指定，用来把组件放在自己所在目录。
   std::wstring componentDir;
+  // 组件启动的宿主程序路径。留空表示「当前进程的可执行文件」。
+  //
+  // 必须显式指定，是因为注册动作未必由宿主自己发起：安装程序、配置修复
+  // 工具都是替别人注册，用当前进程的路径会把注册表指到工具自己身上。
+  std::wstring hostExePath;
 };
 
 // 释放组件并注册；成功返回空串，失败返回可读原因
@@ -125,6 +130,9 @@ struct FileAssociation {
   std::wstring description;
   // 生效后缀，含点，如 {".zip", ".7z"}
   std::vector<std::wstring> extensions;
+  // 打开这些后缀的程序路径。留空表示当前进程的可执行文件。
+  // 理由同 ShellMenuHandler::hostExePath：注册方不一定是被注册的程序本身。
+  std::wstring hostExePath;
 };
 
 // 登记为这些后缀的候选打开方式。成功返回空串，失败返回可读原因。

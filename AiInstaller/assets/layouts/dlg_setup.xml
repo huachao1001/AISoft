@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  通用安装界面：结构固定，所有文字与图标都由安装包清单提供。
+
+  为什么不给每个应用一份布局：AiUI 的布局在构建期编译成 C++，运行时换
+  XML 等于要给安装器塞一个解析器。而安装界面本来就该长一个样——用户
+  认得的是流程，不是像素。所以模板只此一份，应用改的是清单里的文案。
+
+  按钮固定在底部，目录行占满剩余宽度；窗口拉高时只有中间弹簧伸缩，
+  底部按钮永远可见（避免高 DPI 或小屏下被裁掉）。
+-->
+<LinearLayout orientation="vertical" paddingLeft="16" paddingRight="20" paddingTop="16"
+              paddingBottom="16" spacing="10" background="dialogBg">
+
+  <!-- 头部：左侧图标，右侧标题与说明 -->
+  <LinearLayout orientation="horizontal" height="52" alignY="center">
+    <ImageView id="logo" width="48" height="48" scale="fit"/>
+    <LinearLayout orientation="vertical" weight="1" marginLeft="14" alignY="center">
+      <TextView id="title" height="24" textColor="text" bold="true"/>
+      <TextView id="description" height="20" textColor="textMuted" marginTop="2"/>
+    </LinearLayout>
+  </LinearLayout>
+
+  <!-- 安装范围：清单里 showScope=0 时整行隐藏 -->
+  <LinearLayout id="scopeRow" orientation="horizontal" height="30" alignY="center" marginTop="6">
+    <TextView id="scopeLabel" text="安装范围" width="64" height="30" align="right"
+              textColor="textMuted"/>
+    <RadioGroup id="scopeGroup" width="wrap" height="30" orientation="horizontal"
+                rowGap="18" marginLeft="10">
+      <RadioButton id="scopeUser">仅当前用户</RadioButton>
+      <RadioButton id="scopeAll">所有用户</RadioButton>
+    </RadioGroup>
+  </LinearLayout>
+
+  <!-- 目标目录 -->
+  <LinearLayout orientation="horizontal" height="30">
+    <TextView id="dirLabel" text="安装目录" width="64" height="30" align="right"
+              textColor="textMuted"/>
+    <InputBox id="dir" weight="1" height="30" padding="8" marginLeft="10" marginRight="10"/>
+    <Button id="btnBrowse" text="浏览..." style="outline" width="76" height="30"/>
+  </LinearLayout>
+
+  <!-- 权限提示：只在「所有用户」且未提权时显示 -->
+  <TextView id="hint" height="20" textColor="textMuted"/>
+
+  <!-- 弹簧：把按钮行顶到底部 -->
+  <View weight="1" height="1"/>
+
+  <LinearLayout orientation="horizontal" height="32" marginTop="6">
+    <View weight="1"/>
+    <Button id="btnInstall" text="安装" style="primary" width="88" height="32"/>
+    <Button id="btnCancel" text="取消" style="outline" width="88" height="32" marginLeft="10"/>
+  </LinearLayout>
+
+</LinearLayout>
