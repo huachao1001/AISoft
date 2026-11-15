@@ -360,10 +360,6 @@ void MainActivity::attachHome() {
     });
   }
 
-  if (auto* create = findView<AiUI::Button>("btnHomeCreate")) {
-    create->setOnClick([this] { ShowCompressDialog(g_app.mainWnd, {}); });
-  }
-
   if (auto* icon = findView<AiUI::ImageView>("homeIcon")) {
     // 用内建的文件夹图标而不是品牌 logo：首页要表达的是「这里放包」，
     // 不是「这是爱压」。
