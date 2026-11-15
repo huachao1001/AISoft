@@ -104,10 +104,35 @@ std::wstring placeComponent(const std::wstring& dir, const std::wstring& fileNam
   return path;
 }
 
+// 删除一个已不再被引用的文件；删不掉就登记「重启时删除」。
+//
+// 为什么不能删不掉就放弃：资源管理器加载菜单组件后会把 DLL 一直持有，
+// 且不是以 FILE_SHARE_DELETE 打开的——DeleteFile 一律返回「拒绝访问」，
+// 下次重装再试仍然失败，残渣就永久留在安装目录里。用户看到的是一个
+// 删不掉的安装目录，以及「卸载了但文件还在」。
+//
+// 微软给这种场景的标准兜底是 MOVEFILE_DELAY_UNTIL_REBOOT：写进注册表的
+// PendingFileRenameOperations，重启时由系统在没有任何进程持有它的情况下
+// 删除。缺点是要等一次重启，但它不打断用户、不需要强杀 explorer。
+//
+// 注意：这个 API 要求管理员权限。非提权的卸载登记会失败，此时文件仍然
+// 留在磁盘上——但注册表已经不再指向它，功能不受影响，下次重装（通常提权）
+// 会再走一遍这里。
+void deleteOrDefer(const std::wstring& path) {
+  if (::DeleteFileW(path.c_str())) return;
+  const DWORD error = ::GetLastError();
+  // 文件本来就不在：目的已经达到
+  if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) return;
+
+  // 被占用（共享冲突 / 拒绝访问）才值得排队；其它错误重试也没意义
+  if (error == ERROR_ACCESS_DENIED || error == ERROR_SHARING_VIOLATION) {
+    ::MoveFileExW(path.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT);
+  }
+}
+
 // 删掉本组件在 dir 里的全部版本（含当前指纹那份）。
 //
 // 只在注销时用：注册表已经不再指向它们，留着只会让安装目录永远删不掉。
-// 删不掉的（资源管理器仍持有）跳过，留给下次。
 //
 // 命名规则由 placeComponent 决定（stem_XXXXXXXX.ext），所以清理也放在这里：
 // 让调用方去猜「aizip_08D0F419.dll」这种名字，等于把内部约定散播出去。
@@ -124,17 +149,16 @@ void removeAllComponentVersions(const std::wstring& dir, const std::wstring& com
   HANDLE find = ::FindFirstFileW(pattern.c_str(), &data);
   if (find == INVALID_HANDLE_VALUE) return;
   do {
-    ::DeleteFileW((dir + L"\\" + data.cFileName).c_str());
+    deleteOrDefer((dir + L"\\" + data.cFileName).c_str());
   } while (::FindNextFileW(find, &data));
   ::FindClose(find);
 
   // 不带指纹的那份（早年版本直接放 aizip.dll）也要清
-  ::DeleteFileW((dir + L"\\" + componentName).c_str());
+  deleteOrDefer((dir + L"\\" + componentName).c_str());
 }
 
 // 清掉不属于本次注册的组件：旧命名的 aicmd_*.dll 与旧指纹的 aizip_*.dll。
-// 资源管理器可能还加载着它们，删不掉就跳过：注册表已经指向新文件，
-// 旧文件留着不影响功能，下次重装还能再试。
+// 资源管理器可能还加载着它们，删不掉就交给 deleteOrDefer 排队到重启。
 void removeLegacyComponents(const std::wstring& dir, const std::wstring& keepPath) {
   const std::wstring patterns[] = {dir + L"\\aicmd_*.dll", dir + L"\\aizip_*.dll"};
   for (const auto& pattern : patterns) {
@@ -146,7 +170,7 @@ void removeLegacyComponents(const std::wstring& dir, const std::wstring& keepPat
       if (::CompareStringOrdinal(path.c_str(), -1, keepPath.c_str(), -1, TRUE) == CSTR_EQUAL) {
         continue;
       }
-      ::DeleteFileW(path.c_str());
+      deleteOrDefer(path);
     } while (::FindNextFileW(find, &data));
     ::FindClose(find);
   }
