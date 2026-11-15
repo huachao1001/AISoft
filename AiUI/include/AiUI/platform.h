@@ -395,6 +395,31 @@ class Platform {
   // 本进程可执行文件的小图标；标题栏左侧显示用，与系统标题栏一致
   virtual Image appIcon() = 0;
 
+  // ── 图片像素读写 ──
+  // 界面上的 Image 只是后端句柄，取不到内容。要做像素级操作（缩放重采样、
+  // 旋转、另存为）必须把整张图解到内存里，所以这两个入口直接收发 RgbaImage。
+  // 读：解码任意支持的格式到 ARGB；失败返回 false。
+  virtual bool loadImagePixels(const std::wstring& path, RgbaImage& out) {
+    (void)path;
+    (void)out;
+    return false;
+  }
+  // 写：按 format 编码到目标文件，已存在的文件直接覆盖。
+  virtual bool saveImagePixels(const std::wstring& path, const RgbaImage& image,
+                               ImageFormat format) {
+    (void)path;
+    (void)image;
+    (void)format;
+    return false;
+  }
+  // 从内存像素建一张可直接绘制的位图。
+  // 旋转、裁剪这类变换在内存里做完后要靠它回到界面；生命周期与 loadImage
+  // 一致，用 releaseImage 释放。后端不支持时返回无效 Image。
+  virtual Image createImage(const RgbaImage& image) {
+    (void)image;
+    return Image();
+  }
+
   // ── 时间 ──
   // 单调递增毫秒计时器；只需能相互比较差值，不做日历换算
   virtual int64_t monotonicMillis() = 0;

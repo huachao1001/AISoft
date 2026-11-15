@@ -931,6 +931,19 @@ class WindowsPlatform : public Platform {
 
   void releaseImage(Image image) override { os::windows::releaseLoadedImage(image); }
 
+  bool loadImagePixels(const std::wstring& path, RgbaImage& out) override {
+    return os::windows::loadImagePixels(path, out);
+  }
+
+  bool saveImagePixels(const std::wstring& path, const RgbaImage& image,
+                       ImageFormat format) override {
+    return os::windows::saveImagePixels(path, image, format);
+  }
+
+  Image createImage(const RgbaImage& image) override {
+    return os::windows::imageFromPixels(image);
+  }
+
   void startupDrawing() override { os::windows::ensureGdiplus(); }
 
   void shutdownDrawing() override {

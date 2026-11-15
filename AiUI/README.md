@@ -24,7 +24,7 @@ include/AiUI/
   layouts/       FrameLayout / LinearLayout
   widgets/       Button / ButtonBar / BreadcrumbBar / InputBox / PasswordBox /
                  ListView / TreeView / StatusBar / TextView / ImageView /
-                 TitleBar
+                 PhotoView / TitleBar
 src/
   view.cpp / view_group.cpp / view_root.cpp / scroll_view.cpp
   window.cpp     窗口组件（标题栏 + 内容区）
@@ -147,6 +147,10 @@ list->notifyDataSetChanged();
 | `BreadcrumbBar` | `setSegments` | `onNavigate` / `onBack` / `onSearch` / `onCommitAddress` |
 | `StatusBar` | `setFields` | — |
 | `ButtonBar` | `addButton(ButtonSpec)` | `Button::setOnClick` |
+| `PhotoView` | `loadFile` / `setImage` | `setWheelZoomHandler` / `setChangeHandler` |
+
+`PhotoView` 是看图场景的通用控件：缩放、平移、90° 旋转都在内部，绘制时
+只做坐标变换（不重采样），放大到 3 倍以上自动改用最近邻采样。
 
 控件内部按需局部重绘：悬停、选中只重画受影响的行，滚动只重画行区，
 不触发整控件或整窗刷新。

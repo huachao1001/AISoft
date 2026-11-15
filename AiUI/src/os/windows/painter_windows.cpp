@@ -199,7 +199,37 @@ class GdiplusBackend : public PaintBackend {
   void drawImage(const Image& image, const Rect& rc) override {
     Gdiplus::Bitmap* bmp = asBitmap(image);
     if (!g_ || !bmp || rc.isEmpty()) return;
+    // 默认高质量双三次：图片缩放是常见路径，糊掉的预览没有价值
+    g_->SetInterpolationMode(InterpolationModeHighQualityBicubic);
     g_->DrawImage(bmp, toGdiplus(rc));
+  }
+
+  void drawImage(const Image& image, const Rect& rc, const Rect& source) override {
+    Gdiplus::Bitmap* bmp = asBitmap(image);
+    if (!g_ || !bmp || rc.isEmpty()) return;
+    if (source.isEmpty()) {
+      drawImage(image, rc);
+      return;
+    }
+    g_->SetInterpolationMode(InterpolationModeHighQualityBicubic);
+    g_->DrawImage(bmp, toGdiplus(rc), source.left, source.top, source.width(),
+                  source.height(), UnitPixel);
+  }
+
+  void drawImageScaled(const Image& image, const Rect& rc, const Rect& source,
+                       ImageSmoothing smoothing) override {
+    Gdiplus::Bitmap* bmp = asBitmap(image);
+    if (!g_ || !bmp || rc.isEmpty()) return;
+    // 放大到像素级时逐像素取整：用户要看的是像素格本身
+    g_->SetInterpolationMode(smoothing == ImageSmoothing::kNearest
+                                 ? InterpolationModeNearestNeighbor
+                                 : InterpolationModeHighQualityBicubic);
+    if (source.isEmpty()) {
+      g_->DrawImage(bmp, toGdiplus(rc));
+      return;
+    }
+    g_->DrawImage(bmp, toGdiplus(rc), source.left, source.top, source.width(),
+                  source.height(), UnitPixel);
   }
 
   void setClip(const Rect& rc) override {
@@ -224,6 +254,9 @@ class GdiplusBackend : public PaintBackend {
 
   void translate(int dx, int dy) override {
     if (g_) g_->TranslateTransform(static_cast<REAL>(dx), static_cast<REAL>(dy));
+  }
+  void rotate(float degrees) override {
+    if (g_) g_->RotateTransform(degrees);
   }
   void save() override {
     if (!g_) return;

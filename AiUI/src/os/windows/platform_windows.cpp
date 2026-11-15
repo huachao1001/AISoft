@@ -68,10 +68,14 @@ HANDLE g_instanceMutex = nullptr;
 LRESULT CALLBACK launchWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
   if (msg == WM_COPYDATA) {
     auto* data = reinterpret_cast<COPYDATASTRUCT*>(lParam);
-    if (data && g_launchHandler) {
-      const std::wstring payload(static_cast<const wchar_t*>(data->lpData),
-                                 data->cbData / sizeof(wchar_t));
-      g_launchHandler(payload);
+    if (data && g_launchHandler && data->lpData) {
+      // 发送方把结尾的 \0 也算了进去。不排除掉的话，收到的字符串会带一个
+      // 内嵌的 '\0'：c_str() 看着正常，按长度取字符的代码（后缀判断、
+      // 子串比较）却会被这多出来的一个字符带偏。
+      size_t length = data->cbData / sizeof(wchar_t);
+      const wchar_t* text = static_cast<const wchar_t*>(data->lpData);
+      while (length > 0 && text[length - 1] == L'\0') --length;
+      g_launchHandler(std::wstring(text, length));
     }
     return TRUE;
   }

@@ -90,6 +90,13 @@ constexpr wchar_t glyphFor(IconId id) {
     // 眼睛与眼睛加斜线：MDL2 的 View / Hide，线条粗细与其它图标一致
     case IconId::kEye: return 0xE7B3;
     case IconId::kEyeOff: return 0xED1A;
+    // 缩放与旋转：ZoomIn / ZoomOut / FitPage / Rotate / Redo 的对应字形
+    case IconId::kZoomIn: return 0xE8A3;
+    case IconId::kZoomOut: return 0xE71F;
+    case IconId::kFitWindow: return 0xE9A6;
+    case IconId::kRotateLeft: return 0xE7AD;
+    case IconId::kRotateRight: return 0xE1CD;
+    case IconId::kImage: return 0xEB9F;
     // 修复 / 卸载 / 挽留：MDL2 的 Repair / Delete / Heart
     case IconId::kRepair: return 0xE90F;
     case IconId::kUninstall: return 0xE74D;

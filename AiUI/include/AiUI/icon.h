@@ -3,6 +3,9 @@
 
 #include "AiUI/types.h"
 
+#include <cstdint>
+#include <vector>
+
 namespace AiUI {
 
 // 图片在目标区域内的适配方式
@@ -33,6 +36,13 @@ enum class IconId {
   kCheck,  // 复选项打勾
   kEye,    // 显示密码（明文）
   kEyeOff, // 隐藏密码（掩码）
+  // 图片查看与编辑
+  kZoomIn,      // 放大
+  kZoomOut,     // 缩小
+  kFitWindow,   // 适应窗口
+  kRotateLeft,  // 逆时针旋转
+  kRotateRight, // 顺时针旋转
+  kImage,       // 图片（空状态占位）
   // 安装器维护页
   kRepair,      // 修复（扳手）
   kUninstall,   // 卸载（回收站）
@@ -54,6 +64,28 @@ class Image {
 
  private:
   void* handle_ = nullptr;
+};
+
+// ── 像素图 ──
+//
+// 界面上的 Image 只是个后端句柄，取不到内容。需要真正读写像素的场合
+// （图像编辑、另存为）走这里：解码到内存里的一段 ARGB，A 在高位，
+// 与 Image 的 handle 无关，编解码都在平台后端里完成。
+struct RgbaImage {
+  int width = 0;
+  int height = 0;
+  // 长度 = width * height，每像素 0xAARRGGBB，行优先、自上而下
+  std::vector<uint32_t> pixels;
+
+  bool isEmpty() const { return width <= 0 || height <= 0 || pixels.empty(); }
+};
+
+// 保存时用的编码格式。上层按目标文件后缀选一个，具体编码器由后端决定，
+// 这样界面层不必出现任何平台图像库的名字。
+enum class ImageFormat {
+  kPng,
+  kJpeg,
+  kBmp,
 };
 
 // 取文件的系统关联图标；句柄由库缓存持有，调用方不要释放。

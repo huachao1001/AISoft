@@ -32,6 +32,11 @@ class Font {
 
 enum class TextAlign { kLeft, kCenter, kRight };
 
+// 位图缩放时的采样方式。
+// 放大到像素级时逐像素取整比插值更真实——用户要看清的是像素格，不是
+// 一团被抹平的色块；其余场合用平滑采样，缩小时才不会出现锯齿摩尔纹。
+enum class ImageSmoothing { kSmooth, kNearest };
+
 // 平台后端实现的最小图元集合
 class PaintBackend {
  public:
@@ -62,6 +67,20 @@ class PaintBackend {
   virtual void drawIcon(IconId id, const Rect& rc, Color color) = 0;
   // 位图：等比缩放居中到 rc
   virtual void drawImage(const Image& image, const Rect& rc) = 0;
+  // 位图：只取 source 那一块（原图像素坐标）铺到 rc。
+  // 放大查看时视口只覆盖图像的一小部分，整张铺过去会让后端白算看不见的
+  // 区域；给出源矩形后后端只需处理可见部分。
+  // source 为空表示整张图。
+  virtual void drawImage(const Image& image, const Rect& rc, const Rect& source) {
+    (void)source;
+    drawImage(image, rc);
+  }
+  // 同上的采样方式选择；后端不支持时按默认平滑处理
+  virtual void drawImageScaled(const Image& image, const Rect& rc, const Rect& source,
+                               ImageSmoothing smoothing) {
+    (void)smoothing;
+    drawImage(image, rc, source);
+  }
 
   virtual void setClip(const Rect& rc) = 0;
   virtual void resetClip() = 0;
@@ -74,8 +93,11 @@ class PaintBackend {
     clipRect(rc);
   }
 
-  // 坐标平移与绘制状态栈：子树绘制靠它把原点移到子视图左上角
+  // ── 坐标平移与绘制状态栈：子树绘制靠它把原点移到子视图左上角
   virtual void translate(int dx, int dy) = 0;
+  // 绕当前原点旋转（角度，顺时针为正）。图片按 90° 倍数旋转靠它，
+  // 避免每次转角都重采样一遍像素。
+  virtual void rotate(float degrees) { (void)degrees; }
   virtual void save() = 0;
   virtual void restore() = 0;
 };
@@ -153,6 +175,15 @@ class Painter {
   // ── 图标与图片 ──
   void drawIcon(IconId id, const Rect& rc, Color color) { backend_.drawIcon(id, rc, color); }
   void drawImage(const Image& image, const Rect& rc) { backend_.drawImage(image, rc); }
+  // 只画源图的某一块（原图像素坐标），放大查看时用
+  void drawImage(const Image& image, const Rect& rc, const Rect& source) {
+    backend_.drawImage(image, rc, source);
+  }
+  // 指定采样方式：放大到像素级时用 kNearest，其余用 kSmooth
+  void drawImageScaled(const Image& image, const Rect& rc, const Rect& source,
+                       ImageSmoothing smoothing) {
+    backend_.drawImageScaled(image, rc, source, smoothing);
+  }
 
   // ── 裁剪 ──
   void setClip(const Rect& rc) { backend_.setClip(rc); }
@@ -165,6 +196,8 @@ class Painter {
   // ── 坐标平移 ──
   // 进入子视图前平移原点，返回时用 save/restore 还原
   void translate(int dx, int dy) { backend_.translate(dx, dy); }
+  // 绕当前原点旋转；配合 translate 把旋转中心挪到目标位置
+  void rotate(float degrees) { backend_.rotate(degrees); }
   void save() { backend_.save(); }
   void restore() { backend_.restore(); }
 

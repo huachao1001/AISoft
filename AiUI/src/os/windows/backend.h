@@ -77,12 +77,19 @@ void applyRunFormat(Gdiplus::StringFormat& fmt);
 void drawIconGlyph(Gdiplus::Graphics* g, IconId id, const Rect& rc, Color color);
 void releaseIconCaches();
 std::map<std::wstring, Image>& fileIconCache();
+// 显式加载的位图集合：退出时统一释放；手工建的位图挂进这里才有人管
+std::set<Gdiplus::Bitmap*>& loadedImages();
 
 // ── 位图 ──
 Image loadImageFile(const std::wstring& path);
 Size imagePixelSize(const Image& image);
 void releaseLoadedImage(Image image);
 Gdiplus::Bitmap* asBitmap(const Image& image);
+// 像素级读写：解码到 ARGB / 从 ARGB 编码。实现在 image_pixels_windows.cpp
+bool loadImagePixels(const std::wstring& path, RgbaImage& out);
+bool saveImagePixels(const std::wstring& path, const RgbaImage& image, ImageFormat format);
+// 从 ARGB 内存建一张托管位图，交出去的 Image 由 releaseLoadedImage 释放
+Image imageFromPixels(const RgbaImage& image);
 // HICON → ARGB 位图；句柄由调用方释放，返回值由 releaseLoadedImage 释放
 Image imageFromIcon(HICON icon);
 // 从可执行文件里取指定边长的原生图标；失败返回空句柄，调用方负责 DestroyIcon。

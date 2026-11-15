@@ -46,6 +46,7 @@ set(AIUI_SOURCES
   src/widgets/list_view.cpp
   src/widgets/option_view.cpp
   src/widgets/password_box.cpp
+  src/widgets/photo_view.cpp
   src/widgets/status_bar.cpp
   src/widgets/text_view.cpp
   src/widgets/title_bar.cpp
@@ -67,6 +68,7 @@ if(WIN32)
     src/os/windows/shell_menu_register.cpp
     src/os/windows/install_windows.cpp
     src/os/windows/exe_icon_windows.cpp
+    src/os/windows/image_pixels_windows.cpp
   )
 elseif(APPLE)
   message(FATAL_ERROR "AiUI 的 macOS 后端尚未实现（src/os/macos/macos_backend.h）")
