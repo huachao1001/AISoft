@@ -197,6 +197,8 @@ class PhotoView : public View {
   bool dragging_ = false;
   Point dragOrigin_{};
   Point dragStartPan_{};
+  // 按下前的光标：拖完要还原成宿主设的那个，而不是硬写箭头
+  CursorShape cursorBeforeDrag_ = CursorShape::kArrow;
 
   // 上一次鼠标位置（控件局部坐标），滚轮与工具栏缩放都以它为锚
   Point lastMouse_{};

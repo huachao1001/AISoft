@@ -51,6 +51,9 @@ struct MouseEvent {
 // 这类「抓住并移动」的语义，用握起来的手掌才不会和「点击链接」混淆。
 // kGrabbing 表示已经按住，手指收拢——按下与不按下必须能分辨，否则用户看不
 // 出这次按下到底有没有抓住。系统没有这两个形状，后端自绘。
+//
+// 看图这类控件平时用 kArrow 就够了，只在按住拖拽时换成 kGrabbing：手掌一
+// 直挂着太吵，也抢了「这里可以点」的语义。
 enum class CursorShape { kArrow, kHand, kSizeHorizontal, kIBeam, kGrab, kGrabbing };
 
 // 键位：只列界面会用到的键，避免绑定具体平台的虚拟键码

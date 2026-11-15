@@ -224,7 +224,7 @@ AIUI_TEST(photo_view_drag_works_without_zooming_first) {
   AIUI_CHECK(view.pan().x < start.x || view.pan().y < start.y);
 }
 
-AIUI_TEST(photo_view_drag_uses_grab_cursor_and_switches_on_press) {
+AIUI_TEST(photo_view_uses_open_hand_only_while_dragging) {
   PhotoEnv env;
   env.fake.platform().setImageSize(Size{200, 100});
   // 光标要经过 ViewRoot 才能落到窗口上，所以这里真的建一层根视图
@@ -237,13 +237,13 @@ AIUI_TEST(photo_view_drag_uses_grab_cursor_and_switches_on_press) {
   FakeWindow* window = env.fake.platform().lastWindow();
   AIUI_CHECK(window != nullptr);
 
-  // 光标本就是在悬停时才落到窗口上：先模拟鼠标进入控件
+  // 悬停保持箭头：手掌只在真的按住时才出现
   view->onMouseMove(mouseAt(200, 200));
-  AIUI_CHECK(window->cursor() == CursorShape::kGrab);
+  AIUI_CHECK(window->cursor() == CursorShape::kArrow);
   view->onMouseDown(mouseAt(200, 200, MouseButton::kLeft));
   AIUI_CHECK(window->cursor() == CursorShape::kGrabbing);
   view->onMouseUp(mouseAt(200, 200));
-  AIUI_CHECK(window->cursor() == CursorShape::kGrab);
+  AIUI_CHECK(window->cursor() == CursorShape::kArrow);
 }
 
 AIUI_TEST(photo_view_mouse_leave_releases_drag) {
@@ -264,7 +264,7 @@ AIUI_TEST(photo_view_mouse_leave_releases_drag) {
   view->onMouseLeave();
   // 鼠标离开必须松掉捕获与握紧光标，否则用户回来时控件还以为在拖
   AIUI_CHECK(!window->captured());
-  AIUI_CHECK(window->cursor() == CursorShape::kGrab);
+  AIUI_CHECK(window->cursor() == CursorShape::kArrow);
 }
 
 // ───────────────────────── 代理位图 ─────────────────────────

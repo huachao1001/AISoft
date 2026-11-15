@@ -89,8 +89,7 @@ Point toRotatedPoint(int x, int y, Size src, int turns) {
 PhotoView::PhotoView() {
   setClaimsPointer(true);
   setFocusable(true);
-  // 悬停就提示「可以抓住拖」：手掌比箭头直接
-  setCursor(CursorShape::kGrab);
+  // 悬停保持箭头：只有真的按住拖拽才换成握起的手，否则满屏手掌太吵
 }
 
 PhotoView::~PhotoView() {
@@ -808,6 +807,7 @@ bool PhotoView::onMouseDown(const MouseEvent& e) {
   lastMouse_ = e.position;
   hasLastMouse_ = true;
   // 按下与松开必须能分辨，否则用户看不出这次按下有没有抓住
+  cursorBeforeDrag_ = cursorShape();
   setCursor(CursorShape::kGrabbing);
   captureMouse();
   return true;
@@ -822,7 +822,8 @@ void PhotoView::onMouseUp(const MouseEvent& e) {
   clampPan();
   invalidate();
   notifyChanged();
-  setCursor(CursorShape::kGrab);
+  // 只有按住拖拽时才用握起的手，其余时间保持宿主设的光标（默认箭头）
+  setCursor(cursorBeforeDrag_);
 }
 
 void PhotoView::onMouseMove(const MouseEvent& e) {
@@ -831,7 +832,6 @@ void PhotoView::onMouseMove(const MouseEvent& e) {
   hasLastMouse_ = true;
 
   if (!dragging_) {
-    if (image_.isValid()) setCursor(CursorShape::kGrab);
     return;
   }
   pan_ = Point{dragStartPan_.x + (e.position.x - dragOrigin_.x),
@@ -849,7 +849,7 @@ void PhotoView::onMouseLeave() {
     dragging_ = false;
     releaseMouse();
     clampPan();
-    setCursor(CursorShape::kGrab);
+    setCursor(cursorBeforeDrag_);
     invalidate();
     notifyChanged();
   }
