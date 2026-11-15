@@ -419,6 +419,24 @@ class Platform {
     (void)image;
     return Image();
   }
+  // 解码成「缩略代理」：最长边不超过 maxSide，超出时等比缩小。
+  //
+  // 超大图（几万像素见方）整张解码要几百 MB，动画每帧都要贴一次，直接用它
+  // 既卡又占内存。动画与中间过程改用这张小图，稳定下来再换全尺寸的。
+  // 已经足够小的图应当原样加载，不要为了统一而重采样——那会白白糊一档。
+  virtual Image loadImageThumbnail(const std::wstring& path, int maxSide) {
+    (void)maxSide;
+    return loadImage(path);
+  }
+  // 只解码一个区域（原图像素坐标）而不是整张。
+  // 放大到像素级时一屏可能只覆盖几十个像素，没必要为此解出整张巨图。
+  // 不支持时调用方按「region 为空」降级，自己裁 loadImagePixels 的结果。
+  virtual bool loadImageRegion(const std::wstring& path, const Rect& region, RgbaImage& out) {
+    (void)path;
+    (void)region;
+    (void)out;
+    return false;
+  }
 
   // ── 时间 ──
   // 单调递增毫秒计时器；只需能相互比较差值，不做日历换算

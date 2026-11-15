@@ -1,5 +1,6 @@
 // Windows 窗口后端：窗口类注册、消息翻译、离屏绘制
 #include "backend.h"
+#include "cursor_windows.h"
 #include "windows_backend.h"
 
 #include "AiUI/platform.h"
@@ -66,6 +67,16 @@ LPCTSTR cursorId(CursorShape shape) {
     case CursorShape::kSizeHorizontal: return IDC_SIZEWE;
     case CursorShape::kIBeam: return IDC_IBEAM;
     default: return IDC_ARROW;
+  }
+}
+
+// 光标形状 → 系统句柄。系统没有「手掌抓取」这一对，那两种由自绘模块提供，
+// 这里只把它们接到同一条出口上，调用方不必区分系统光标和自绘光标。
+HCURSOR cursorHandle(CursorShape shape) {
+  switch (shape) {
+    case CursorShape::kGrab: return handCursor(false);
+    case CursorShape::kGrabbing: return handCursor(true);
+    default: return ::LoadCursorW(nullptr, cursorId(shape));
   }
 }
 
@@ -248,7 +259,7 @@ class WindowsWindow : public PlatformWindow {
 
   void setCursorShape(CursorShape shape) override {
     cursor_ = shape;
-    if (hwnd_) ::SetCursor(::LoadCursorW(nullptr, cursorId(shape)));
+    if (hwnd_) ::SetCursor(cursorHandle(shape));
   }
 
   void captureMouse(bool capture) override {
@@ -494,7 +505,7 @@ class WindowsWindow : public PlatformWindow {
       // 交回系统——它会设好缩放光标，我们覆盖只会把缩放箭头变回普通箭头。
       case WM_SETCURSOR:
         if (style_.topLevel && LOWORD(lParam) == HTCLIENT) {
-          ::SetCursor(::LoadCursorW(nullptr, cursorId(cursor_)));
+          ::SetCursor(cursorHandle(cursor_));
           return TRUE;
         }
         break;
@@ -944,9 +955,18 @@ class WindowsPlatform : public Platform {
     return os::windows::imageFromPixels(image);
   }
 
+  Image loadImageThumbnail(const std::wstring& path, int maxSide) override {
+    return os::windows::loadImageThumbnail(path, maxSide);
+  }
+
+  bool loadImageRegion(const std::wstring& path, const Rect& region, RgbaImage& out) override {
+    return os::windows::loadImageRegion(path, region, out);
+  }
+
   void startupDrawing() override { os::windows::ensureGdiplus(); }
 
   void shutdownDrawing() override {
+    os::windows::releaseCursorCache();
     os::windows::releaseIconCaches();
     os::windows::releaseGdiplus();
   }
@@ -1255,6 +1275,7 @@ void startupPlatform() {
 
 void shutdownPlatform() {
   if (!os::windows::hasStarted()) return;
+  os::windows::releaseCursorCache();
   os::windows::releaseIconCaches();
   os::windows::releaseGdiplus();
   os::windows::markStarted(false);

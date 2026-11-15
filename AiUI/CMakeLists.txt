@@ -62,6 +62,7 @@ if(WIN32)
   list(APPEND AIUI_SOURCES
     src/os/windows/window_windows.cpp
     src/os/windows/painter_windows.cpp
+    src/os/windows/cursor_windows.cpp
     src/os/windows/icon_windows.cpp
     src/os/windows/title_bar_windows.cpp
     src/os/windows/platform_windows.cpp
@@ -114,6 +115,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     tests/test_framework.cpp
     tests/mock_platform.cpp
     tests/test_core.cpp
+    tests/test_photo_view.cpp
   )
   target_include_directories(AiUI_tests PRIVATE tests)
   target_link_libraries(AiUI_tests PRIVATE AiUI)

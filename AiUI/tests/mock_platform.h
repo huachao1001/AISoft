@@ -7,6 +7,7 @@
 
 #include "AiUI/platform.h"
 
+#include <algorithm>
 #include <memory>
 #include <vector>
 
@@ -246,14 +247,35 @@ class FakePlatform : public AiUI::Platform {
   // 谁把它用在光标定位上，长文本的插入点就会被推远
   int advanceText(const std::wstring& text, const AiUI::Font& font) override;
   AiUI::Image loadImage(const std::wstring& path) override {
+    // 只有显式给过尺寸才当成「能解码」：PhotoView 的几何测试要一张有位图
+    // 句柄、有像素尺寸的假图，但其余用例希望打开失败。
+    if (imageSize_.width <= 0 || imageSize_.height <= 0) return AiUI::Image();
     (void)path;
-    return AiUI::Image();
+    return AiUI::Image(&imageHandle_);
   }
   AiUI::Size imageSize(const AiUI::Image& image) override {
     (void)image;
-    return AiUI::Size{};
+    return imageSize_;
   }
   void releaseImage(AiUI::Image image) override { (void)image; }
+  // 超大图走这条：返回与 maxSide 等比的小图，PhotoView 据此算 proxyRatio_
+  AiUI::Image loadImageThumbnail(const std::wstring& path, int maxSide) override {
+    if (imageSize_.width <= 0 || imageSize_.height <= 0 || maxSide <= 0) return AiUI::Image();
+    const float scale = static_cast<float>(maxSide) /
+                        static_cast<float>((std::max)(imageSize_.width, imageSize_.height));
+    if (scale >= 1.0f) return AiUI::Image();
+    thumbSize_ = AiUI::Size{static_cast<int>(imageSize_.width * scale),
+                            static_cast<int>(imageSize_.height * scale)};
+    if (thumbSize_.width <= 0 || thumbSize_.height <= 0) return AiUI::Image();
+    (void)path;
+    return AiUI::Image(&thumbHandle_);
+  }
+  // 设成非零尺寸后 loadImage 开始返回有效位图，尺寸由它决定
+  void setImageSize(AiUI::Size size) {
+    imageSize_ = size;
+    thumbSize_ = AiUI::Size{};
+  }
+  AiUI::Size thumbSize() const { return thumbSize_; }
   AiUI::Image appIcon() override { return AiUI::Image(); }
   void startupDrawing() override { drawingReady_ = true; }
   void shutdownDrawing() override { drawingReady_ = false; }
@@ -281,6 +303,11 @@ class FakePlatform : public AiUI::Platform {
   bool brokenGlyphBounds_ = false;
   int destroyed_ = 0;
   int64_t monotonicMs_ = 0;
+  AiUI::Size imageSize_{};
+  AiUI::Size thumbSize_{};
+  // loadImage 返回的句柄必须一直非空；内容无关紧要，只当「有效位图」用
+  int imageHandle_ = 0;
+  int thumbHandle_ = 0;
   FakeWindow* lastWindow_ = nullptr;
   std::wstring lastName_;
   std::wstring clipboard_;

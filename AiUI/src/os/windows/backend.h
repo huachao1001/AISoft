@@ -88,6 +88,10 @@ Gdiplus::Bitmap* asBitmap(const Image& image);
 // 像素级读写：解码到 ARGB / 从 ARGB 编码。实现在 image_pixels_windows.cpp
 bool loadImagePixels(const std::wstring& path, RgbaImage& out);
 bool saveImagePixels(const std::wstring& path, const RgbaImage& image, ImageFormat format);
+// 只解码一块区域；语义见 Platform::loadImageRegion
+bool loadImageRegion(const std::wstring& path, const Rect& region, RgbaImage& out);
+// 等比缩小到最长边 maxSide；已足够小时原样返回全尺寸位图
+Image loadImageThumbnail(const std::wstring& path, int maxSide);
 // 从 ARGB 内存建一张托管位图，交出去的 Image 由 releaseLoadedImage 释放
 Image imageFromPixels(const RgbaImage& image);
 // HICON → ARGB 位图；句柄由调用方释放，返回值由 releaseLoadedImage 释放
