@@ -116,6 +116,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     tests/mock_platform.cpp
     tests/test_core.cpp
     tests/test_photo_view.cpp
+    tests/test_photo_view_anim.cpp
   )
   target_include_directories(AiUI_tests PRIVATE tests)
   target_link_libraries(AiUI_tests PRIVATE AiUI)

@@ -45,6 +45,23 @@ float easeOutCubic(float t) {
 
 float lerp(float a, float b, float t) { return a + (b - a) * t; }
 
+// 平移上限（返回「平移量绝对值最多多少」）。
+//
+// 两条约束在这里打架：
+//   · 图比视图大时不露白 → 上限 (drawn − view) / 2
+//   · 锚点缩放要求光标下的像素钉住 → 小图必须允许把图心推离视图中心
+// 旧版按「drawn > view」一刀切成两段：小图给 view/2，大图给 (drawn−view)/2。
+// 两段在刚好铺满处不连续——余量从 view/2 直接掉到 0，滚轮一跨过那一格整幅图
+// 就横跳几十像素（实测 2 倍处 x 跳 25px、4 倍处 y 跳 46px）。
+//
+// 改成取两者的较大值：在 drawn == view 处两边都等于 view/2，函数连续；
+// 图再大时 (drawn−view)/2 接管，逐渐回到「不露白」的严格规则。
+// 全程不小于 view/2，所以锚点反解出的平移一定在范围内，不会被夹回去。
+float panLimit(float drawn, float view) {
+  if (view <= 0.0f) return 0.0f;
+  return (std::max)(view * 0.5f, (drawn - view) * 0.5f);
+}
+
 Size rotatedSizeOf(Size size, int turns) {
   if ((((turns % 4) + 4) % 4) % 2 != 0) return Size{size.height, size.width};
   return size;
@@ -142,7 +159,7 @@ bool PhotoView::loadFile(const std::wstring& path) {
   path_ = path;
   rotation_ = 0;
   displayAngle_ = 0.0f;
-  pan_ = Point{};
+  pan_ = PanF{};
   hasLastMouse_ = false;
   anim_ = Animation{};
   dropPixelCache();
@@ -159,7 +176,7 @@ void PhotoView::setImage(const Image& image) {
   proxy_ = Image{};
   proxyRatio_ = 0.0f;
   sourceSize_ = image_.isValid() ? platform()->imageSize(image) : Size{};
-  pan_ = Point{};
+  pan_ = PanF{};
   anim_ = Animation{};
   dropPixelCache();
   clampPan();
@@ -179,7 +196,7 @@ void PhotoView::clearImage() {
   fitToWindow_ = false;
   rotation_ = 0;
   displayAngle_ = 0.0f;
-  pan_ = Point{};
+  pan_ = PanF{};
   anim_ = Animation{};
   hasLastMouse_ = false;
   dragging_ = false;
@@ -195,7 +212,9 @@ void PhotoView::dropPixelCache() {
 // ───────────────────────── 缩放 ─────────────────────────
 
 Point PhotoView::zoomAnchor() const {
-  if (hasLastMouse_) return lastMouse_;
+  // 工具栏按钮也走这里：鼠标停在画布空白处时以它当锚点会把图推走，
+  // 所以只认「落在图上的」鼠标位置，否则退到视图中心。
+  if (hasLastMouse_ && isOnImage(lastMouse_)) return lastMouse_;
   return clientRect().center();
 }
 
@@ -243,7 +262,7 @@ void PhotoView::applyFitNow() {
   zoom_ = fitZoomFor(rotation_);
   fitToWindow_ = true;
   displayAngle_ = static_cast<float>(rotation_ * 90);
-  pan_ = Point{};
+  pan_ = PanF{};
   dropPixelCache();
 }
 
@@ -261,12 +280,13 @@ void PhotoView::applyZoomAt(float zoom, Point anchor) {
   const Point center = clientRect().center();
   const float ax = static_cast<float>(anchor.x - center.x);
   const float ay = static_cast<float>(anchor.y - center.y);
-  const float dx = ax - static_cast<float>(pan_.x);
-  const float dy = ay - static_cast<float>(pan_.y);
+  const float dx = ax - pan_.x;
+  const float dy = ay - pan_.y;
 
   zoom_ = zoom;
-  pan_.x = static_cast<int>(std::lround(ax - dx * ratio));
-  pan_.y = static_cast<int>(std::lround(ay - dy * ratio));
+  // 保留小数：这里取整会让整幅图每帧抖 1 像素，放大后很明显
+  pan_.x = ax - dx * ratio;
+  pan_.y = ay - dy * ratio;
 
   clampPan();
   dropPixelCache();
@@ -276,14 +296,15 @@ void PhotoView::zoomToFit() {
   if (sourceSize_.width <= 0 || clientRect().isEmpty()) {
     zoom_ = 1.0f;
     fitToWindow_ = false;
-    pan_ = Point{};
+    pan_ = PanF{};
     invalidate();
     return;
   }
 
   const float target = fitZoomFor(rotation_);
   const bool alreadyThere =
-      std::fabs(target - zoom_) < 0.0005f && pan_.x == 0 && pan_.y == 0 &&
+      std::fabs(target - zoom_) < 0.0005f && std::fabs(pan_.x) < 0.01f &&
+      std::fabs(pan_.y) < 0.01f &&
       std::fabs(displayAngle_ - static_cast<float>(rotation_ * 90)) < 0.001f;
   if (animMs_ <= 0 || alreadyThere) {
     applyFitNow();
@@ -317,7 +338,7 @@ void PhotoView::beginRotate(int turns) {
 
   if (animMs_ <= 0) {
     displayAngle_ = static_cast<float>(rotation_ * 90);
-    pan_ = Point{};
+    pan_ = PanF{};
     if (fitToWindow_) applyFitNow();
     dropPixelCache();
     invalidate();
@@ -335,14 +356,14 @@ void PhotoView::beginRotate(int turns) {
   anim.toAngle = displayAngle_ + static_cast<float>(turns * 90);
   anim.fromPan = pan_;
   // 宽高对调后旧平移量没有意义，转到一半就回中
-  anim.toPan = Point{};
+  anim.toPan = PanF{};
   // 适应窗口状态下，转完要按新宽高重算倍数
   anim.refit = fitToWindow_;
   beginAnimation(anim);
 }
 
 void PhotoView::setPan(Point pan) {
-  pan_ = pan;
+  pan_ = PanF{static_cast<float>(pan.x), static_cast<float>(pan.y)};
   clampPan();
   dropPixelCache();
   invalidate();
@@ -352,9 +373,11 @@ void PhotoView::setPan(Point pan) {
 // ───────────────────────── 动画 ─────────────────────────
 
 void PhotoView::beginZoomTo(float zoom, Point anchor, int durationMs, bool refit) {
-  // 先把上一段动画落位再算目标：目标平移是从「当前 pan」反解的，
-  // 若等算完再落位，反解用的就是中途值、落位后又被覆盖，锚点会跳一下。
-  finishAnimation();
+  // 不调用 finishAnimation：那会把画面直接弹到上一段动画的目标位置，
+  // 连续滚轮时每一格都弹一下，看起来就是「突变」。这里只清掉动画、
+  // 保留当前这一帧的 zoom_/pan_ 当起点，位置因此是连续的。
+  // 累计格数由 targetZoom() 在进入本函数前读出，所以清掉动画不丢格。
+  anim_ = Animation{};
 
   const float clamped = (std::min)(kMaxZoom, (std::max)(kMinZoom, zoom));
   const Point center = clientRect().center();
@@ -363,11 +386,10 @@ void PhotoView::beginZoomTo(float zoom, Point anchor, int durationMs, bool refit
 
   if (zoom_ <= 0.0f) zoom_ = 1.0f;
   const float ratio = clamped / zoom_;
-  // d = 锚点相对图像中心的 视图偏移 − 当前平移
-  const float dx = anchorX - static_cast<float>(pan_.x);
-  const float dy = anchorY - static_cast<float>(pan_.y);
-  const Point targetPan{static_cast<int>(std::lround(anchorX - dx * ratio)),
-                        static_cast<int>(std::lround(anchorY - dy * ratio))};
+  // d = 锚点相对图像中心的视图偏移 − 当前平移
+  const float dx = anchorX - pan_.x;
+  const float dy = anchorY - pan_.y;
+  const PanF targetPan{anchorX - dx * ratio, anchorY - dy * ratio};
 
   if (durationMs <= 0 || std::fabs(clamped - zoom_) < 0.0001f) {
     // 倍数没变也可能是平移量该变，仍按目标落一次位
@@ -427,14 +449,13 @@ void PhotoView::tickAnimation() {
     // 逐帧按「锚点下的像素不动」反解 pan：直线插值 fromPan→toPan 也能到位，
     // 但前提是两条路径都在同一倍数序列上——直接反解才与最终状态严格一致，
     // 而且中途每一次重绘都自然满足锚定，不需要额外修正。
+    // 保留小数：取整会让整幅图逐帧抖 ±1 像素，放大后非常明显。
     const float ratio = anim_.fromZoom > 0.0f ? zoom_ / anim_.fromZoom : 1.0f;
-    pan_.x = static_cast<int>(std::lround(anim_.anchorX - anim_.deltaX * ratio));
-    pan_.y = static_cast<int>(std::lround(anim_.anchorY - anim_.deltaY * ratio));
+    pan_.x = anim_.anchorX - anim_.deltaX * ratio;
+    pan_.y = anim_.anchorY - anim_.deltaY * ratio;
   } else {
-    pan_.x = static_cast<int>(std::lround(
-        lerp(static_cast<float>(anim_.fromPan.x), static_cast<float>(anim_.toPan.x), t)));
-    pan_.y = static_cast<int>(std::lround(
-        lerp(static_cast<float>(anim_.fromPan.y), static_cast<float>(anim_.toPan.y), t)));
+    pan_.x = lerp(anim_.fromPan.x, anim_.toPan.x, t);
+    pan_.y = lerp(anim_.fromPan.y, anim_.toPan.y, t);
   }
 
   dropPixelCache();
@@ -456,7 +477,7 @@ void PhotoView::finishAnimation() {
   displayAngle_ = static_cast<float>(rotation_ * 90);
   if (refit) {
     zoom_ = fitZoomFor(rotation_);
-    pan_ = Point{};
+    pan_ = PanF{};
     fitToWindow_ = true;
   }
   dropPixelCache();
@@ -473,17 +494,10 @@ void PhotoView::clampPan() {
   const Rect rc = clientRect();
   if (rc.isEmpty()) return;
   const Size rotated = rotatedSize();
-  const int drawnW = static_cast<int>(std::lround(rotated.width * zoom_));
-  const int drawnH = static_cast<int>(std::lround(rotated.height * zoom_));
-
-  // 图比视图大：夹在 ±(drawn − view)/2，保证边缘不漏出空白。
-  // 图比视图小：允许它离开居中位置，上限是「图心最多移到视图边上」。
-  // 这里不能一律用 (view − drawn)/2 把它按在正中——锚点缩放要求光标下的
-  // 像素钉住不动，图必然要偏离中心；强行居中会在放大时把图从光标底下拽走，
-  // 「鼠标在哪放大哪」就废了。代价是图小时可能露出一块空白，这是对的：
-  // 那个像素本来就该在光标底下。
-  const int limitX = drawnW > rc.width() ? (drawnW - rc.width()) / 2 : rc.width() / 2;
-  const int limitY = drawnH > rc.height() ? (drawnH - rc.height()) / 2 : rc.height() / 2;
+  const float drawnW = rotated.width * zoom_;
+  const float drawnH = rotated.height * zoom_;
+  const float limitX = panLimit(drawnW, static_cast<float>(rc.width()));
+  const float limitY = panLimit(drawnH, static_cast<float>(rc.height()));
   pan_.x = (std::max)(-limitX, (std::min)(limitX, pan_.x));
   pan_.y = (std::max)(-limitY, (std::min)(limitY, pan_.y));
 }
@@ -584,6 +598,27 @@ bool PhotoView::isPixelGridVisible() const {
   return sourceSize_.width > 0 && zoom_ >= gridZoom_ && anim_.kind == AnimKind::kNone;
 }
 
+bool PhotoView::isOnImage(Point viewPoint) const {
+  if (sourceSize_.width <= 0 || sourceSize_.height <= 0 || zoom_ <= 0.0f) return false;
+  // 与 visibleSourceRectAt 同一套反解：视图点 → 图像坐标，再看是否落在图内。
+  // 绘制用的是整数平移（translate 只收 int），这里也用同一个取整，否则
+  // 图边缘那半个像素上会出现「看着在图上、却判成图外」的不一致。
+  const Point center = clientRect().center();
+  const float ox = static_cast<float>(viewPoint.x) -
+                   static_cast<float>(static_cast<int>(std::lround(
+                       static_cast<float>(center.x) + pan_.x)));
+  const float oy = static_cast<float>(viewPoint.y) -
+                   static_cast<float>(static_cast<int>(std::lround(
+                       static_cast<float>(center.y) + pan_.y)));
+  float lx = 0.0f;
+  float ly = 0.0f;
+  unrotateOffset90(ox, oy, rotation_, lx, ly);
+  const float ix = lx / zoom_ + sourceSize_.width / 2.0f;
+  const float iy = ly / zoom_ + sourceSize_.height / 2.0f;
+  return ix >= 0.0f && iy >= 0.0f && ix < static_cast<float>(sourceSize_.width) &&
+         iy < static_cast<float>(sourceSize_.height);
+}
+
 // ───────────────────────── 像素格 ─────────────────────────
 
 void PhotoView::paintPixelGrid(Painter& painter, const Rect& view) {
@@ -606,8 +641,13 @@ void PhotoView::paintPixelGrid(Painter& painter, const Rect& view) {
   if (pixelCache_.isEmpty()) return;
 
   const Point center = view.center();
-  const float cx = static_cast<float>(center.x + pan_.x);
-  const float cy = static_cast<float>(center.y + pan_.y);
+  // 与 onPaint 的 translate 保持完全一致：网格线必须落在实际绘制出的像素
+  // 边界上，否则网格一出现就会整体偏半个像素——看起来就是「开了网格图就
+  // 跳了一下」。两处都按同一个整数基准取整。
+  const float cx = static_cast<float>(
+      static_cast<int>(std::lround(static_cast<float>(center.x) + pan_.x)));
+  const float cy = static_cast<float>(
+      static_cast<int>(std::lround(static_cast<float>(center.y) + pan_.y)));
   const float halfW = sourceSize_.width * cell / 2.0f;
   const float halfH = sourceSize_.height * cell / 2.0f;
   const int turns = normalizeTurns(rotation_);
@@ -762,7 +802,10 @@ void PhotoView::onPaint(Painter& painter, const Rect& rect) {
           std::ceil(static_cast<double>(source.bottom) / ratio * zoom_ - fullH / 2.0))};
 
   painter.save();
-  painter.translate(center.x + pan_.x, center.y + pan_.y);
+  // 平移量是浮点（动画逐帧反解出来的），但后端 translate 只收整数。
+  // 这里四舍五入而不是截断：截断会让画面整体偏半个像素，放大时看得出来。
+  painter.translate(static_cast<int>(std::lround(static_cast<float>(center.x) + pan_.x)),
+                    static_cast<int>(std::lround(static_cast<float>(center.y) + pan_.y)));
   if (std::fabs(angle) > 0.001f) painter.rotate(angle);
 
   // 放大到能看清像素时用最近邻：插值会把像素格抹成一团，那不是用户想看的
@@ -786,7 +829,9 @@ void PhotoView::onLayout(const Rect& frame) {
   if (!fitToWindow_ || anim_.kind != AnimKind::kNone) return;
   if (sourceSize_.width <= 0 || frame.width() <= 0 || frame.height() <= 0) return;
   const float target = fitZoomFor(rotation_);
-  if (std::fabs(target - zoom_) < 0.0005f && pan_.x == 0 && pan_.y == 0) return;
+  if (std::fabs(target - zoom_) < 0.0005f && std::fabs(pan_.x) < 0.01f &&
+      std::fabs(pan_.y) < 0.01f)
+    return;
   applyFitNow();
   invalidate();
   notifyChanged();
@@ -834,8 +879,8 @@ void PhotoView::onMouseMove(const MouseEvent& e) {
   if (!dragging_) {
     return;
   }
-  pan_ = Point{dragStartPan_.x + (e.position.x - dragOrigin_.x),
-               dragStartPan_.y + (e.position.y - dragOrigin_.y)};
+  pan_ = PanF{dragStartPan_.x + static_cast<float>(e.position.x - dragOrigin_.x),
+              dragStartPan_.y + static_cast<float>(e.position.y - dragOrigin_.y)};
   // 拖动过程中不做 clamp：一旦夹住，用户往回拖时要等鼠标走完这一段才动，
   // 手感像卡住。松手时再夹。
   dropPixelCache();
@@ -857,6 +902,9 @@ void PhotoView::onMouseLeave() {
 
 bool PhotoView::onMouseWheel(const MouseEvent& e) {
   if (!image_.isValid() || e.wheelDelta == 0) return false;
+  // 光标在画布空白处时不动：锚点在图上才有「放大哪一点」可言，拿空白处当锚点
+  // 只会把图整块推出视野，看起来就像位置突变。
+  if (!isOnImage(e.position)) return false;
   // 锚在光标位置：滚轮放大时那个像素必须留在原地
   lastMouse_ = e.position;
   hasLastMouse_ = true;
@@ -868,9 +916,11 @@ bool PhotoView::onMouseWheel(const MouseEvent& e) {
 }
 
 void PhotoView::onDoubleClick(const MouseEvent& e) {
+  if (!image_.isValid()) return;
+  // 同上：双击空白处不该缩放
+  if (!isOnImage(e.position)) return;
   lastMouse_ = e.position;
   hasLastMouse_ = true;
-  if (!image_.isValid()) return;
   // 双击在「整图」与「原始大小」之间切换：这两个是所有看图软件的共同预期
   if (zoom_ < 0.999f) {
     zoomToActual();

@@ -61,8 +61,12 @@ class PhotoView : public View {
   void rotate(int quarterTurns);
   int rotation() const { return rotation_; }
 
-  // 平移量（视图像素）；0 表示图像中心对齐视图中心
-  Point pan() const { return pan_; }
+  // 平移量（视图像素）；0 表示图像中心对齐视图中心。
+  // 内部用浮点存：动画逐帧反解出来的平移是小数，先取整再画会让整幅图在
+  // 每帧之间抖 ±1 像素（放大后尤其明显），也破坏「锚点像素不动」。
+  Point pan() const {
+    return Point{static_cast<int>(std::lround(pan_.x)), static_cast<int>(std::lround(pan_.y))};
+  }
   void setPan(Point pan);
 
   // ── 动画 ──
@@ -80,9 +84,14 @@ class PhotoView : public View {
   void setPixelRegionProvider(PixelRegionProvider fn) { pixelProvider_ = std::move(fn); }
   // 当前倍数是否已经进入像素网格模式
   bool isPixelGridVisible() const;
-  // 进入像素网格的倍数阈值
+  // 进入像素网格的倍数阈值。默认 10 倍（界面上显示 1000%）：再小格子不到
+  // 10 像素，网格线和 RGB 数字都塞不进去，画出来只是脏。
   void setPixelGridZoom(float zoom) { gridZoom_ = zoom; }
   float pixelGridZoom() const { return gridZoom_; }
+
+  // 视图点底下是否有图像像素。缩放只看图上的点：光标停在画布空白处时
+  // 以它当锚点会把整幅图推出视野，看起来就是「一滚就飞了」。
+  bool isOnImage(Point viewPoint) const;
 
   // 双击与滚轮的行为在宿主里决定，这里只报事件
   using ZoomHandler = std::function<void(float factor)>;
@@ -122,6 +131,13 @@ class PhotoView : public View {
   // 重算倍数的缩放，靠 refit 标记区分。多一种动画就多一套互斥规则。
   enum class AnimKind { kNone, kZoom, kRotate };
 
+  // 平移量的内部表示。必须是浮点：动画逐帧反解出来的是小数，先取整再画会让
+  // 整幅图在相邻帧之间抖 ±1 像素，放大后肉眼可见；对外仍用整数 Point。
+  struct PanF {
+    float x = 0.0f;
+    float y = 0.0f;
+  };
+
   struct Animation {
     AnimKind kind = AnimKind::kNone;
     int64_t startMs = 0;
@@ -130,8 +146,8 @@ class PhotoView : public View {
     float toZoom = 1.0f;
     float fromAngle = 0.0f;
     float toAngle = 0.0f;
-    Point fromPan{};
-    Point toPan{};
+    PanF fromPan{};
+    PanF toPan{};
     // 缩放动画用：锚点相对视图中心的偏移，以及「锚点 − 视图中心 − 起始平移」。
     // 每帧由这两个量反解 pan，「光标下的像素钉住」因此在动画全程都成立。
     float anchorX = 0.0f;
@@ -144,7 +160,8 @@ class PhotoView : public View {
 
   // 缩放在动画中的目标倍数：连续滚轮要按目标累计，按中途值累计会丢格
   float targetZoom() const;
-  // 把平移量夹到「图至少露出一点」的范围
+  // 把平移量夹到「图至少露出一点」的范围。夹的范围是连续的（见 panLimit），
+  // 所以放大经过「刚好铺满」那一格时不会横跳。
   void clampPan();
   void notifyChanged();
   // 缩放锚点：鼠标在控件内就用鼠标位置，否则视图中心
@@ -193,10 +210,10 @@ class PhotoView : public View {
   int rotation_ = 0;
   // 绘制用的角度：旋转动画期间不等于 rotation_ * 90
   float displayAngle_ = 0.0f;
-  Point pan_{};
+  PanF pan_{};
   bool dragging_ = false;
   Point dragOrigin_{};
-  Point dragStartPan_{};
+  PanF dragStartPan_{};
   // 按下前的光标：拖完要还原成宿主设的那个，而不是硬写箭头
   CursorShape cursorBeforeDrag_ = CursorShape::kArrow;
 
@@ -210,7 +227,7 @@ class PhotoView : public View {
   PixelRegionProvider pixelProvider_;
   RgbaImage pixelCache_;
   Rect pixelCacheRect_{};
-  float gridZoom_ = 12.0f;
+  float gridZoom_ = 10.0f;
 
   ZoomHandler onWheelZoom_;
   ChangeHandler onChange_;

@@ -301,8 +301,95 @@ AIUI_TEST(photo_view_pixel_grid_only_appears_when_zoomed_in) {
   view.setZoomAt(2.0f, Point{200, 200});
   AIUI_CHECK(!view.isPixelGridVisible());
 
-  view.setZoomAt(16.0f, Point{200, 200});
+  // 1000% 就该看到网格：默认阈值是 10 倍
+  AIUI_CHECK(std::fabs(view.pixelGridZoom() - 10.0f) < 0.001f);
+  view.setZoomAt(9.9f, Point{200, 200});
+  AIUI_CHECK(!view.isPixelGridVisible());
+  view.setZoomAt(10.0f, Point{200, 200});
   AIUI_CHECK(view.isPixelGridVisible());
+}
+
+// 放大经过「图刚好铺满视图」那一格时，平移上限不能突变。
+// 旧版在 drawn == view 处从 view/2 直接掉到 0，整幅图横跳几十像素，
+// 表现就是「放大过程中位置突变」。这里逐格检查偏心的连续性。
+AIUI_TEST(photo_view_zoom_past_fit_does_not_jump) {
+  PhotoEnv env;
+  // 200x100 的图铺满 400x400：2 倍时宽刚好等于视图，1.33 倍时高才到
+  env.fake.platform().setImageSize(Size{200, 100});
+  TestPhotoView view;
+  view.layout(Rect{0, 0, 400, 400});
+  view.loadFile(L"a.png");
+  view.setAnimationDuration(0);
+  view.setZoomAt(1.0f, Point{200, 200});
+
+  const Point cursor{250, 170};
+  int prevX = 0;
+  int prevY = 0;
+  bool first = true;
+  // 从 1 倍细步放大到 8 倍，逐格看平移有没有突变
+  for (float z = 1.0f; z <= 8.0f; z += 0.02f) {
+    view.setZoomAt(z, cursor);
+    const Point pan = view.pan();
+    if (!first) {
+      // 每格 2% 的倍数变化，平移的增量应当是平滑的；这里只拒绝大跳
+      AIUI_CHECK(std::abs(pan.x - prevX) <= 12);
+      AIUI_CHECK(std::abs(pan.y - prevY) <= 12);
+    }
+    prevX = pan.x;
+    prevY = pan.y;
+    first = false;
+  }
+}
+
+// 鼠标不在图上时不许缩放：锚点必须落在图像像素上才有「放大哪一点」可言。
+// 拿画布空白处当锚点会把整幅图推出去，看着像位置突变。
+AIUI_TEST(photo_view_wheel_outside_image_does_nothing) {
+  PhotoEnv env;
+  env.fake.platform().setImageSize(Size{200, 100});
+  TestPhotoView view;
+  view.layout(Rect{0, 0, 400, 400});
+  view.loadFile(L"a.png");
+  view.setAnimationDuration(0);
+  // 适应窗口后图是 400x200 居中，上下各 100 像素空白
+  AIUI_CHECK(!view.isOnImage(Point{200, 20}));
+  AIUI_CHECK(view.isOnImage(Point{200, 200}));
+
+  const float before = view.zoom();
+  const Point panBefore = view.pan();
+  MouseEvent e = mouseAt(200, 20);
+  e.wheelDelta = 120;
+  AIUI_CHECK(!view.onMouseWheel(e));
+  AIUI_CHECK(std::fabs(view.zoom() - before) < 0.001f);
+  AIUI_CHECK_EQ(view.pan().x, panBefore.x);
+  AIUI_CHECK_EQ(view.pan().y, panBefore.y);
+
+  // 图上滚轮照常生效
+  MouseEvent in = mouseAt(200, 200);
+  in.wheelDelta = 120;
+  AIUI_CHECK(view.onMouseWheel(in));
+  AIUI_CHECK(view.zoom() > before);
+}
+
+// 工具栏缩放也遵守同一条规则：鼠标停在空白处时退回视图中心当锚点，
+// 否则点「放大」图会从光标底下飞走。
+AIUI_TEST(photo_view_toolbar_zoom_ignores_off_image_mouse) {
+  PhotoEnv env;
+  env.fake.platform().setImageSize(Size{200, 100});
+  TestPhotoView view;
+  view.layout(Rect{0, 0, 400, 400});
+  view.loadFile(L"a.png");
+  view.setAnimationDuration(0);
+  // 2 倍时图占 400x200，纵向 100..300，上下各留 100 像素空白
+  view.setZoomAt(2.0f, Point{200, 200});
+  AIUI_CHECK(!view.isOnImage(Point{200, 20}));
+  view.onMouseMove(mouseAt(200, 20));  // 光标移到空白处
+
+  const Point center = view.clientRect().center();
+  const Point pixelAtCenterBefore = imageAt(view, center);
+  view.zoomBy(1.25f);
+  // 中心锚定：视图中心底下的像素不变
+  AIUI_CHECK_EQ(imageAt(view, center).x, pixelAtCenterBefore.x);
+  AIUI_CHECK_EQ(imageAt(view, center).y, pixelAtCenterBefore.y);
 }
 
 AIUI_TEST(photo_view_center_pixel_tracks_pan) {
