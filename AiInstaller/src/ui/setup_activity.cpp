@@ -581,7 +581,11 @@ void SetupActivity::finish() {
 
 void SetupActivity::showMessage(const std::wstring& text, bool error) {
   AiUI::MessageBoxParams params;
-  params.title = manifest_.windowTitle.empty() ? manifest_.displayName : manifest_.windowTitle;
+  // 标题跟着当前任务走：维护通道里弹出「安装爱压」会让人以为点错了程序。
+  params.title = maintain_ && !manifest_.maintainTitle.empty()
+                     ? manifest_.maintainTitle
+                     : (manifest_.windowTitle.empty() ? manifest_.displayName
+                                                      : manifest_.windowTitle);
   params.message = text;
   params.icon = error ? AiUI::MessageBoxIcon::kError : AiUI::MessageBoxIcon::kInfo;
   AiUI::platform()->showMessageBox(window() ? window()->handle() : nullptr, params);
