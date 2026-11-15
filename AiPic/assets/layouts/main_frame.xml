@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  主窗口整体布局。
+
+  纵向三段：工具栏、内容区、状态栏。
+
+  内容区是 FrameLayout：看图的 PhotoView 铺满整块，首页叠在它上面。
+  这样切换「有图 / 没图」只是显示与否，不必重建视图树；PhotoView 也不会
+  因为换页丢失已经算好的缩放与平移。
+
+  标签名直接就是控件类名。PhotoView 是 AiUI 的通用控件，已登记在
+  layoutgen 的头文件表里，可以直接写。
+-->
+<LinearLayout orientation="vertical">
+
+  <!-- 工具栏：七个按钮由 main_activity.cpp 在创建后装配 -->
+  <ButtonBar id="toolBar" height="52"/>
+
+  <!-- 内容区：底层看图，上层空状态 -->
+  <FrameLayout id="content" weight="1">
+
+    <PhotoView id="photo" width="match" height="match"/>
+
+    <!--
+      首页：没有打开图片时盖住看图区。
+      必须铺底色，否则下面的 PhotoView 会透上来（它的空状态也会画占位图标，
+      两层图标叠在一起很难看）。
+      上下各放一个弹性空白，把中间的列压到垂直中央——LinearLayout 的
+      gravity 只管交叉轴（这里即水平），主轴要靠 weight 分配剩余空间。
+    -->
+    <LinearLayout id="homePane" orientation="vertical" width="match" height="match"
+                  background="body" gravity="center">
+
+      <View weight="1"/>
+
+      <LinearLayout orientation="vertical" width="match" height="wrap" gravity="center">
+        <!-- 图标颜色在 attachHome() 里按主题字段设，XML 的 tint 只认固定色 -->
+        <ImageView id="homeIcon" icon="image" width="96" height="96"
+                   scale="fit" align="center"/>
+
+        <TextView id="homeTitle" text="拖拽图片到这里" height="34" marginTop="24"
+                  textColor="text" align="center" large="true" bold="true"/>
+
+        <TextView id="homeHint" text="也可以点下面的按钮，从磁盘里选一张"
+                  height="24" marginTop="6" textColor="textMuted" align="center"/>
+
+        <!-- 主按钮用 accent 底色：空状态页要有明确的主操作，不能整屏灰。
+             这里只放一个：另存为、缩放这些动作没有图就没有意义，
+             摆在空状态上只会是灰按钮。 -->
+        <Button id="btnHomeOpen" text="打开图片..." style="primary" width="148" height="36"
+                marginTop="24"/>
+      </LinearLayout>
+
+      <View weight="1"/>
+    </LinearLayout>
+
+  </FrameLayout>
+
+  <!-- 状态栏 -->
+  <StatusBar id="status" height="36"/>
+
+</LinearLayout>
