@@ -157,10 +157,6 @@ class Backend {
   virtual bool launchDetached(const std::wstring& exePath, const std::wstring& arguments,
                               const std::wstring& workDir) = 0;
   virtual bool deleteFileOnReboot(const std::wstring& path) = 0;
-  // 改写 exe 的图标资源（卸载程序用系统回收站图标）。
-  // 必须在追加数据之前调用：更新资源会重排 PE 映像，已追加的尾巴会丢。
-  virtual std::wstring setExecutableSystemIcon(const std::wstring& exePath,
-                                               SystemIcon icon) = 0;
 
   // ── 清单式落盘 ──
   // 把单个内嵌资源写到完整路径（允许带子目录）

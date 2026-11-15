@@ -1151,9 +1151,6 @@ class WindowsPlatform : public Platform {
   bool deleteFileOnReboot(const std::wstring& path) override {
     return os::backend().deleteFileOnReboot(path);
   }
-  std::wstring setExecutableSystemIcon(const std::wstring& exePath, SystemIcon icon) override {
-    return os::backend().setExecutableSystemIcon(exePath, icon);
-  }
   std::wstring installSingleResource(int resourceId, const std::wstring& targetPath) override {
     return os::backend().installSingleResource(resourceId, targetPath);
   }

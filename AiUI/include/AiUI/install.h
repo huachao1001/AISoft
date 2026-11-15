@@ -121,21 +121,6 @@ std::wstring installSingleResource(int resourceId, const std::wstring& targetPat
 std::wstring removeInstalledFiles(const std::wstring& targetDir,
                                   const std::vector<InstallFile>& files);
 
-// 想借用哪个系统图标
-enum class SystemIcon {
-  kRecycleBin,
-};
-
-// 把一个系统图标写进 exe 的资源表，替换它原来的图标。
-//
-// 卸载程序属于系统「应用与功能」里的一个条目，用回收站图标比用应用自己的
-// 品牌图标更容易让人一眼认出「这是卸载」。但 EXE 的图标是构建期编进资源
-// 段的，卸载程序又是运行期从安装器复制出来的，只能在复制之后改写资源。
-//
-// 必须在追加清单之前调用：UpdateResource 会重排 PE 映像，已经追加到末尾的
-// 数据会被丢掉。成功返回空串。
-std::wstring setExecutableSystemIcon(const std::wstring& exePath, SystemIcon icon);
-
 // 在资源管理器 / 开始菜单里为已装程序创建快捷方式。
 // exeName 是 targetDir 里的可执行文件名，displayName 用作 .lnk 名。
 // 空目录或平台不支持时静默跳过，不算失败。

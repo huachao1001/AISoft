@@ -108,23 +108,21 @@ AiInstaller 是公共件：一个通用安装器 exe，加上把清单与载荷�
 `queryInstalled` 判定「装过」的条件是 `InstallLocation` 指向的目录仍然存在：
 用户手工删了目录就该能重装，不该被一条僵尸记录拦住。
 
-## 卸载程序用系统的回收站图标
+## 卸载程序沿用应用图标
 
-卸载程序在「应用与功能」里是个条目，回收站的样子让人一眼知道那是「卸载」
-而不是「打开」。图标是系统资产（随 Windows 版本、深色模式变化），所以运行时
-向 shell 要，而不是给每个应用多带一份 ico：
+`uninstall.exe` 是安装器本体复制出来的副本，`copyInstallerTo()` 只复制到
+`dataOffset_`（即安装包本体，追加的载荷被截掉）。而打包时 `--icon` 已经把
+应用图标写进了安装器本体的资源段，所以副本天然带着应用图标，安装期不需要
+再改一次资源，也不需要 `AiUI` 提供任何「换 exe 图标」的能力。
 
-`AiUI::setExecutableSystemIcon(exePath, SystemIcon::kRecycleBin)` 用
-`SHGetStockIconInfo(SIID_RECYCLER, SHGSI_ICONLOCATION)` 找到图标所在文件与
-索引，再按各档边长 `PrivateExtractIconsW` 重新提取，最后写 `RT_ICON` +
-`RT_GROUP_ICON`。
+这条曾经反着做过：卸载程序被换成系统的回收站图标，靠
+`AiUI::setExecutableSystemIcon` 在运行期改写 `RT_ICON` / `RT_GROUP_ICON`。
+后果是「应用与功能」里这一条与开始菜单、安装目录里的程序长得不一样，用户
+看不出它们是同一个东西。现在删除该 API 与 `exe_icon_windows.cpp`，不要为了
+「一眼识别卸载」再把图标改掉。
 
-**全程只用 GDI，不碰 GDI+**：这个函数在安装线程上跑，UI 线程同时在用 GDI+
-绘制窗口，GDI+ 的初始化/关闭与位图缓存都是进程级单例，从别的线程去动它会让
-正在绘制的窗口崩溃（实测退出码 `0xC000041D`）。
-
-取不到图标不算安装失败：精简系统里 shell 图标服务可能不可用，留着安装器原
-图标也比装不上强。
+**顺序仍然要紧**：`embedManifest` 必须在最后一次 `UpdateResource` 之后。
+改资源会重排 PE 映像，已追加的尾巴会被丢掉。
 
 ## 卸载只删登记过的东西
 

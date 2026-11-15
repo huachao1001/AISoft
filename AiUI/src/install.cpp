@@ -93,9 +93,6 @@ std::vector<std::wstring> readInstallDirectories(const std::wstring& displayName
   return platform()->readInstallDirectories(displayName, scope);
 }
 
-std::wstring setExecutableSystemIcon(const std::wstring& exePath, SystemIcon icon) {
-  return platform()->setExecutableSystemIcon(exePath, icon);
-}
 void queryInstalled(const std::wstring& displayName, InstallScope scope, bool& found,
                     std::wstring& installDir, InstallScope& installedScope) {
   platform()->queryInstalled(displayName, scope, found, installDir, installedScope);

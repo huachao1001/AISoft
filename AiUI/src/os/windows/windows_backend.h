@@ -117,8 +117,6 @@ class WindowsBackend final : public Backend {
                                       InstallScope scope) override;
   std::wstring unregisterUninstallEntry(const std::wstring& displayName,
                                         InstallScope scope) override;
-  // 改写 exe 的图标资源：卸载程序用系统的回收站图标
-  std::wstring setExecutableSystemIcon(const std::wstring& exePath, SystemIcon icon) override;
   // 安装时新建的目录层级记在卸载项里：安装目录该只有应用自己的东西
   void writeInstallDirectories(const std::wstring& displayName,
                                const std::vector<std::wstring>& dirs,

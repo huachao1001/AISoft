@@ -511,15 +511,9 @@ std::wstring runInstall(const InstallPlan& plan) {
   const std::wstring copyError = package.copyInstallerTo(uninstaller);
   if (!copyError.empty()) return copyError;
 
-  // 卸载程序用系统的回收站图标，不用安装器的品牌图标：它在「应用与功能」
-  // 里是个条目，回收站的样子让人一眼知道那是「卸载」而不是「打开」。
-  //
-  // 必须赶在写清单之前：改资源会重排 PE 映像，已经追加到末尾的数据会丢。
-  const std::wstring iconError =
-      AiUI::setExecutableSystemIcon(uninstaller, AiUI::SystemIcon::kRecycleBin);
-  // 图标只是外观，取不到不算失败：某些精简系统里 shell 图标服务不可用，
-  // 那时留着安装器原图标也比装不上强。
-  (void)iconError;
+  // 图标不用单独处理：副本复制的是安装包本体（只有追加的载荷被截掉），
+  // 打包时经 --icon 写进资源段的应用图标因此原样跟着过来。卸载程序在
+  // 「应用与功能」里与应用同名同图标，用户看到的就是他装的那个程序。
 
   // 清单写进卸载程序自己末尾，而不是旁边放一个 installer.manifest：
   // 安装目录里不该出现用户看不懂的记录文件，而且卸载程序本来就该能回答

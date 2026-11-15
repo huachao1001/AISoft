@@ -718,12 +718,6 @@ class Platform {
     (void)path;
     return false;
   }
-  // 改写 exe 图标：默认不支持
-  virtual std::wstring setExecutableSystemIcon(const std::wstring& exePath, SystemIcon icon) {
-    (void)exePath;
-    (void)icon;
-    return L"当前平台不支持";
-  }
   virtual std::wstring installSingleResource(int resourceId, const std::wstring& targetPath) {
     (void)resourceId;
     (void)targetPath;

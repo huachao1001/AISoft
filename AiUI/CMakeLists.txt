@@ -67,7 +67,6 @@ if(WIN32)
     src/os/windows/platform_windows.cpp
     src/os/windows/shell_menu_register.cpp
     src/os/windows/install_windows.cpp
-    src/os/windows/exe_icon_windows.cpp
     src/os/windows/image_pixels_windows.cpp
   )
 elseif(APPLE)
