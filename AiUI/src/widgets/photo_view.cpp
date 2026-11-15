@@ -721,8 +721,26 @@ void PhotoView::paintPixelGrid(Painter& painter, const Rect& view, float alpha) 
       dropPixelCache();
       return;
     }
+    // 缓存矩形必须按「实际拿到的尺寸」记，不能直接记请求的 region：
+    // 宿主那一侧通常会把 region 裁到图片边界内（AiPic 的
+    // AppReadPixelRegion 就是先 intersect 再拷贝），返回的块可能比请求的小。
+    // 两者一旦不一致，下面的下标 (x−left) 就会越界，越界的格子被 continue
+    // 掉——表现正是「屏幕上一部分格子有字、一部分没有」，而且越界还可能是
+    // 静默读到下一行的错误像素。
+    if (got.width != region.width() || got.height != region.height()) {
+      got.width = (std::min)(got.width, region.width());
+      got.height = (std::min)(got.height, region.height());
+      if (got.width <= 0 || got.height <= 0 ||
+          got.pixels.size() < static_cast<size_t>(got.width) * static_cast<size_t>(got.height)) {
+        dropPixelCache();
+        return;
+      }
+    }
     pixelCache_ = std::move(got);
-    pixelCacheRect_ = region;
+    // 取块的左上角与请求的 region 对齐（宿主是按 region.left/top 起的）
+    pixelCacheRect_ =
+        Rect{region.left, region.top, region.left + pixelCache_.width,
+             region.top + pixelCache_.height};
   }
   if (pixelCache_.isEmpty()) return;
 
@@ -934,18 +952,38 @@ void PhotoView::onPaint(Painter& painter, const Rect& rect) {
 
   // 源子矩形换算成它在整幅图里的位置。直接把它拉伸到整幅 dst 上是错的——
   // 那会把一小块放大成整张。bitmap 是原图的 ratio 倍，像素 b 对应原图 b/ratio。
-  const Rect dstSub{
-      static_cast<int>(std::floor(static_cast<double>(source.left) / ratio * zoom_ - fullW / 2.0)),
-      static_cast<int>(std::floor(static_cast<double>(source.top) / ratio * zoom_ - fullH / 2.0)),
-      static_cast<int>(std::ceil(static_cast<double>(source.right) / ratio * zoom_ - fullW / 2.0)),
-      static_cast<int>(
-          std::ceil(static_cast<double>(source.bottom) / ratio * zoom_ - fullH / 2.0))};
+  //
+  // 取整基准必须与网格线/格子文字的 toView() 同源（都是 lround(center+pan+off)）。
+  // 这里是「先算相对坐标、后端再 translate」，所以先把 tx 减掉，使
+  // dstSub + tx 恰好等于 lround(cx + off)，两边边界才落在同一个整数上。
+  //
+  // 注意这只能保证**外框**对齐：后端把 srcW 个源像素铺满 dstW 个设备像素，
+  // 内部步长是 dstW/srcW，而 dstW 各自取整后与 srcW*zoom 最多差 1，于是
+  // 非整数倍时内部边界最多漂 1 像素（整数倍如 1000% 是精确的）。
+  // 这是整数 dst 矩形的固有误差，前端无法再用取整消除；要彻底消掉得改成
+  // 逐像素 fillRect，一屏上万次绘制不划算。
+  const int tx = static_cast<int>(std::lround(static_cast<float>(center.x) + pan_.x));
+  const int ty = static_cast<int>(std::lround(static_cast<float>(center.y) + pan_.y));
+  auto dstOf = [&](double imageX) {
+    return static_cast<int>(
+               std::llround(static_cast<double>(center.x) + static_cast<double>(pan_.x) +
+                            (static_cast<double>(imageX) / ratio * zoom_ - fullW / 2.0))) -
+           tx;
+  };
+  auto dstOfY = [&](double imageY) {
+    return static_cast<int>(
+               std::llround(static_cast<double>(center.y) + static_cast<double>(pan_.y) +
+                            (static_cast<double>(imageY) / ratio * zoom_ - fullH / 2.0))) -
+           ty;
+  };
+  const Rect dstSub{dstOf(source.left), dstOfY(source.top), dstOf(source.right),
+                    dstOfY(source.bottom)};
 
   painter.save();
   // 平移量是浮点（动画逐帧反解出来的），但后端 translate 只收整数。
   // 这里四舍五入而不是截断：截断会让画面整体偏半个像素，放大时看得出来。
-  painter.translate(static_cast<int>(std::lround(static_cast<float>(center.x) + pan_.x)),
-                    static_cast<int>(std::lround(static_cast<float>(center.y) + pan_.y)));
+  // 与上面 dstOf 用的 tx/ty 是同一对值——两处一旦分别计算就可能差 1 像素。
+  painter.translate(tx, ty);
   if (std::fabs(angle) > 0.001f) painter.rotate(angle);
 
   // 放大到能看清像素时用最近邻：插值会把像素格抹成一团，那不是用户想看的。

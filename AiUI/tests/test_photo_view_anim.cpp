@@ -45,7 +45,77 @@ class AnimProbe : public PhotoView {
       return true;
     });
   }
+
+  // 每个像素的颜色编码它自己的坐标：R = x*3, G = y*3, B = (x+y)%256。
+  // 只要哪一格取到了错行错列，三个数字立刻对不上——这是验证
+  // 「一个像素 = 一个格子 = 一个 RGB」唯一可靠的像素源：纯色图做不到。
+  void useCodedPixels() {
+    setPixelRegionProvider([](const Rect& region, RgbaImage& out) {
+      out.width = region.width();
+      out.height = region.height();
+      out.pixels.resize(static_cast<size_t>(out.width) * out.height);
+      for (int y = 0; y < out.height; ++y) {
+        for (int x = 0; x < out.width; ++x) {
+          const int ix = region.left + x;
+          const int iy = region.top + y;
+          out.pixels[static_cast<size_t>(y) * out.width + x] =
+              makeColor(static_cast<std::uint8_t>((ix * 3) % 256),
+                        static_cast<std::uint8_t>((iy * 3) % 256),
+                        static_cast<std::uint8_t>((ix + iy) % 256));
+        }
+      }
+      return true;
+    });
+  }
 };
+
+// 由一格的视图矩形反推它覆盖的是哪个图像像素。
+// 绘制时图像按 translate(center+pan) 摆放，像素 (x,y) 的左边界是
+//   left = cx + x*cell − W*cell/2
+// 反过来解 x 即可。格子与像素只要错一格，这里就会算出邻居的坐标，
+// 随后 RGB 校验必然失败。
+struct DecodedCell {
+  int x = 0;
+  int y = 0;
+  int left = 0;
+  int top = 0;
+  int width = 0;
+  int height = 0;
+  int r = 0;
+  int g = 0;
+  int b = 0;
+};
+
+std::vector<DecodedCell> decodeCells(const PhotoView& view, const RecordingBackend& backend,
+                                     const Rect& area) {
+  const Size src = view.imageSize();
+  const float cell = view.zoom();
+  const Point c = area.center();
+  const Point pan = view.pan();
+  const float cx =
+      static_cast<float>(static_cast<int>(std::lround(static_cast<float>(c.x) + pan.x)));
+  const float cy =
+      static_cast<float>(static_cast<int>(std::lround(static_cast<float>(c.y) + pan.y)));
+  const float halfW = static_cast<float>(src.width) * cell / 2.0f;
+  const float halfH = static_cast<float>(src.height) * cell / 2.0f;
+
+  std::vector<DecodedCell> out;
+  const auto& texts = backend.texts();
+  for (size_t i = 0; i + 2 < texts.size(); i += 3) {
+    DecodedCell s;
+    s.left = texts[i].rect.left;
+    s.top = texts[i].rect.top;
+    s.width = texts[i].rect.width();
+    s.height = texts[i + 2].rect.bottom - texts[i].rect.top;
+    s.x = static_cast<int>(std::lround((static_cast<float>(s.left) - cx + halfW) / cell));
+    s.y = static_cast<int>(std::lround((static_cast<float>(s.top) - cy + halfH) / cell));
+    s.r = std::stoi(texts[i].text);
+    s.g = std::stoi(texts[i + 1].text);
+    s.b = std::stoi(texts[i + 2].text);
+    out.push_back(s);
+  }
+  return out;
+}
 
 // 浮点平移下的精确图像坐标：视图点 p 底下是哪个图像像素（含小数）
 void imagePointAt(const PhotoView& v, Point p, float& outX, float& outY) {
@@ -436,5 +506,111 @@ AIUI_TEST(photo_view_cell_text_stays_inside_its_cell) {
     AIUI_CHECK_EQ(span, 20);
     // 行框宽度也就是一格宽
     AIUI_CHECK_EQ(texts[i].rect.width(), 20);
+  }
+}
+
+// ─────────────────── 一个像素 = 一个格子 = 一个 RGB ───────────────────
+
+// 这是像素格的立身之本：格子里的三个数必须是它覆盖的那个像素的颜色，
+// 不能是邻居、不能是平均值、不能重采样。用「颜色编码自身坐标」的像素源
+// 来钉：任何错位都会让三个数字对不上编码规则。
+AIUI_TEST(photo_view_one_pixel_per_cell) {  AnimEnv env;
+  env.fake.platform().setImageSize(Size{400, 300});
+  AnimProbe view;
+  view.useCodedPixels();
+  const Rect area{0, 0, 600, 400};
+  view.layout(area);
+  view.loadFile(L"a.png");
+  view.setAnimationDuration(0);
+
+  // 整数倍与非整数倍都要过：非整数倍时格边长会在 floor/ceil 之间交替，
+  // 最容易出现「格子往左偏半格、数字取到隔壁像素」。
+  for (float zoom : {10.0f, 13.7f, 20.0f, 33.3f, 64.0f}) {
+    view.setZoomAt(zoom, area.center());
+    env.fake.platform().advanceMillis(400);
+    view.onDelayed();
+
+    RecordingBackend backend;
+    Painter painter(backend);
+    view.draw(painter, area);
+    const std::vector<DecodedCell> cells = decodeCells(view, backend, area);
+    AIUI_CHECK(!cells.empty());
+
+    // 同一像素不能被画两次：那说明格子在重复
+    std::vector<std::pair<int, int>> seen;
+    for (const DecodedCell& s : cells) {
+      AIUI_CHECK_EQ(s.r, (s.x * 3) % 256);
+      AIUI_CHECK_EQ(s.g, (s.y * 3) % 256);
+      AIUI_CHECK_EQ(s.b, (s.x + s.y) % 256);
+
+      // 格边长应当就是倍数（±1 给取整交替）
+      const int span = static_cast<int>(std::lround(zoom));
+      AIUI_CHECK(std::abs(s.width - span) <= 1);
+      AIUI_CHECK(std::abs(s.height - span) <= 1);
+
+      for (const auto& p : seen) {
+        AIUI_CHECK(!(p.first == s.x && p.second == s.y));
+      }
+      seen.emplace_back(s.x, s.y);
+    }
+
+    // 也不能漏：可见范围内每个像素都该有一个格子，不能中间空一行
+    int minX = cells[0].x;
+    int maxX = cells[0].x;
+    int minY = cells[0].y;
+    int maxY = cells[0].y;
+    for (const DecodedCell& s : cells) {
+      minX = (std::min)(minX, s.x);
+      maxX = (std::max)(maxX, s.x);
+      minY = (std::min)(minY, s.y);
+      maxY = (std::max)(maxY, s.y);
+    }
+    // 边缘可能被视图切掉半格，允许少一圈
+    const int full = (maxX - minX + 1) * (maxY - minY + 1);
+    const int edge = 2 * (maxX - minX + 1) + 2 * (maxY - minY + 1);
+    AIUI_CHECK(static_cast<int>(cells.size()) >= full - edge);
+  }
+}
+
+// 旋转 90° 之后，格子里的 RGB 仍必须是一个真实像素的颜色：旋转只改变摆放
+// 方向，不该改变「一格一像素」这个前提。这里只校验三值自洽
+// （能还原出同一个 (x,y)），坐标映射由上面那条测试负责。
+AIUI_TEST(photo_view_one_pixel_per_cell_after_rotation) {
+  AnimEnv env;
+  env.fake.platform().setImageSize(Size{400, 300});
+  AnimProbe view;
+  view.useCodedPixels();
+  const Rect area{0, 0, 600, 400};
+  view.layout(area);
+  view.loadFile(L"a.png");
+  view.setAnimationDuration(0);
+  view.setZoomAt(20.0f, area.center());
+  view.rotate(1);
+  env.fake.platform().advanceMillis(1000);
+  view.onDelayed();
+  AIUI_CHECK_EQ(view.rotation(), 1);
+
+  RecordingBackend backend;
+  Painter painter(backend);
+  view.draw(painter, area);
+
+  const auto& texts = backend.texts();
+  AIUI_CHECK(!texts.empty());
+  for (size_t i = 0; i + 2 < texts.size(); i += 3) {
+    const int r = std::stoi(texts[i].text);
+    const int g = std::stoi(texts[i + 1].text);
+    const int b = std::stoi(texts[i + 2].text);
+    // R=x*3, G=y*3, B=(x+y)%256：只要存在一个像素能同时满足三者就是自洽的
+    bool found = false;
+    for (int x = 0; x < 400 && !found; ++x) {
+      if ((x * 3) % 256 != r) continue;
+      for (int y = 0; y < 300; ++y) {
+        if ((y * 3) % 256 == g && (x + y) % 256 == b) {
+          found = true;
+          break;
+        }
+      }
+    }
+    AIUI_CHECK(found);
   }
 }
