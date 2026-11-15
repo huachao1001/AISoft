@@ -132,6 +132,25 @@ TitleBar (FrameLayout)
   应用工程，不要回流到 AiUI。等 AiUI 补齐 ComboBox / CheckBox /
   ProgressBar 后再逐个迁移。
 
+## 文件系统图标按尺寸取，不要固定取小图
+
+`fileIcon(path, isDirectory, pixelSize)` 的第三个参数是要画出来的**设备像素
+边长**，不是设计值——调用方自己乘 DPI。把它当成必填来用：布局里写 `48` 的
+位置在 150% 屏上要 72，只取 16×16 再放大就会糊成一团（维护页的应用图标
+就是这么糊的，实测肉眼立辨）。
+
+取图分两步，先后顺序不能反：
+
+1. **文件自带图标**（exe / dll / ico）走 `PrivateExtractIconsW`，按需要的
+   边长精确取。ico 里的原生档位很多（`aizip.ico` 有 16~256 十档），要 48
+   就给 48。`PrivateExtractIconsW` 对没有内嵌图标的文件返回 NULL，所以必须
+   留第二条路。
+2. **没有内嵌图标的**（目录、文档）走 `SHGetFileInfoW` 要关联图标。shell
+   只有 `SHGFI_SMALLICON`(16) 与 `SHGFI_LARGEICON`(32) 两档，不能追问更大
+   的自定义尺寸；按需求选一档即可。
+
+缓存键必须带上档位：同一文件不同尺寸是不同位图，否则 16 的那张会顶替 48 的。
+
 ## 注释与命名
 
 - 注释、文档用中文，简洁，只说"为什么"。

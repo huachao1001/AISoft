@@ -338,33 +338,68 @@ HICON loadAppIcon(int pixelSize) {
 
 // ── 对外接口 ──
 
-Image fileIcon(const std::wstring& path, bool isDirectory) {
-  // 目录共用一份图标，文件按扩展名缓存，避免每个文件都查一次 shell
+Image fileIcon(const std::wstring& path, bool isDirectory, int pixelSize) {
+  // 系统图标的原生档位。取「不小于需求的最小档」：多出来的交给 GDI+ 缩，
+  // 缩是抗锯齿重采样；不够再放大就只能靠插值猜像素，边缘立刻发虚。
+  static const int kIconLadder[] = {16, 20, 24, 32, 40, 48, 64, 96, 128, 256};
+  const int want = pixelSize > 0 ? pixelSize : 16;
+  int size = 256;
+  for (const int step : kIconLadder) {
+    if (step >= want) {
+      size = step;
+      break;
+    }
+  }
+
+  // 目录共用一份图标，文件按扩展名缓存，避免每个文件都查一次 shell。
+  // 同一目标不同尺寸是不同位图，键必须带上档位，否则 16 的那张会顶替 48 的。
   std::wstring key = isDirectory ? L"<dir>" : path;
   if (!isDirectory) {
     const size_t dot = path.find_last_of(L'.');
     if (dot != std::wstring::npos) key = path.substr(dot);
   }
+  key += L'@';
+  key += std::to_wstring(size);
 
   auto& cache = os::windows::fileIconCache();
   auto it = cache.find(key);
   if (it != cache.end()) return it->second;
 
-  SHFILEINFOW info{};
-  const DWORD attributes = isDirectory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
-  DWORD flags = SHGFI_ICON | SHGFI_SMALLICON;
-  const bool exists = ::GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES;
-  if (isDirectory || !exists) flags |= SHGFI_USEFILEATTRIBUTES;
-  ::SHGetFileInfoW(isDirectory ? L"dir" : path.c_str(), attributes, &info, sizeof(info), flags);
-
   Image image;
-  if (info.hIcon) {
-    if (Gdiplus::Bitmap* bmp = os::windows::bitmapFromIcon(info.hIcon)) image = Image(bmp);
-    ::DestroyIcon(info.hIcon);
+
+  // 一、文件自带图标（exe / dll / ico）按需要的边长精确取。
+  //     PrivateExtractIconsW 会挑最接近的原生档位再缩放，aizip.ico 里有
+  //     16~256 十档，要 48 就给 48，不必从 16×16 拉大。
+  if (!isDirectory) {
+    HICON icon = nullptr;
+    UINT extracted = 0;
+    if (::PrivateExtractIconsW(path.c_str(), 0, size, size, &icon, &extracted, 1, 0) > 0 &&
+        icon) {
+      if (Gdiplus::Bitmap* bmp = os::windows::bitmapFromIcon(icon)) image = Image(bmp);
+      ::DestroyIcon(icon);
+    }
   }
+
+  // 二、没有内嵌图标的（目录、文档）只能问 shell 要关联图标。shell 只提供
+  //     小/大两档（16 / 32），再大的档位也是它自己放大出来的，问它不如自己
+  //     取大档再缩。所以这里按尺寸选一档，不做更细的追问。
+  if (!image.isValid()) {
+    SHFILEINFOW info{};
+    const DWORD attributes = isDirectory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+    DWORD flags = SHGFI_ICON | (size > 16 ? SHGFI_LARGEICON : SHGFI_SMALLICON);
+    const bool exists = ::GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES;
+    if (isDirectory || !exists) flags |= SHGFI_USEFILEATTRIBUTES;
+    ::SHGetFileInfoW(isDirectory ? L"dir" : path.c_str(), attributes, &info, sizeof(info), flags);
+    if (info.hIcon) {
+      if (Gdiplus::Bitmap* bmp = os::windows::bitmapFromIcon(info.hIcon)) image = Image(bmp);
+      ::DestroyIcon(info.hIcon);
+    }
+  }
+
   cache[key] = image;
   return image;
 }
+
 
 void releaseFileIcons() { os::windows::releaseIconCaches(); }
 

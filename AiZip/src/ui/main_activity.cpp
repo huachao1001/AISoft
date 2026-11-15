@@ -167,7 +167,10 @@ AiUI::ListIcon itemIcon(const Item& item) {
     // 颜色交给主题：图标色跟随当前调色板
     return icon;
   }
-  icon.image = AiUI::fileIcon(item.fullPath.empty() ? item.name : item.fullPath, false);
+  // 按列表里那格的实际像素要图标：18 设计像素在 150% 屏上是 27，
+  // 只取 16×16 再放大就发虚。
+  const int side = static_cast<int>(18.0f * AiUI::platform()->scaleFactor() + 0.5f);
+  icon.image = AiUI::fileIcon(item.fullPath.empty() ? item.name : item.fullPath, false, side);
   icon.glyph = AiUI::IconId::kFile;
   // 颜色交给主题：图标色跟随当前调色板
   return icon;

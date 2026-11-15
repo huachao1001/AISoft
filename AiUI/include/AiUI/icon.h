@@ -90,7 +90,12 @@ enum class ImageFormat {
 
 // 取文件的系统关联图标；句柄由库缓存持有，调用方不要释放。
 // 返回无效 Image 表示没有可用图标，调用方应退回矢量图标。
-Image fileIcon(const std::wstring& path, bool isDirectory);
+//
+// pixelSize 是要画出来的设备像素边长。系统图标有多个档位（16/20/24/32/40/
+// 48/64/96/128/256），只取 16×16 再放大到 48 会糊成一片——维护页的应用图标
+// 就是这么糊的。这里按需要的边长向 shell 要最接近的档位，宁可略大让 GDI+
+// 缩下来，也不要小了再拉伸：缩小是抗锯齿重采样，放大只能插值猜像素。
+Image fileIcon(const std::wstring& path, bool isDirectory, int pixelSize = 0);
 
 // 释放全部缓存图标；宿主退出前调用一次
 void releaseFileIcons();

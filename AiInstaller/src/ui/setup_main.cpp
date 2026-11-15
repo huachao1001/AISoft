@@ -162,7 +162,11 @@ int AiUI::runApp() {
         const std::wstring exePath =
             AiInstaller::detail::joinPath(selfDirectory(), installManifest.exeName);
         if (AiUI::platform()->pathExists(exePath)) {
-          installedIcon = AiUI::fileIcon(exePath, false);
+          // 按 logo 的真实像素边长要图标。布局里那是 48（还要乘 DPI），
+          // 只拿 shell 的 16×16 小图标再放大到 48 会糊成一团。
+          const int side = static_cast<int>(
+              48.0f * AiUI::platform()->scaleFactor() + 0.5f);
+          installedIcon = AiUI::fileIcon(exePath, false, side);
         }
       }
       activity.setInstalledIcon(installedIcon);
