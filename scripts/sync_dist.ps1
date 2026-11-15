@@ -1,28 +1,30 @@
-﻿# 把构建产物同步到 dist\：复制有变化的 exe，并清掉已下线程序的旧副本。
+﻿# 把构建产物同步到本工程的 dist\：复制有变化的 exe，并清掉已下线程序的旧副本。
 #
-# 用法：powershell -NoProfile -File scripts\sync_dist.ps1 -Config <build 目录>
-# 只同步发布产物；test_arc 这类自检工具不发布。
+# 用法：powershell -NoProfile -File scripts\sync_dist.ps1 -Config AiZip\build
 #
-# 每个工程各有一份产物清单。按 -Config 里编出来的主机名判断这次是谁在构建：
-# 两个工程共用一个 dist\，清理时只能动自己那一族文件，否则编 AiPic 会把
-# 已发布的 AiZip 删掉。
+# 每个工程各有自己的 dist\（与 build\ 并列，例如 AiZip\dist\），互不干扰：
+# 共用一个仓库根的 dist\ 时，清理过期产物只能靠文件名前缀猜哪些是自己那一族，
+# 加一个工程就要多一条前缀规则，删错一次就是删掉别人的发布产物。
 param(
   [string]$Config = ""
 )
 
 $ErrorActionPreference = "Stop"
-$root = Split-Path -Parent $PSScriptRoot
-$dist = Join-Path $root "dist"
 
-# 必须指明是哪个构建目录：两个应用各有自己的 build\，猜错了会把别人的产物
-# 当成「已下线」清掉。
+# 必须指明是哪个构建目录：dist\ 的位置由它推出，猜错了会同步到别人的工程下
 if (-not $Config) {
   Write-Error "用法：sync_dist.ps1 -Config <build 目录>（例如 AiZip\build 或 AiPic\build）"
   exit 1
 }
 
 # -Config 既可是 "AiZip\build" 这类相对仓库根的路径，也可是绝对路径
+$root = Split-Path -Parent $PSScriptRoot
 $buildDir = if ([System.IO.Path]::IsPathRooted($Config)) { $Config } else { Join-Path $root $Config }
+
+# dist\ 放在工程目录下（build\ 的父目录），不放在仓库根：
+# 一个工程一个发布目录，清理时只动自己那份，不需要区分「谁的文件」。
+$projectDir = Split-Path -Parent ([System.IO.Path]::GetFullPath($buildDir))
+$dist = Join-Path $projectDir "dist"
 
 # 发布清单：宿主 exe 名 → 该工程的产物表（源文件 → dist 里的名字）
 #
@@ -31,8 +33,6 @@ $buildDir = if ([System.IO.Path]::IsPathRooted($Config)) { $Config } else { Join
 $products = @(
   @{
     Host = "AiZip.exe"
-    # 清理时认这些前缀，避免误删另一个工程的产物
-    Prefixes = @("AiZip", "aizip")
     Artifacts = @(
       @{ Source = "AiZipSetup.exe"; Name = "AiZipSetup.exe" }
       @{ Source = "AiZip.exe"; Name = "AiZip.exe" }
@@ -41,15 +41,13 @@ $products = @(
   }
   @{
     Host = "AiPic.exe"
-    Prefixes = @("AiPic", "aipic")
     Artifacts = @(
       @{ Source = "AiPic.exe"; Name = "AiPic.exe" }
     )
   }
 )
 
-# 选中这次构建的工程。两个宿主都不存在时（例如只编了库）干脆什么都不做，
-# 免得在别人的构建里跑一遍清理。
+# 选中这次构建的工程。两个宿主都不存在时（例如只编了库）干脆什么都不做。
 $product = $products | Where-Object { Test-Path (Join-Path $buildDir $_.Host) } | Select-Object -First 1
 if (-not $product) {
   Write-Output "未找到可发布的 exe，跳过同步"
@@ -91,7 +89,7 @@ foreach ($item in $product.Artifacts) {
     continue
   }
   $size = [math]::Round((Get-Item $target).Length / 1MB, 2)
-  Write-Output "同步 $($item.Name)  ${size} MB"
+  Write-Output "同步 dist\$($item.Name)  ${size} MB"
   $updated++
 }
 
@@ -99,20 +97,13 @@ foreach ($item in $product.Artifacts) {
 if ($updated -eq 0 -and $skipped -eq 0) { Write-Output "dist 已是最新" }
 
 # 本工程清单里没有的旧文件一律清掉，防止用户跑到已下线的程序。
-# 只清自己那一族：dist 里同时放着别的工程的产物。
+# dist\ 已经按工程分开，这里可以放心清：目录里的东西全是本工程的。
 #
 # 删不掉不算失败：带指纹的右键菜单 dll 会被 explorer 加载，改名换新之后
 # 那个旧文件仍然被锁着，直到资源管理器重启。为它中断整次构建不划算——
 # 它已经不在发布清单里，用户不会跑到它。
 $keep = $product.Artifacts | ForEach-Object { $_.Name }
-Get-ChildItem -File $dist | Where-Object {
-  $name = $_.Name
-  $mine = $false
-  foreach ($prefix in $product.Prefixes) {
-    if ($name.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) { $mine = $true }
-  }
-  $mine -and ($keep -notcontains $name)
-} | ForEach-Object {
+Get-ChildItem -File $dist | Where-Object { $keep -notcontains $_.Name } | ForEach-Object {
   # 名字先存下来：进入 catch 后 $_ 变成错误记录，再取 $_ .Name 就是空的
   $gone = $_.Name
   try {

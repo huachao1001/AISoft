@@ -75,7 +75,7 @@ cmake --build AiPic\build --parallel
 ```
 
 产物是单个 `AiPic\build\AiPic.exe`，CRT 已静态链接，目标机无需装 VC++ 运行库。
-链接后会自动同步到仓库根的 `dist\`。
+链接后会自动同步到本工程的 `AiPic\dist\`。
 
 `AiPic` 通过 `add_subdirectory` 引入同级 `AiUI`，`AiUI` 不反向依赖本工程。
 
