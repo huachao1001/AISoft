@@ -217,19 +217,32 @@ class GdiplusBackend : public PaintBackend {
   }
 
   void drawImageScaled(const Image& image, const Rect& rc, const Rect& source,
-                       ImageSmoothing smoothing) override {
+                       ImageSmoothing smoothing, float alpha) override {
     Gdiplus::Bitmap* bmp = asBitmap(image);
-    if (!g_ || !bmp || rc.isEmpty()) return;
+    if (!g_ || !bmp || rc.isEmpty() || alpha <= 0.0f) return;
     // 放大到像素级时逐像素取整：用户要看的是像素格本身
     g_->SetInterpolationMode(smoothing == ImageSmoothing::kNearest
                                  ? InterpolationModeNearestNeighbor
                                  : InterpolationModeHighQualityBicubic);
-    if (source.isEmpty()) {
-      g_->DrawImage(bmp, toGdiplus(rc));
-      return;
+    // 半透明靠 ImageAttributes 的颜色矩阵缩放 alpha 通道：直接改位图会给
+    // 同一张图留下脏状态，而缩放动画每帧的 alpha 都在变。
+    ImageAttributes attrs;
+    if (alpha < 0.999f) {
+      // ColorMatrix 只有 m[5][5]，没有 m00 之类的具名成员
+      ColorMatrix matrix = {};
+      matrix.m[0][0] = 1.0f;
+      matrix.m[1][1] = 1.0f;
+      matrix.m[2][2] = 1.0f;
+      matrix.m[3][3] = alpha;
+      matrix.m[4][4] = 1.0f;
+      attrs.SetColorMatrix(&matrix, ColorMatrixFlagsDefault, ColorAdjustTypeBitmap);
     }
-    g_->DrawImage(bmp, toGdiplus(rc), source.left, source.top, source.width(),
-                  source.height(), UnitPixel);
+    const Gdiplus::Rect dst = toGdiplus(rc);
+    const Rect src =
+        source.isEmpty()
+            ? Rect{0, 0, static_cast<int>(bmp->GetWidth()), static_cast<int>(bmp->GetHeight())}
+            : source;
+    g_->DrawImage(bmp, dst, src.left, src.top, src.width(), src.height(), UnitPixel, &attrs);
   }
 
   void setClip(const Rect& rc) override {

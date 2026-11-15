@@ -36,6 +36,15 @@ struct FillCall {
   bool stroke = false;
 };
 
+// 一次位图绘制：alpha 用来验证跨档位的交叉淡入淡出
+struct ImageCall {
+  Rect rect;
+  float alpha = 1.0f;
+  // 采样方式也记下来：交叉淡化必须是一层平滑 + 一层最近邻，
+  // 只数图层数看不出用的是哪种采样。
+  AiUI::ImageSmoothing smoothing = AiUI::ImageSmoothing::kSmooth;
+};
+
 // 最小绘制后端：只记录填充与裁剪，其余图元忽略
 class RecordingBackend : public AiUI::PaintBackend {
  public:
@@ -53,6 +62,8 @@ class RecordingBackend : public AiUI::PaintBackend {
   int textHeight(const AiUI::Font& font) override;
   void drawIcon(AiUI::IconId id, const Rect& rc, Color color) override;
   void drawImage(const AiUI::Image& image, const Rect& rc) override;
+  void drawImageScaled(const AiUI::Image& image, const Rect& rc, const Rect& source,
+                       AiUI::ImageSmoothing smoothing, float alpha) override;
   void setClip(const Rect& rc) override;
   void resetClip() override;
   void clipRect(const Rect& rc) override;
@@ -63,9 +74,11 @@ class RecordingBackend : public AiUI::PaintBackend {
 
   const std::vector<FillCall>& fills() const { return fills_; }
   const std::vector<TextCall>& texts() const { return texts_; }
+  const std::vector<ImageCall>& images() const { return images_; }
   void clear() {
     fills_.clear();
     texts_.clear();
+    images_.clear();
   }
   int translateX() const { return tx_; }
   int translateY() const { return ty_; }
@@ -84,6 +97,7 @@ class RecordingBackend : public AiUI::PaintBackend {
 
   std::vector<FillCall> fills_;
   std::vector<TextCall> texts_;
+  std::vector<ImageCall> images_;
   std::vector<State> stack_;
   int tx_ = 0;
   int ty_ = 0;
@@ -171,6 +185,7 @@ class FakeWindow : public AiUI::PlatformWindow {
   // 最近一次提交的绘制结果（画布销毁后仍可查）
   const std::vector<FillCall>& lastFills() const { return lastFills_; }
   const std::vector<TextCall>& lastTexts() const { return lastTexts_; }
+  const std::vector<ImageCall>& lastImages() const { return lastImages_; }
   const Rect& lastArea() const { return lastArea_; }
   int lastCommits() const { return lastCommits_; }
   int translateXAfterDraw() const { return lastTranslateX_; }
@@ -202,6 +217,7 @@ class FakeWindow : public AiUI::PlatformWindow {
   RecordingBackend backend_;
   std::vector<FillCall> lastFills_;
   std::vector<TextCall> lastTexts_;
+  std::vector<ImageCall> lastImages_;
   Rect lastArea_{};
   int lastCommits_ = 0;
   int lastTranslateX_ = 0;

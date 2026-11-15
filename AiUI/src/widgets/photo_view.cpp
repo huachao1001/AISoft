@@ -32,15 +32,27 @@ constexpr int kFrameMs = 16;
 constexpr int kProxySide = 2048;
 // 网格线太密会糊成一片灰，低于这个格边长不画线
 constexpr float kGridLineMinCell = 5.0f;
-// 一屏最多画多少个 RGB 文本格：再多也读不过来，纯属浪费绘制时间
-constexpr int kGridTextMaxCells = 400;
+// 格子里 RGB 数字的 em 像素范围。字号按格子大小的三分之一取（三行各占
+// 一格的三分之一），再夹在这个区间里：低于下限小得没意义，高于上限就没必要
+// 再大了。注意下限不是「读不出来就不画」——那会造成一半格子有字一半没有，
+// 比字小更难读；这里只是防止字号退化成 0。
+constexpr int kCellTextMinPx = 3;
+constexpr int kCellTextMaxPx = 30;
+// 网格/锐化的淡入淡出时长。短于缩放动画：它是缩放到位后顺带的一层，
+// 拖太久会显得黏。
+constexpr int kFadeMs = 140;
 
-// 缓动：先快后慢，末尾稳稳停住。线性会让人以为卡了一下才停。
-float easeOutCubic(float t) {
+// 缓动：两端都收住，中间才快。
+//
+// 原来用 easeOutCubic：它起步就有 24% 的行程（第 1 帧 t≈0.09 已到 0.24），
+// 大幅缩放时第一帧就直接弹过去一大块，然后剩下一百多毫秒只是慢慢挪——
+// 观感是「先猛跳一下，再磨蹭」，也就是用户说的生硬。
+// 换成 smoothstep：起步与收尾都有加速度过渡，全程速度连续，
+// 没有哪一帧的位移明显大于它的邻居。
+float easeInOut(float t) {
   if (t <= 0.0f) return 0.0f;
   if (t >= 1.0f) return 1.0f;
-  const float inv = 1.0f - t;
-  return 1.0f - inv * inv * inv;
+  return t * t * (3.0f - 2.0f * t);
 }
 
 float lerp(float a, float b, float t) { return a + (b - a) * t; }
@@ -398,6 +410,8 @@ void PhotoView::beginZoomTo(float zoom, Point anchor, int durationMs, bool refit
     displayAngle_ = static_cast<float>(rotation_ * 90);
     clampPan();
     dropPixelCache();
+    // 没有动画时也要在这里对齐网格目标，否则只能等下一次绘制
+    updateGridFade();
     invalidate();
     notifyChanged();
     return;
@@ -423,6 +437,8 @@ void PhotoView::beginZoomTo(float zoom, Point anchor, int durationMs, bool refit
 void PhotoView::beginAnimation(const Animation& anim) {
   anim_ = anim;
   anim_.startMs = platform()->monotonicMillis();
+  // 动画的 kind 可能刚变（进入旋转要立刻关网格），先把网格目标对齐
+  updateGridFade();
   // 平台只有一只单次定时器：按帧间隔排下一拍，onDelayed 里再排下一拍
   postDelayed(kFrameMs);
   invalidate();
@@ -441,7 +457,7 @@ void PhotoView::tickAnimation() {
     return;
   }
 
-  const float t = easeOutCubic(raw);
+  const float t = easeInOut(raw);
   zoom_ = lerp(anim_.fromZoom, anim_.toZoom, t);
   displayAngle_ = lerp(anim_.fromAngle, anim_.toAngle, t);
 
@@ -457,6 +473,11 @@ void PhotoView::tickAnimation() {
     pan_.x = lerp(anim_.fromPan.x, anim_.toPan.x, t);
     pan_.y = lerp(anim_.fromPan.y, anim_.toPan.y, t);
   }
+
+  // 倍数一跨过网格阈值就启动淡入。放在这里而不是等动画结束：
+  // 否则网格要等缩放完全停住才整层冒出来，那一下最刺眼。
+  updateGridFade();
+  tickGridFade();
 
   dropPixelCache();
   invalidate();
@@ -482,11 +503,21 @@ void PhotoView::finishAnimation() {
   }
   dropPixelCache();
   clampPan();
+  // 落位后网格的目标可能变了（比如刚跨过阈值），从这里接着淡入
+  updateGridFade();
+  tickGridFade();
   invalidate();
   notifyChanged();
 }
 
-void PhotoView::onDelayed() { tickAnimation(); }
+void PhotoView::onDelayed() {
+  tickAnimation();
+  // 缩放动画结束后淡入可能还没走完：继续按帧推进，直到它停下
+  if (anim_.kind == AnimKind::kNone && tickGridFade()) {
+    invalidate();
+    postDelayed(kFrameMs);
+  }
+}
 
 // ───────────────────────── 几何 ─────────────────────────
 
@@ -593,9 +624,64 @@ void PhotoView::pickBitmap(Image& out, float& ratio) const {
   ratio = 1.0f;
 }
 
+// 网格是否处于「该显示」的状态。这里看的是目标而不是当前 alpha：
+// 跨过阈值就立即为真，之后在 kFadeMs 内淡入。若返回的是当前 alpha，
+// 「1000% 就有网格」会在刚跨过的那一瞬间被判成 false。
 bool PhotoView::isPixelGridVisible() const {
-  // 动画期间不画：网格要贴死在像素边界上，整幅图在转的时候它必然错位
-  return sourceSize_.width > 0 && zoom_ >= gridZoom_ && anim_.kind == AnimKind::kNone;
+  return sourceSize_.width > 0 && zoom_ >= gridZoom_ && anim_.kind != AnimKind::kRotate;
+}
+
+float PhotoView::gridFade() const {
+  // 网格该不该显示只由 zoom_ 与旋转动画决定，看到的值由「跨越时刻过了多久」
+  // 解析算出：
+  //   - 目标在阈值处就翻到 1，所以 1000% 一到就是满格，而不是半透明；
+  //   - 翻的那一帧起点是当时的值，之后 kFadeMs 内走过去，不是啪一下出现。
+  // 不逐帧累加：未挂到窗口时 postDelayed 是空操作，累加会让它永远停在 0。
+  if (!gridFading_) return gridAlphaTo_;
+
+  const int64_t elapsed = platform()->monotonicMillis() - gridFadeStartMs_;
+  const float raw = kFadeMs > 0 ? static_cast<float>(elapsed) / static_cast<float>(kFadeMs) : 1.0f;
+  if (raw >= 1.0f) return gridAlphaTo_;
+  // 与缩放动画同一条缓动曲线：两者同时在跑时观感才是统一的
+  return lerp(gridAlphaFrom_, gridAlphaTo_, easeInOut(raw));
+}
+
+void PhotoView::updateGridFade() {
+  // 旋转动画期间一律关掉：网格按 rotation_ 的 ×90° 算坐标，而那时图像是按
+  // displayAngle_ 画的，两者不同步，网格会整体错位。这里直接钉到 0，
+  // 不走淡出——错位的网格多留一帧都不该有，而且旋转本身的动作已经占满视觉。
+  if (anim_.kind == AnimKind::kRotate) {
+    gridAlphaFrom_ = 0.0f;
+    gridAlphaTo_ = 0.0f;
+    gridFading_ = false;
+    return;
+  }
+
+  const bool want = sourceSize_.width > 0 && zoom_ >= gridZoom_;
+  const float target = want ? 1.0f : 0.0f;
+  // 目标没变就什么都不做。注意不能拿 gridFade() 当「当前值」判等：它随时间
+  // 在动，每帧都不同，会被当成新目标反复重启动。
+  if (std::fabs(target - gridAlphaTo_) < 0.0001f) return;
+
+  // 起点取「此刻的值」而不是 0：连续滚轮时目标反复翻转，
+  // 从当前值接着走才是连续的，否则每次翻转都会跳回透明。
+  gridAlphaFrom_ = gridFade();
+  gridAlphaTo_ = target;
+  gridFadeStartMs_ = platform()->monotonicMillis();
+  if (gridFading_) return;  // 已经在逐帧推进，改起点就够了
+  gridFading_ = true;
+  // 自己没有定时器：借动画那条单次定时器链路，tick 里再排下一拍
+  postDelayed(kFrameMs);
+}
+
+bool PhotoView::tickGridFade() {
+  if (!gridFading_) return false;
+  // 到点就收尾，把状态定死，之后 gridFade() 直接返回目标值
+  if (platform()->monotonicMillis() - gridFadeStartMs_ >= kFadeMs) {
+    gridFading_ = false;
+    return false;
+  }
+  return true;
 }
 
 bool PhotoView::isOnImage(Point viewPoint) const {
@@ -621,8 +707,8 @@ bool PhotoView::isOnImage(Point viewPoint) const {
 
 // ───────────────────────── 像素格 ─────────────────────────
 
-void PhotoView::paintPixelGrid(Painter& painter, const Rect& view) {
-  if (!pixelProvider_ || sourceSize_.width <= 0) return;
+void PhotoView::paintPixelGrid(Painter& painter, const Rect& view, float alpha) {
+  if (!pixelProvider_ || sourceSize_.width <= 0 || alpha <= 0.0f) return;
   const float cell = zoom_;
   if (cell < kGridLineMinCell) return;
 
@@ -667,9 +753,12 @@ void PhotoView::paintPixelGrid(Painter& painter, const Rect& view) {
   // 线的长度必须夹在「图像在视图里占的那一块」之内：整行整列地画到
   // view.top/view.bottom 会让线跑出图片，铺到画布背景上——那不是网格，
   // 是几十条横贯窗口的灰线。
-  const Color lineColor = makeColor(0x10, 0x10, 0x10, 0x66);
-  for (int x = region.left; x <= region.right; ++x) {
-    int x0 = 0;
+  //
+  // alpha 跟着倍数淡入：整层网格一起从透明到实色，不是啪一下出现。
+  const Color lineColor = makeColor(0x10, 0x10, 0x10,
+                                    static_cast<std::uint8_t>(
+                                        static_cast<float>(0x66) * alpha + 0.5f));
+  for (int x = region.left; x <= region.right; ++x) {    int x0 = 0;
     int y0 = 0;
     int x1 = 0;
     int y1 = 0;
@@ -707,15 +796,52 @@ void PhotoView::paintPixelGrid(Painter& painter, const Rect& view) {
     }
   }
 
-  // 竖向放不下一行字的格子一律不写：这比「格边长 < 40」之类的固定阈值准，
-  // 因为字号随 DPI 变，阈值也该跟着变。
-  const Font& font = fonts.uiSmall;
-  const int textH = painter.textHeight(font);
-  if (cell < textH + 2) return;
-  const int inner = 2;
-  int drawn = 0;
-  for (int y = region.top; y < region.bottom && drawn < kGridTextMaxCells; ++y) {
-    for (int x = region.left; x < region.right && drawn < kGridTextMaxCells; ++x) {
+  // 格子里的 RGB 值：三行竖直排（R、G、B），字号跟着格子大小走。
+  //
+  // 为什么不横排成 "255,255,255"：横向要六七十像素，而格子在 1000% 时只有
+  // 十来个像素宽，永远放不进去，结果就是「有字的地方没几格」。
+  // 竖排后每行只要 3 位数字，宽度需求降到三分之一。
+  paintCellValues(painter, view, alpha);
+}
+
+void PhotoView::paintCellValues(Painter& painter, const Rect& view, float alpha) {
+  if (!pixelProvider_ || pixelCache_.isEmpty() || alpha <= 0.0f) return;
+
+  const float cell = zoom_;
+  const Point center = view.center();
+  const float cx = static_cast<float>(
+      static_cast<int>(std::lround(static_cast<float>(center.x) + pan_.x)));
+  const float cy = static_cast<float>(
+      static_cast<int>(std::lround(static_cast<float>(center.y) + pan_.y)));
+  const float halfW = sourceSize_.width * cell / 2.0f;
+  const float halfH = sourceSize_.height * cell / 2.0f;
+  const int turns = normalizeTurns(rotation_);
+
+  auto toView = [&](float x, float y, int& outX, int& outY) {
+    float rx = 0.0f;
+    float ry = 0.0f;
+    rotateOffset90(x * cell - halfW, y * cell - halfH, turns, rx, ry);
+    outX = static_cast<int>(std::lround(cx + rx));
+    outY = static_cast<int>(std::lround(cy + ry));
+  };
+
+  // 字号：格子竖着放三行数字，三行各占格高的三分之一。
+  //
+  // 直接取 cell/3 当 em：三行行框由格高三等分，后端在自己的行框里居中，
+  // 数字不会越界。但字号被下限抬起时（小格子）三行会叠——所以下面按实际
+  // 行高把三行作为一整块在格内居中，行距不足时宁可三行略微叠一点，
+  // 也不让它们压到隔壁格子上。
+  //
+  // 关键是「进入格子模式就必须每格都有字」：字号随格子缩放，格子小就给
+  // 很小的字。过去是「放不下这一格就跳过」，结果是屏幕上一部分格子有字、
+  // 一部分没有——那比字小难看得多。
+  int textPx = static_cast<int>(cell / 3.0f);
+  textPx = (std::max)(kCellTextMinPx, (std::min)(kCellTextMaxPx, textPx));
+  const Font& font = fonts.forPixelSize(textPx);
+  if (!font.isValid()) return;
+
+  for (int y = pixelCacheRect_.top; y < pixelCacheRect_.bottom; ++y) {
+    for (int x = pixelCacheRect_.left; x < pixelCacheRect_.right; ++x) {
       int x0 = 0;
       int y0 = 0;
       int x1 = 0;
@@ -724,27 +850,37 @@ void PhotoView::paintPixelGrid(Painter& painter, const Rect& view) {
       toView(static_cast<float>(x + 1), static_cast<float>(y + 1), x1, y1);
       const Rect cellRect{(std::min)(x0, x1), (std::min)(y0, y1), (std::max)(x0, x1),
                           (std::max)(y0, y1)};
+      // 整格落在视图外就跳过，避免画到边界外的无效文字
       if (cellRect.intersect(view).isEmpty()) continue;
-      // 竖向放不下一行字就别硬塞，半截数字比不画更难看
-      if (cellRect.height() < textH + inner) continue;
 
-      const size_t at = static_cast<size_t>(y - pixelCacheRect_.top) *
-                            static_cast<size_t>(pixelCache_.width) +
-                        static_cast<size_t>(x - pixelCacheRect_.left);
+      const size_t at =
+          static_cast<size_t>(y - pixelCacheRect_.top) *
+              static_cast<size_t>(pixelCache_.width) +
+          static_cast<size_t>(x - pixelCacheRect_.left);
       if (at >= pixelCache_.pixels.size()) continue;
       const Color px = pixelCache_.pixels[at];
 
-      const std::wstring text = std::to_wstring(colorRed(px)) + L"," +
-                                std::to_wstring(colorGreen(px)) + L"," +
-                                std::to_wstring(colorBlue(px));
-      // 横向也要放得下：宁可这一格不写字，也不能让数字压到隔壁像素上
-      if (painter.measureText(text, font) + inner > cellRect.width()) continue;
+      // 亮像素用深字、暗像素用浅字：否则总有一半格子读不出来。
+      // 文字跟着 alpha 淡入，与网格线同步，不会出现「线到了字没到」。
+      const int luma =
+          (colorRed(px) * 299 + colorGreen(px) * 587 + colorBlue(px) * 114) / 1000;
+      const Color base = luma > 140 ? makeColor(0x12, 0x12, 0x12) : makeColor(0xf6, 0xf6, 0xf6);
+      const Color ink =
+          makeColor(colorRed(base), colorGreen(base), colorBlue(base),
+                    static_cast<std::uint8_t>(static_cast<float>(colorAlpha(base)) * alpha +
+                                              0.5f));
 
-      // 亮像素用深字、暗像素用浅字：否则总有一半格子读不出来
-      const int luma = (colorRed(px) * 299 + colorGreen(px) * 587 + colorBlue(px) * 114) / 1000;
-      const Color ink = luma > 140 ? makeColor(0x12, 0x12, 0x12) : makeColor(0xf6, 0xf6, 0xf6);
-      painter.drawText(cellRect.inset(1, 1, 1, 1), text, ink, font, TextAlign::kCenter);
-      ++drawn;
+      // 三行等分格子：把格高按 1/3 切开，各自在自己的行框里垂直居中。
+      // 这样不论字号多大都不会越到隔壁格子上——行框就是格子的三等分。
+      const int h3 = cellRect.height() / 3;
+      const int rows[3] = {colorRed(px), colorGreen(px), colorBlue(px)};
+      for (int i = 0; i < 3; ++i) {
+        const int top = cellRect.top + h3 * i;
+        const int bottom = (i == 2) ? cellRect.bottom : top + h3;
+        const Rect line{cellRect.left, top, cellRect.right, bottom};
+        if (line.isEmpty()) continue;
+        painter.drawText(line, std::to_wstring(rows[i]), ink, font, TextAlign::kCenter);
+      }
     }
   }
 }
@@ -752,6 +888,10 @@ void PhotoView::paintPixelGrid(Painter& painter, const Rect& view) {
 // ───────────────────────── 绘制 ─────────────────────────
 
 void PhotoView::onPaint(Painter& painter, const Rect& rect) {
+  // 网格的目标状态每次绘制前对齐一次：缩放、旋转、换图都从这里过，
+  // 比在每个改状态的地方各补一句可靠（漏一处就会出现网格不跟着变）。
+  updateGridFade();
+
   if (!image_.isValid() || sourceSize_.width <= 0) {
     // 空状态也画个小图标，免得整块区域纯色一片让人以为没加载出来
     const int side = (std::min)(48, (std::min)(rect.width(), rect.height()));
@@ -808,14 +948,24 @@ void PhotoView::onPaint(Painter& painter, const Rect& rect) {
                     static_cast<int>(std::lround(static_cast<float>(center.y) + pan_.y)));
   if (std::fabs(angle) > 0.001f) painter.rotate(angle);
 
-  // 放大到能看清像素时用最近邻：插值会把像素格抹成一团，那不是用户想看的
-  const ImageSmoothing smoothing =
-      zoom_ >= gridZoom_ ? ImageSmoothing::kNearest : ImageSmoothing::kSmooth;
-  painter.drawImageScaled(bitmap, dstSub, source, smoothing);
+  // 放大到能看清像素时用最近邻：插值会把像素格抹成一团，那不是用户想看的。
+  // 但两种采样方式之间不能硬切——同一帧里锐度会跳一下。用交叉淡化：
+  // 平滑版按 (1−fade) 淡出、最近邻版按 fade 淡入，过渡带里两层叠着画。
+  // 代价只发生在过渡的那一格倍数上，进入网格后只剩一层。
+  const float fade = sharpenFade();
+  if (fade <= 0.0f) {
+    painter.drawImageScaled(bitmap, dstSub, source, ImageSmoothing::kSmooth);
+  } else if (fade >= 1.0f) {
+    painter.drawImageScaled(bitmap, dstSub, source, ImageSmoothing::kNearest);
+  } else {
+    painter.drawImageScaled(bitmap, dstSub, source, ImageSmoothing::kSmooth, 1.0f - fade);
+    painter.drawImageScaled(bitmap, dstSub, source, ImageSmoothing::kNearest, fade);
+  }
   painter.restore();
 
-  // 像素格与 RGB 值叠在图之上：只在静止且放大够多时画
-  if (isPixelGridVisible()) paintPixelGrid(painter, rect);
+  // 像素格与 RGB 值叠在图之上：只在静止且放大够多时画，跨阈值时淡入
+  const float grid = gridFade();
+  if (grid > 0.0f) paintPixelGrid(painter, rect, grid);
 }
 
 Size PhotoView::onMeasure(const Size& available) {

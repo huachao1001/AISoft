@@ -75,10 +75,13 @@ class PaintBackend {
     (void)source;
     drawImage(image, rc);
   }
-  // 同上的采样方式选择；后端不支持时按默认平滑处理
+  // 同上的采样方式选择；后端不支持时按默认平滑处理。
+  // alpha 把整张图按比例淡下去（0 全透明、1 不透明）：缩放跨过某个档位时
+  // 新旧两种画法要交叉淡入淡出，就得能画半透明的图。
   virtual void drawImageScaled(const Image& image, const Rect& rc, const Rect& source,
-                               ImageSmoothing smoothing) {
+                               ImageSmoothing smoothing, float alpha) {
     (void)smoothing;
+    (void)alpha;
     drawImage(image, rc, source);
   }
 
@@ -179,10 +182,12 @@ class Painter {
   void drawImage(const Image& image, const Rect& rc, const Rect& source) {
     backend_.drawImage(image, rc, source);
   }
-  // 指定采样方式：放大到像素级时用 kNearest，其余用 kSmooth
+  // 指定采样方式：放大到像素级时用 kNearest，其余用 kSmooth；
+  // alpha < 1 时整张图半透明，用于跨档位的交叉淡化
   void drawImageScaled(const Image& image, const Rect& rc, const Rect& source,
-                       ImageSmoothing smoothing) {
-    backend_.drawImageScaled(image, rc, source, smoothing);
+                       ImageSmoothing smoothing, float alpha = 1.0f) {
+    if (alpha <= 0.0f) return;
+    backend_.drawImageScaled(image, rc, source, smoothing, alpha);
   }
 
   // ── 裁剪 ──

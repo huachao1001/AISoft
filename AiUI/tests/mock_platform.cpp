@@ -70,6 +70,20 @@ void RecordingBackend::drawImage(const AiUI::Image& image, const Rect& rc) {
   (void)rc;
 }
 
+void RecordingBackend::drawImageScaled(const AiUI::Image& image, const Rect& rc,
+                                       const Rect& source, AiUI::ImageSmoothing smoothing,
+                                       float alpha) {
+  // 只记下「有张图以某个透明度被画到这里」：交叉淡入淡出的测试要能数出
+  // 同一帧里画了几遍、各自的 alpha 是多少。
+  (void)image;
+  (void)source;
+  ImageCall call;
+  call.rect = map(rc);
+  call.alpha = alpha;
+  call.smoothing = smoothing;
+  images_.push_back(call);
+}
+
 void RecordingBackend::setClip(const Rect& rc) { clip_ = rc; }
 
 void RecordingBackend::resetClip() { clip_ = Rect{}; }
@@ -116,6 +130,7 @@ std::unique_ptr<AiUI::Canvas> FakeWindow::createCanvas(const Rect& area) {
 void FakeWindow::recordCommit(const RecordingBackend& backend, const Rect& area, int commits) {
   lastFills_ = backend.fills();
   lastTexts_ = backend.texts();
+  lastImages_ = backend.images();
   lastArea_ = area;
   lastCommits_ = commits;
   lastTranslateX_ = backend.translateX();

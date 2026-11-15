@@ -18,6 +18,7 @@
 #include "AiUI/painter.h"
 #include "AiUI/view.h"
 
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -84,6 +85,15 @@ class PhotoView : public View {
   void setPixelRegionProvider(PixelRegionProvider fn) { pixelProvider_ = std::move(fn); }
   // 当前倍数是否已经进入像素网格模式
   bool isPixelGridVisible() const;
+  // 网格的淡入程度 0..1：跨过阈值时按时间渐变，避免整屏突然出现一层网格。
+  // 值由「跨越阈值后过了多久」解析算出，不依赖逐帧累加。
+  float gridFade() const;
+  // 采样方式的交叉淡化程度 0..1：平滑 → 最近邻不能硬切
+  float sharpenFade() const { return gridFade(); }
+  // 按当前 zoom_/anim_ 重算网格该不该显示；目标变了就重新计时
+  void updateGridFade();
+  // 淡入是否走完；返回 false 表示不需要再排帧
+  bool tickGridFade();
   // 进入像素网格的倍数阈值。默认 10 倍（界面上显示 1000%）：再小格子不到
   // 10 像素，网格线和 RGB 数字都塞不进去，画出来只是脏。
   void setPixelGridZoom(float zoom) { gridZoom_ = zoom; }
@@ -194,8 +204,10 @@ class PhotoView : public View {
   Rect rotatedToSource(const Rect& inRotated) const;
   // 这一帧该用哪张位图：选出够用的最小那张
   void pickBitmap(Image& out, float& ratio) const;
-  // 像素格 + RGB 值
-  void paintPixelGrid(Painter& painter, const Rect& view);
+  // 像素格 + RGB 值；alpha 用于跨阈值时淡入
+  void paintPixelGrid(Painter& painter, const Rect& view, float alpha);
+  // 每个格子里的 RGB 数值（三行竖直），字号随格子大小自适应
+  void paintCellValues(Painter& painter, const Rect& view, float alpha);
 
   Image image_{};   // 全尺寸位图，需要细节时用
   Image proxy_{};   // 缩略代理，动画与低倍数时用；小图没有代理
@@ -228,6 +240,17 @@ class PhotoView : public View {
   RgbaImage pixelCache_;
   Rect pixelCacheRect_{};
   float gridZoom_ = 10.0f;
+
+  // 网格/锐化的淡入淡出。跨过阈值不是「啪一下出现」，而是在 kFadeMs 里
+  // 从 0 渐变到 1（反向同理）。用时间而不是倍数当自变量：倍数是用户滚出来
+  // 的，按它渐变会让「到 1000% 就该看到网格」变成半透明。
+  //
+  // 值由 gridFade() 按「跨越时刻到 now」解析算出，不做逐帧累加：
+  // 未挂到窗口时 postDelayed 是空操作，累加法会让 alpha 永远停在 0。
+  float gridAlphaFrom_ = 0.0f;
+  float gridAlphaTo_ = 0.0f;
+  int64_t gridFadeStartMs_ = 0;
+  bool gridFading_ = false;
 
   ZoomHandler onWheelZoom_;
   ChangeHandler onChange_;
