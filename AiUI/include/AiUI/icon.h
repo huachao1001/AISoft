@@ -33,6 +33,10 @@ enum class IconId {
   kCheck,  // 复选项打勾
   kEye,    // 显示密码（明文）
   kEyeOff, // 隐藏密码（掩码）
+  // 安装器维护页
+  kRepair,      // 修复（扳手）
+  kUninstall,   // 卸载（回收站）
+  kHeart,       // 挽留（心形）
   // 标题栏系统按钮
   kMinimize,
   kMaximize,

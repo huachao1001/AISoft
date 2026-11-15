@@ -25,6 +25,13 @@ namespace {
 // 刷新界面的节奏。进度回调可能一步一次，没必要每次都投递窗口消息。
 constexpr int kRefreshMs = 60;
 
+// 挽留页文案的兜底。清单的 [maintain] 没写就用这里——安装器不该因为应用
+// 没定制文案就显示空白页，而「劝人先试试修复」这句话本来就该由通用件来说。
+constexpr const wchar_t* kDefaultKeepTitle = L"其实不用卸载";
+constexpr const wchar_t* kDefaultKeepMessage =
+    L"程序有点不对劲时，先试试「修复」：它重写右键菜单与文件关联，"
+    L"程序文件和你自己的设置都保留。";
+
 }  // namespace
 
 // 定义在头文件里前向声明过的具名类：安装界面需要在成员里持有它。
@@ -57,15 +64,22 @@ void SetupActivity::setManifest(const Manifest& manifest) {
   app_ = std::move(app);
 }
 
-void SetupActivity::setAutoInstall(const std::wstring& dir, Scope scope) {
+void SetupActivity::setAutoRequest(const std::wstring& dir, Scope scope, RequestMode mode) {
   autoInstall_ = true;
   autoDir_ = dir;
   autoScope_ = scope;
+  autoMode_ = mode;
 }
 
 void SetupActivity::setAutoUninstall(const std::wstring& installDir, const Manifest& manifest) {
   autoUninstall_ = true;
   uninstallDir_ = installDir;
+  setManifest(manifest);
+}
+
+void SetupActivity::setMaintain(const std::wstring& installDir, const Manifest& manifest) {
+  maintain_ = true;
+  maintainDir_ = installDir;
   setManifest(manifest);
 }
 
@@ -75,18 +89,30 @@ void SetupActivity::setAbortWith(const std::wstring& message) {
 }
 
 void SetupActivity::onCreate() {
-  // 窗口标题与正文全部来自清单；清单没写就用显示名兜底，避免出现空白标题
-  const std::wstring baseTitle =
-      manifest_.windowTitle.empty() ? manifest_.displayName : manifest_.windowTitle;
+  // 维护通道的标题与说明单独一套：这一页要问的是「修复还是卸载」，
+  // 贴着「安装爱压」的标题会让人以为点错了程序。
+  const std::wstring headTitle =
+      maintain_ && !manifest_.maintainTitle.empty()
+          ? manifest_.maintainTitle
+          : (manifest_.title.empty() ? manifest_.displayName : manifest_.title);
+  const std::wstring headDescription =
+      maintain_ ? manifest_.maintainDescription : manifest_.description;
+
+  // 窗口标题同样要换：任务栏与 Alt+Tab 里显示的是它，写着「安装爱压」
+  // 而窗口里在问「要不要卸载」会让人怀疑点错了文件。
+  const std::wstring baseTitle = maintain_
+                                     ? headTitle
+                                     : (manifest_.windowTitle.empty() ? manifest_.displayName
+                                                                      : manifest_.windowTitle);
   setTitle(baseTitle);
 
   if (auto* view = findView<AiUI::TextView>("title")) {
-    view->setText(manifest_.title.empty() ? manifest_.displayName : manifest_.title);
+    view->setText(headTitle);
   }
   if (auto* view = findView<AiUI::TextView>("description")) {
-    view->setText(manifest_.description);
+    view->setText(headDescription);
     // 清单没写说明时把整行收起来，别留一条空白
-    view->show(!manifest_.description.empty());
+    view->show(!headDescription.empty());
   }
   if (auto* button = findView<AiUI::Button>("btnInstall")) {
     button->setLabel(manifest_.installText);
@@ -100,10 +126,16 @@ void SetupActivity::onCreate() {
 
   // 清单里的 logo 由入口先解到临时文件再传进来：图片只能按路径解码，
   // 而解包要读安装包本身，那是入口的职责，界面不该自己去开文件。
+  //
+  // 维护通道没有 logo：卸载副本的载荷为空。这时用安装目录里主程序的系统
+  // 图标，用户一眼认出是这个程序，比空白或安装器图标都好。
   if (auto* logo = findView<AiUI::ImageView>("logo")) {
     if (!logoPath_.empty()) {
       logo->loadFile(logoPath_);
       logo->show(logo->hasImage());
+    } else if (installedIcon_.isValid()) {
+      logo->setImage(installedIcon_);
+      logo->show(true);
     } else {
       logo->show(false);
     }
@@ -120,6 +152,10 @@ void SetupActivity::onCreate() {
   configPage_ = findView<AiUI::View>("configPage");
   progressPage_ = findView<AiUI::View>("progressPage");
   donePage_ = findView<AiUI::View>("donePage");
+  maintainPage_ = findView<AiUI::View>("maintainPage");
+  keepPage_ = findView<AiUI::View>("keepPage");
+
+  setupMaintainPage();
 
   // 只支持当前用户的应用不该显示范围选项：选了也装不了
   if (auto* scopeRow = findView<AiUI::View>("scopeRow")) {
@@ -201,7 +237,7 @@ void SetupActivity::onCreate() {
     runAfterBox_->setChecked(manifest_.runAfterChecked, false);
   }
 
-  showStage(Stage::kConfig);
+  showStage(maintain_ ? Stage::kMaintain : Stage::kConfig);
 
   // 不是安装包：直接告知并退出，别让用户对着一个空界面点
   if (abort_) {
@@ -210,14 +246,32 @@ void SetupActivity::onCreate() {
     return;
   }
 
-  // 卸载不显示安装界面，直接执行后退出
+  // 静默卸载：没有人会来点按钮，直接删完退出
   if (autoUninstall_) {
     runUninstall();
     return;
   }
 
-  // 提权后的新进程：按带过来的选择直接装，用户只需在 UAC 上点一次「是」
+  // 卸载副本：先问「修复还是卸载」，不直接删
+  if (maintain_) {
+    job_ = Job::kInstall;
+    return;
+  }
+
+  // 提权后的新进程：按带过来的选择直接执行，用户只需在 UAC 上点一次「是」。
+  // 三种模式共用这条通道：只认 --elevated-retry 会把修复跑成一次重装。
   if (autoInstall_) {
+    if (autoMode_ != RequestMode::kInstall) {
+      maintain_ = true;
+      maintainDir_ = autoDir_;
+      if (autoMode_ == RequestMode::kRepair) {
+        runRepair();
+      } else {
+        runUninstall();
+      }
+      return;
+    }
+
     // 顺序要紧：先设范围再设目录。设范围会触发 onChange 重算默认目录，
     // 反过来会被覆盖，装到用户没指定的地方去。
     if (scopeGroup_) scopeGroup_->setCheckedIndex(autoScope_ == Scope::kAllUsers ? 1 : 0);
@@ -230,10 +284,76 @@ void SetupActivity::onCreate() {
   }
 }
 
+// 维护页与挽留页都在 onCreate 里装配：控件是布局生成的，装配代码跟着走。
+//
+// 文案留空就用界面层的兜底：卸载界面本来就是个通用件，不该因为某个应用
+// 没写 [maintain] 就显示一个空白的挽留页。
+void SetupActivity::setupMaintainPage() {
+  maintainGroup_ = findView<AiUI::ChoiceCardGroup>("maintainGroup");
+
+  if (auto* repair = findView<AiUI::ChoiceCard>("cardRepair")) {
+    repair->setTitle(manifest_.repairText);
+    if (!manifest_.repairDetail.empty()) repair->setDetail(manifest_.repairDetail);
+  }
+  if (auto* uninstall = findView<AiUI::ChoiceCard>("cardUninstall")) {
+    uninstall->setTitle(manifest_.uninstallText);
+    if (!manifest_.uninstallDetail.empty()) uninstall->setDetail(manifest_.uninstallDetail);
+  }
+
+  // 默认停在「修复」：大多数人点开卸载程序是想修，不是想删
+  if (maintainGroup_) maintainGroup_->setCheckedIndex(0);
+
+  if (auto* button = findView<AiUI::Button>("btnMaintain")) {
+    button->setOnClick([this] { continueFromMaintain(); });
+  }
+  if (auto* button = findView<AiUI::Button>("btnMaintainCancel")) {
+    button->setOnClick([this] { close(); });
+  }
+
+  // 挽留页
+  if (auto* icon = findView<AiUI::ImageView>("keepIcon")) {
+    icon->setIcon(AiUI::IconId::kHeart);
+    // 心形用主题的强调色调淡一档：与首页空状态同一套做法，深色主题下也不会
+    // 变成一块突兀的灰。描边色必须在代码里设，XML 里只能写死 #rrggbb。
+    icon->setPlaceholderColor(AiUI::blendColor(icon->theme().accent, icon->theme().body, 0.55f));
+  }
+  if (auto* view = findView<AiUI::TextView>("keepTitle")) {
+    view->setText(manifest_.keepTitle.empty() ? kDefaultKeepTitle : manifest_.keepTitle);
+  }
+  if (auto* view = findView<AiUI::TextView>("keepMessage")) {
+    view->setText(manifest_.keepMessage.empty() ? kDefaultKeepMessage : manifest_.keepMessage);
+  }
+  if (auto* button = findView<AiUI::Button>("btnKeepStay")) {
+    button->setLabel(manifest_.keepStayText);
+    // 「保留程序」是推荐项：默认按钮与主色都给它，卸载只是那条退路
+    button->setOnClick([this] {
+      // 退回维护页，让他重新选——也许本来就想点修复
+      showStage(maintain_ ? Stage::kMaintain : Stage::kConfig);
+    });
+  }
+  if (auto* button = findView<AiUI::Button>("btnKeepLeave")) {
+    button->setLabel(manifest_.keepLeaveText);
+    button->setOnClick([this] { runUninstall(); });
+  }
+}
+
 void SetupActivity::showStage(Stage stage) {
   if (configPage_) configPage_->show(stage == Stage::kConfig);
   if (progressPage_) progressPage_->show(stage == Stage::kProgress);
   if (donePage_) donePage_->show(stage == Stage::kDone);
+  if (maintainPage_) maintainPage_->show(stage == Stage::kMaintain);
+  if (keepPage_) keepPage_->show(stage == Stage::kKeep);
+
+  // 头部说明跟着页走。挽留页自己有标题与那段话，再叠一句「选一项继续」
+  // 就自相矛盾了：那一页上已经没有可选项，只有「留」与「走」。
+  if (auto* view = findView<AiUI::TextView>("description")) {
+    const std::wstring text =
+        stage == Stage::kKeep
+            ? std::wstring()
+            : (maintain_ ? manifest_.maintainDescription : manifest_.description);
+    view->setText(text);
+    view->show(!text.empty());
+  }
 }
 
 void SetupActivity::setProgress(float fraction, const std::wstring& text) {
@@ -275,6 +395,58 @@ void SetupActivity::applyProgress() {
 }
 
 void SetupActivity::startInstallWork(const InstallRequest& request) {
+  installDir_ = request.targetDir;
+
+  // 工作线程不能碰控件，只写快照；收尾与存活判断由 startTaskWork 统一处理
+  startTaskWork([this, request] {
+    InstallPlan plan;
+    plan.request = request;
+    plan.files = manifest_.files;
+    plan.configModule = manifest_.configModule;
+    plan.commands = manifest_.commands;
+    plan.progress = &SetupActivity::onProgress;
+    plan.progressUser = this;
+    return AiInstaller::runInstall(plan);
+  });
+}
+
+void SetupActivity::startRepairWork(const InstallRequest& request) {
+  installDir_ = request.targetDir;
+
+  startTaskWork([this, request] {
+    RepairPlan plan;
+    plan.request = request;
+    plan.configModule = manifest_.configModule;
+    plan.commands = manifest_.commands;
+    // 卸载程序就在安装目录里，与它自己同级
+    plan.uninstallerPath = request.targetDir + L"\\" + Package::uninstallFileName();
+    plan.progress = &SetupActivity::onProgress;
+    plan.progressUser = this;
+    return AiInstaller::runRepair(plan);
+  });
+}
+
+void SetupActivity::startUninstallWork(const InstallRequest& request) {
+  installDir_ = request.targetDir;
+
+  startTaskWork([this, request] {
+    RemovePlan plan;
+    plan.request = request;
+    // 删哪些文件以清单为准：卸载副本自己末尾带着清单。
+    // 只列真正装到磁盘的那些，品牌素材本来就不在用户目录里。
+    for (const auto& file : manifest_.files) {
+      if (file.install) plan.files.push_back(file.path);
+    }
+    plan.configModule = manifest_.configModule;
+    plan.progress = &SetupActivity::onProgress;
+    plan.progressUser = this;
+    return AiInstaller::runRemove(plan);
+  });
+}
+
+// 三种动作（装、修、卸）的公共外壳：清状态 → 切进度页 → 起线程。
+// 抽出这一层只为止一处维护，删除/修复/安装的差别全在 task 里。
+void SetupActivity::startTaskWork(std::function<std::wstring()> task) {
   // 上一轮（失败后重试）的线程可能已经跑完但还 joinable，直接赋值给
   // std::thread 会走 terminate。先回收再开新线程。
   if (worker_.joinable()) worker_.join();
@@ -306,20 +478,10 @@ void SetupActivity::startInstallWork(const InstallRequest& request) {
     }
   }
   if (tick_) tick_->schedule(kRefreshMs);
-  InstallPlan plan;
-  plan.request = request;
-  plan.files = manifest_.files;
-  plan.configModule = manifest_.configModule;
-  plan.commands = manifest_.commands;
-  plan.progress = &SetupActivity::onProgress;
-  plan.progressUser = this;
 
-  installDir_ = request.targetDir;
-
-  // 工作线程不能碰控件，只写快照；收尾一律投递回 UI 线程
   auto alive = alive_;
-  worker_ = std::thread([this, plan, alive] {
-    const std::wstring error = AiInstaller::runInstall(plan);
+  worker_ = std::thread([this, task = std::move(task), alive] {
+    const std::wstring error = task();
     {
       std::lock_guard<std::mutex> lock(snapshotMutex_);
       resultReady_ = true;
@@ -354,6 +516,34 @@ void SetupActivity::onWorkFinished() {
     error = resultError_;
   }
 
+  // 卸载与修复都是旁路动作：完事就把窗口关掉，不留完成页。
+  // 卸载尤其不能停：卸载项与文件都已经没了，界面上再挂着一个「完成」按钮
+  // 会让人以为程序还在。
+  if (job_ == Job::kUninstall) {
+    if (!error.empty()) {
+      showMessage(error, true);
+    }
+    close();
+    return;
+  }
+  if (job_ == Job::kRepair) {
+    if (!error.empty()) {
+      // 修复失败要回到维护页，让人还能选卸载或重试
+      showStage(Stage::kMaintain);
+      shownFraction_ = 0.0f;
+      applyProgress();
+      showMessage(error, true);
+      return;
+    }
+    showStage(Stage::kMaintain);
+    // 措辞必须中性：安装器不知道这个应用有哪些系统集成（菜单？关联？
+    // 计划任务？），写死「右键菜单与文件关联」在别的应用上就是假话。
+    showMessage(L"修复完成：该程序在系统里的注册信息已经重新写入。\n\n"
+                L"如果它还是不对劲，卸载后重新安装一次。",
+                false);
+    return;
+  }
+
   if (!ok) {
     // 静默安装：没人能看见这个框，弹出来就是挂住。用退出码报失败即可。
     if (silent_) {
@@ -361,8 +551,8 @@ void SetupActivity::onWorkFinished() {
       close();
       return;
     }
-    // 失败不留在进度页：那看着像还在装。回到配置页并说明原因。
-    showStage(Stage::kConfig);
+    // 失败不留在进度页：那看着像还在装。回到出发的那一页并说明原因。
+    showStage(failedStage_);
     // 进度条归零：下次重试要从 0 开始，留着半截会让人以为接着上次跑
     shownFraction_ = 0.0f;
     applyProgress();
@@ -454,28 +644,89 @@ void SetupActivity::runInstall() {
   }
 
   // 装到进度页并在工作线程上跑：同步执行会把 UI 线程占满，进度条画不出来
+  job_ = Job::kInstall;
+  failedStage_ = Stage::kConfig;
   startInstallWork(request);
 }
 
+void SetupActivity::continueFromMaintain() {
+  const int index = maintainGroup_ ? maintainGroup_->checkedIndex() : 0;
+  if (index == 1) {
+    // 选卸载先劝一次：双击卸载程序的人常常只是觉得程序不对劲
+    showStage(Stage::kKeep);
+    return;
+  }
+  runRepair();
+}
+
+void SetupActivity::runRepair() {
+  InstallRequest request;
+  request.app = app_;
+  request.targetDir = maintainDir_;
+  // 范围以卸载项登记的根键为准：修复要写回原处，不能靠「当前是否提权」猜。
+  //
+  // 兜底用「当前用户」而不是「所有用户」：卸载项被清理工具删掉时没有人知道
+  // 原范围，而未提权进程写 HKLM 必然失败——那样修复会直接报错，用户看到的
+  // 是「修不好」。写到 HKCU 至少条目对所有账户可见、也能正常卸载。
+  request.scope = readInstalledScope(app_.displayName, maintainDir_, Scope::kCurrentUser);
+
+  // 修复只动注册表与命令，不碰文件，所以不需要提权判断就走提权：
+  // 写在 HKLM 的东西需要管理员。范围是 HKCU 时当前用户就够。
+  if (needsElevation(request.scope)) {
+    if (relaunchElevated(request)) {
+      close();
+      return;
+    }
+    showMessage(L"修复「所有用户」的安装需要管理员权限。\n\n"
+                L"请右键卸载程序，选择「以管理员身份运行」。",
+                true);
+    return;
+  }
+
+  job_ = Job::kRepair;
+  failedStage_ = Stage::kMaintain;
+  startRepairWork(request);
+}
+
 void SetupActivity::runUninstall() {
-  RemovePlan plan;
-  plan.request.app = app_;
-  plan.request.targetDir = uninstallDir_;
+  InstallRequest request;
+  request.app = app_;
+  // 静默卸载用入口送进来的目录；界面上的卸载用维护通道的目录。
+  request.targetDir = autoUninstall_ ? uninstallDir_ : maintainDir_;
   // 范围以卸载项登记在哪个根键为准。不能靠「当前是否提权」猜：
   // 卸载器带 requireAdministrator，几乎总是提权状态。
-  plan.request.scope =
-      readInstalledScope(app_.displayName, uninstallDir_, Scope::kAllUsers);
+  request.scope =
+      readInstalledScope(app_.displayName, request.targetDir, Scope::kAllUsers);
 
-  // 删哪些文件以清单为准：卸载副本自己末尾带着清单。
-  // 只列真正装到磁盘的那些，品牌素材本来就不在用户目录里。
-  for (const auto& file : manifest_.files) {
-    if (file.install) plan.files.push_back(file.path);
+  // 静默卸载（无人值守）没有界面可等：直接同步删完退出，不切进度页。
+  // 界面通道要走进度页，删几十个文件同样会占满 UI 线程。
+  if (autoUninstall_) {
+    RemovePlan plan;
+    plan.request = request;
+    for (const auto& file : manifest_.files) {
+      if (file.install) plan.files.push_back(file.path);
+    }
+    plan.configModule = manifest_.configModule;
+    const std::wstring error = runRemove(plan);
+    close();
+    if (!error.empty()) showMessage(error, true);
+    return;
   }
-  plan.configModule = manifest_.configModule;
 
-  const std::wstring error = runRemove(plan);
-  close();
-  if (!error.empty()) showMessage(error, true);
+  if (needsElevation(request.scope)) {
+    if (relaunchElevated(request)) {
+      close();
+      return;
+    }
+    showMessage(L"卸载「所有用户」的安装需要管理员权限。\n\n"
+                L"请右键卸载程序，选择「以管理员身份运行」。",
+                true);
+    return;
+  }
+
+  job_ = Job::kUninstall;
+  failedStage_ = Stage::kKeep;
+  startUninstallWork(request);
 }
 
 bool SetupActivity::onCloseRequest() {

@@ -67,6 +67,12 @@ if ($updated -eq 0 -and $skipped -eq 0) { Write-Output "dist 已是最新" }
 # 清单里没有的旧文件一律清掉，防止用户跑到已下线的程序
 $keep = $artifacts | ForEach-Object { $_.Name }
 Get-ChildItem -File $dist | Where-Object { $keep -notcontains $_.Name } | ForEach-Object {
-  Remove-Item -Force $_.FullName
-  Write-Output "移除过期 $($_.Name)"
+  try {
+    Remove-Item -Force $_.FullName -ErrorAction Stop
+    Write-Output "移除过期 $($_.Name)"
+  } catch {
+    # 带指纹的右键菜单 dll 会被 explorer 加载，改名换新后旧文件仍被锁着，
+    # 直到资源管理器重启。为一个已下线的文件中断整次构建不划算。
+    Write-Warning "跳过（仍被占用）：$($_.Name)，可稍后手工删除"
+  }
 }

@@ -87,6 +87,23 @@ struct Manifest {
   std::wstring runAfterText = L"立即打开";
   bool runAfterChecked = true;
 
+  // ── 维护页（双击 uninstall.exe 时显示的界面，[maintain]）──
+  //
+  // 卸载不再是「双击就没了」：用户可能是想修一下而不是删掉，直接删掉
+  // 会让人再装一遍。所以先给一张双选项卡（修复 / 卸载），默认选修复。
+  // 文案留空时用界面层的通用默认值。
+  std::wstring maintainTitle;
+  std::wstring maintainDescription;
+  std::wstring repairText = L"修复";
+  std::wstring repairDetail;
+  std::wstring uninstallText = L"卸载";
+  std::wstring uninstallDetail;
+  // 挽留页：选卸载后先劝一次，用户仍然要走才真的删。
+  std::wstring keepTitle;
+  std::wstring keepMessage;
+  std::wstring keepStayText = L"保留程序";
+  std::wstring keepLeaveText = L"仍要卸载";
+
   // ── 配置模块（[config]）──
   // 安装目录里的配置 dll 文件名，按 AiInstaller/config_abi.h 的标准 ABI 导出。
   // 留空表示该应用没有任何系统配置，安装器装完文件就结束。

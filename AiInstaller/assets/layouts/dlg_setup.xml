@@ -9,6 +9,11 @@
   三段式：配置页 → 进度页 → 完成页。三页叠在同一个窗口里，用可见性切换，
   不给每一步各开一个窗口——窗口会闪、会跳位置，用户看到的本来就是同一个任务。
   底部按钮行常驻，每页只换按钮内容。
+
+  卸载副本（uninstall.exe）走另一条路：维护页 → 挽留页 → 进度页 → 完成页。
+  维护页把「修复」与「卸载」做成两张带大图标的选项卡；选卸载后先劝一次，
+  用户仍然坚持才真删。理由是双击 uninstall.exe 的人未必想删——程序不对劲
+  时他更可能只是想修一下，直接删掉就得让他再装一遍。
 -->
 <LinearLayout orientation="vertical" paddingLeft="16" paddingRight="20" paddingTop="16"
               paddingBottom="16" spacing="10" background="dialogBg">
@@ -89,6 +94,56 @@
       <View weight="1"/>
       <Button id="btnFinish" text="完成" style="primary" width="120" height="34"/>
       <View weight="1"/>
+    </LinearLayout>
+  </LinearLayout>
+
+  <!-- ===== 维护页：卸载副本的入口 ===== -->
+  <LinearLayout id="maintainPage" orientation="vertical" weight="1" spacing="10">
+
+    <!-- 两张带大图标的卡：图标在上、标题与说明在右，点哪儿都算选中。
+         单选组负责互斥，默认选「修复」——大多数人点开卸载程序是想修，不是想删。 -->
+    <ChoiceCardGroup id="maintainGroup" gap="10" radio="true" marginTop="4">
+      <ChoiceCard id="cardRepair" icon="repair" checked="true" text="修复"
+                  detail="重新写入右键菜单与文件关联，程序文件不动"/>
+      <ChoiceCard id="cardUninstall" icon="uninstall" text="卸载"
+                  detail="删除程序文件，并撤销安装时做的全部系统集成"/>
+    </ChoiceCardGroup>
+
+    <!-- 弹簧：把按钮行顶到底部 -->
+    <View weight="1" height="1"/>
+
+    <LinearLayout orientation="horizontal" height="32" marginTop="6">
+      <View weight="1"/>
+      <Button id="btnMaintain" text="继续" style="primary" width="88" height="32"/>
+      <Button id="btnMaintainCancel" text="取消" style="outline" width="88" height="32"
+              marginLeft="10"/>
+    </LinearLayout>
+  </LinearLayout>
+
+  <!-- ===== 挽留页：选了卸载之后先劝一次 ===== -->
+  <LinearLayout id="keepPage" orientation="vertical" weight="1" spacing="10">
+
+    <View weight="1" height="1"/>
+
+    <!-- 心形图标 + 一段话：删程序是有代价的（配置、菜单、关联都要重来），
+         所以给他一个「其实不用删」的台阶，而不是直接按下删除键。
+         文案拆成两行：TextView 是单行绘制（NoWrap），多行文字会被直接截断。 -->
+    <LinearLayout orientation="horizontal" height="72" alignY="center">
+      <ImageView id="keepIcon" width="56" height="56" scale="fit"/>
+      <LinearLayout orientation="vertical" weight="1" marginLeft="16" alignY="center">
+        <TextView id="keepTitle" height="24" textColor="text" bold="true"/>
+        <TextView id="keepMessage" height="44" marginTop="4" textColor="textMuted"
+                  ellipsis="false"/>
+      </LinearLayout>
+    </LinearLayout>
+
+    <View weight="1" height="1"/>
+
+    <LinearLayout orientation="horizontal" height="34" marginTop="6">
+      <View weight="1"/>
+      <Button id="btnKeepStay" text="保留程序" style="primary" width="110" height="34"/>
+      <Button id="btnKeepLeave" text="仍要卸载" style="outline" width="110" height="34"
+              marginLeft="10"/>
     </LinearLayout>
   </LinearLayout>
 

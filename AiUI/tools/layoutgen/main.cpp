@@ -293,6 +293,8 @@ std::string iconExpr(const std::string& name) {
       {"chevronDown", "IconId::kChevronDown"},{"home", "IconId::kHome"},
       {"folder", "IconId::kFolder"},          {"file", "IconId::kFile"},
       {"search", "IconId::kSearch"},
+      {"repair", "IconId::kRepair"},          {"uninstall", "IconId::kUninstall"},
+      {"heart", "IconId::kHeart"},
       {"close", "IconId::kClose"},          {"minimize", "IconId::kMinimize"},
       {"maximize", "IconId::kMaximize"},    {"restore", "IconId::kRestore"},
   };
@@ -407,6 +409,8 @@ std::string headerFor(const std::string& tag) {
       {"ProgressBar", "AiUI/widgets/form_controls.h"},
       {"GroupBox", "AiUI/widgets/form_controls.h"},
       {"ComboBox", "AiUI/widgets/form_controls.h"},
+      {"ChoiceCard", "AiUI/widgets/choice_card.h"},
+      {"ChoiceCardGroup", "AiUI/widgets/choice_card.h"},
   };
   auto it = kHeaders.find(tag);
   return it == kHeaders.end() ? std::string() : it->second;
@@ -427,7 +431,7 @@ bool isKnown(const XmlNode& node) {
 
 bool isContainer(const std::string& tag) {
   return tag == "LinearLayout" || tag == "FrameLayout" || tag == "RadioGroup" ||
-         tag == "GroupBox";
+         tag == "GroupBox" || tag == "ChoiceCardGroup";
 }
 
 // ── 代码生成 ──
@@ -602,6 +606,12 @@ class Generator {
     if (tag == "RadioGroup" && has(node, "orientation")) {
       line(1, target + "->setOrientation(" + orientationExpr(get(node, "orientation", "vertical")) +
                      ");");
+    }
+    if (tag == "ChoiceCardGroup") {
+      if (has(node, "gap")) line(1, target + "->setGap(" + get(node, "gap", "10") + ");");
+      if (has(node, "radio")) {
+        line(1, target + "->setRadio(" + (getBool(node, "radio", true) ? "true" : "false") + ");");
+      }
     }
     const bool hasPad = has(node, "padding") || has(node, "paddingLeft") ||
                         has(node, "paddingTop") || has(node, "paddingRight") ||
@@ -868,6 +878,62 @@ class Generator {
       }
       if (has(node, "accentColor")) {
         line(2, "spec.accent = " + colorExpr(node, "accentColor", "kNoColor") + ";");
+      }
+      if (has(node, "hoverColor")) {
+        line(2, "spec.hoverBackground = " + colorExpr(node, "hoverColor", "kNoColor") + ";");
+      }
+      line(2, variable + "->setSpec(spec);");
+      line(1, "}");
+      return;
+    }
+
+    if (tag == "ChoiceCard") {
+      line(1, "{");
+      line(2, "ChoiceCardSpec spec;");
+      // 标题取 text 属性或标签内的文字，说明取 detail
+      std::string title = get(node, "text");
+      if (title.empty()) title = trimmed(node.text);
+      if (!title.empty()) line(2, "spec.title = " + wideLiteral(title) + ";");
+      const std::string detail = get(node, "detail");
+      if (!detail.empty()) line(2, "spec.detail = " + wideLiteral(detail) + ";");
+      const std::string icon = get(node, "icon");
+      if (!icon.empty()) line(2, "spec.icon = " + iconExpr(icon) + ";");
+      if (getBool(node, "checked", false)) line(2, "spec.checked = true;");
+      if (has(node, "radio")) {
+        line(2, std::string("spec.radio = ") + (getBool(node, "radio", true) ? "true;" : "false;"));
+      }
+      if (has(node, "radius")) line(2, "spec.radius = " + get(node, "radius", "10") + ";");
+      if (has(node, "padding")) line(2, "spec.padX = " + get(node, "padding", "16") + ";");
+      if (has(node, "paddingY")) line(2, "spec.padY = " + get(node, "paddingY", "14") + ";");
+      if (has(node, "iconSize")) line(2, "spec.iconSize = " + get(node, "iconSize", "44") + ";");
+      if (has(node, "iconGap")) line(2, "spec.iconGap = " + get(node, "iconGap", "14") + ";");
+      if (has(node, "showIndicator")) {
+        line(2, std::string("spec.showIndicator = ") +
+                     (getBool(node, "showIndicator", true) ? "true;" : "false;"));
+      }
+      if (has(node, "backgroundColor")) {
+        line(2, "spec.background = " + colorExpr(node, "backgroundColor", "kNoColor") + ";");
+      }
+      if (has(node, "borderColor")) {
+        line(2, "spec.border = " + colorExpr(node, "borderColor", "kNoColor") + ";");
+      }
+      if (has(node, "checkedColor")) {
+        line(2, "spec.checkedBackground = " + colorExpr(node, "checkedColor", "kNoColor") + ";");
+      }
+      if (has(node, "checkedBorderColor")) {
+        line(2, "spec.checkedBorder = " + colorExpr(node, "checkedBorderColor", "kNoColor") + ";");
+      }
+      if (has(node, "textColor")) {
+        line(2, "spec.ink = " + colorExpr(node, "textColor", "kNoColor") + ";");
+      }
+      if (has(node, "detailColor")) {
+        line(2, "spec.detailInk = " + colorExpr(node, "detailColor", "kNoColor") + ";");
+      }
+      if (has(node, "iconColor")) {
+        line(2, "spec.iconInk = " + colorExpr(node, "iconColor", "kNoColor") + ";");
+      }
+      if (has(node, "checkedIconColor")) {
+        line(2, "spec.checkedIconInk = " + colorExpr(node, "checkedIconColor", "kNoColor") + ";");
       }
       if (has(node, "hoverColor")) {
         line(2, "spec.hoverBackground = " + colorExpr(node, "hoverColor", "kNoColor") + ";");

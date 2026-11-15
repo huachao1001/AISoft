@@ -397,6 +397,8 @@ InstalledInfo queryInstalled(const std::wstring& displayName, Scope preferred) {
 
 std::wstring buildElevatedArgs(const InstallRequest& request) {
   std::wstring args = L"--elevated-retry";
+  if (request.mode == RequestMode::kRepair) args += L" --mode=repair";
+  else if (request.mode == RequestMode::kUninstall) args += L" --mode=uninstall";
   args += request.scope == Scope::kAllUsers ? L" --scope=all-users" : L" --scope=current-user";
   args += L" --dir=\"" + request.targetDir + L"\"";
   return args;
@@ -406,10 +408,15 @@ bool parseElevatedRequest(const std::vector<std::wstring>& args, InstallRequest&
   bool retry = false;
   std::wstring dir;
   Scope scope = Scope::kAllUsers;
+  RequestMode mode = RequestMode::kInstall;
 
   for (const auto& arg : args) {
     if (arg == L"--elevated-retry") {
       retry = true;
+    } else if (arg == L"--mode=repair") {
+      mode = RequestMode::kRepair;
+    } else if (arg == L"--mode=uninstall") {
+      mode = RequestMode::kUninstall;
     } else if (arg == L"--scope=all-users") {
       scope = Scope::kAllUsers;
     } else if (arg == L"--scope=current-user") {
@@ -425,6 +432,7 @@ bool parseElevatedRequest(const std::vector<std::wstring>& args, InstallRequest&
   if (!retry || dir.empty()) return false;
   out.targetDir = dir;
   out.scope = scope;
+  out.mode = mode;
   return true;
 }
 
@@ -635,6 +643,75 @@ std::wstring runRemove(const RemovePlan& plan) {
   // 5. 自我删除：进程删不掉正在运行的自己，写脚本等本进程退出后收尾。
   //    脚本同时负责删除安装目录与安装时新建的父目录。
   scheduleSelfCleanup(request.targetDir, createdDirs);
+  return firstError;
+}
+
+std::wstring runRepair(const RepairPlan& plan) {
+  const InstallRequest& request = plan.request;
+  if (request.targetDir.empty()) return L"安装目录为空";
+
+  // 范围同样以安装时登记的卸载项为准：修复要写回原来那个根键，不然
+  // 装成 HKCU 的程序会突然在 HKLM 下多出一套菜单，卸载只清一边。
+  const Scope scopeValue =
+      readInstalledScope(request.app.displayName, request.targetDir, request.scope);
+  const AiUI::InstallScope scope = toAiScope(scopeValue);
+
+  // 计步：卸载入口、快捷方式各一步，配置一步，每条命令一步。
+  // 修复不碰程序文件，所以没有文件步。
+  Progress progress(plan.progress, plan.progressUser);
+  const int stepConfig = plan.configModule.empty() ? 0 : 1;
+  progress.reserve(2 + stepConfig + static_cast<int>(plan.commands.size()));
+
+  std::wstring firstError;
+  const std::wstring hostExe = detail::joinPath(request.targetDir, request.app.exeName);
+
+  // 1. 先把安装器自己的两条登记补回来。
+  //
+  //    这一步不能省：清理工具最先删的往往就是卸载项，它一没了「应用与功能」
+  //    里就永远缺一条，而且用户连「怎么卸掉」都找不到入口。快捷方式同理——
+  //    重装整个程序只为了找回一个 .lnk 太亏。
+  //
+  //    两个调用都是覆盖写（registerUninstallEntry 用 RegCreateKeyEx 建键，
+  //    createShellLink 会先删旧链接），所以修一遍不会留下重复项。
+  if (!plan.uninstallerPath.empty()) {
+    progress.report(L"正在补回卸载入口...");
+    const std::wstring entryError = AiUI::registerUninstallEntry(
+        request.app.displayName, request.app.version, request.app.publisher,
+        request.targetDir, plan.uninstallerPath, L"--uninstall", scope);
+    if (!entryError.empty() && firstError.empty()) firstError = entryError;
+    progress.step(L"正在补回卸载入口...");
+  }
+
+  progress.report(L"正在补回快捷方式...");
+  if (!request.app.exeName.empty()) {
+    const std::wstring shortcutError = AiUI::createShortcuts(
+        request.targetDir, request.app.exeName, request.app.displayName, scope);
+    if (!shortcutError.empty() && firstError.empty()) firstError = shortcutError;
+  }
+  progress.step(L"正在补回快捷方式...");
+
+  // 2. 重做系统配置。这是修复的主菜：右键菜单、文件关联这类东西最容易被
+  //    清理工具抹掉，而它们恰恰全在配置模块里。
+  if (!plan.configModule.empty()) {
+    progress.report(L"正在重建系统集成...");
+    const std::wstring configError =
+        applyConfiguration(request.targetDir, hostExe, plan.configModule, scopeValue);
+    if (!configError.empty() && firstError.empty()) firstError = configError;
+    progress.step(L"正在重建系统集成...");
+  }
+
+  // 3. 再重跑清单命令。配置模块与命令是并存的两种做法，修复时也要一起补上，
+  //    否则「只写了 reg add」的应用修复完等于什么都没做。
+  //    单条失败不中断：一条菜单项失败不该把剩下的关联也丢掉，留第一条错误
+  //    报告给用户即可。
+  for (const auto& command : plan.commands) {
+    const std::wstring label = command.text.empty() ? command.path : command.text;
+    progress.report(label.empty() ? L"正在重做系统集成..." : label.c_str());
+    const std::wstring error = runCommand(request.targetDir, command, scopeValue);
+    if (!error.empty() && firstError.empty()) firstError = error;
+    progress.step(label.empty() ? L"正在重做系统集成..." : label.c_str());
+  }
+
   return firstError;
 }
 

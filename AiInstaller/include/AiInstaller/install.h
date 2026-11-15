@@ -15,12 +15,17 @@
 
 namespace AiInstaller {
 
+// 这个请求要干什么。提权重启后命令行只能带字符串，靠它还原动作：
+// 只凭 --elevated-retry 无法区分「安装」与「修复」，会把修复跑成一次重装。
+enum class RequestMode { kInstall, kRepair, kUninstall };
+
 // 安装器运行所需的一切
 struct InstallRequest {
   AppInfo app;
   // 目标安装目录，不含尾部分隔符
   std::wstring targetDir;
   Scope scope = Scope::kAllUsers;
+  RequestMode mode = RequestMode::kInstall;
 };
 
 // 安装进度回调。
@@ -64,6 +69,31 @@ struct RemovePlan {
 // 执行卸载：先撤销配置，再删文件，最后删空目录。
 // 自己所在的目录删不掉时，把自身复制到临时目录再让新进程收尾。
 std::wstring runRemove(const RemovePlan& plan);
+
+// ── 修复 ──
+//
+// 修复 = 把「安装时做过、但用户看不见的东西」重做一遍：卸载入口、快捷方式、
+// 系统配置（右键菜单、文件关联）与清单里登记的命令。程序文件本身不动——
+// 文件坏了重装更直接，而绝大多数「程序不对劲」其实是卸载项被清理工具删了、
+// 文件关联被别的软件抢走了，重跑这几步就能好。
+//
+// 为什么不重跑「复制文件」：修复要快、要能反复点，而几十 MB 的覆盖复制既慢
+// 又可能碰上正在运行的主程序（文件被占用直接失败）。
+struct RepairPlan {
+  InstallRequest request;
+  // 配置模块文件名；空表示该应用没有系统配置
+  std::wstring configModule;
+  // 清单里登记的命令，按原顺序重跑
+  std::vector<ManifestCommand> commands;
+  // 卸载程序的完整路径（安装目录里的 uninstall.exe）。卸载项被删掉时
+  // 要靠它把「应用与功能」里的条目补回来。
+  std::wstring uninstallerPath;
+  ProgressFn progress = nullptr;
+  void* progressUser = nullptr;
+};
+
+// 执行修复。成功返回空串，失败返回可读原因。
+std::wstring runRepair(const RepairPlan& plan);
 
 // ── 配置模块（标准 ABI）──
 //

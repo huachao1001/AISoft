@@ -26,7 +26,9 @@
 namespace {
 
 constexpr int kWidth = 560;
-constexpr int kHeight = 300;
+// 高度按最高的一页定：维护页是两张 72px 的卡片加按钮行，配置页剩下的空白
+// 由中间那条弹簧吸收，所以这里只顾高不看低。
+constexpr int kHeight = 360;
 
 // 从包里解出 logo 到临时文件：图片只能按路径解码，临时文件在程序退出前删除。
 //
@@ -103,6 +105,9 @@ int AiUI::runApp() {
   int code = 0;
   // 临时 logo 的路径。必须放在作用域外：界面析构之后才能删它。
   std::wstring logoPath;
+  // 维护页要用已安装程序的系统图标：卸载副本没有载荷，取不到品牌素材。
+  // Image 只是句柄，由 AiUI 的图标缓存持有，这里不需要释放。
+  AiUI::Image installedIcon;
   {
     AiInstaller::ui::SetupActivity activity;
     activity.setSilent(silent);
@@ -127,9 +132,47 @@ int AiUI::runApp() {
       }
     }
 
-    if (uninstall && haveManifest) {
+    // 提权后的新实例带 --elevated-retry：按带过来的模式、目录与范围直接执行，
+    // 用户只需在 UAC 上点一次「是」。
+    //
+    // 这段必须放在「卸载副本」判断之前：卸载副本本身也是合法安装包，
+    // 提权重来的修复/卸载请求会先命中 uninstall 分支，于是又弹一次维护页，
+    // 用户点了「是」却回到原点。
+    AiInstaller::InstallRequest elevated;
+    const bool elevatedRetry =
+        AiInstaller::parseElevatedRequest(AiUI::platform()->commandLineArgs(), elevated);
+
+    if (elevatedRetry) {
+      // 提权后进程的清单同样来自自己末尾：卸载副本带着原清单，
+      // 安装包带着完整清单。
+      const AiInstaller::Manifest& source =
+          (uninstall && haveManifest) ? installManifest : package.manifest();
+      activity.setManifest(source);
+      if (!uninstall) {
+        logoPath = prepareLogo(package, source.logo);
+        activity.setLogoPath(logoPath);
+      }
+      activity.setAutoRequest(elevated.targetDir, elevated.scope, elevated.mode);
+    } else if (uninstall && haveManifest) {
       activity.setManifest(installManifest);
-      activity.setAutoUninstall(selfDirectory(), installManifest);
+      // 维护页右侧那块是应用图标。卸载副本的载荷为空（清单之外没有品牌
+      // 素材），所以取安装目录里主程序的系统图标——那本来就是用户眼里
+      // 这个程序的样子，也不必往包里再塞一份图。
+      if (!installManifest.exeName.empty()) {
+        const std::wstring exePath =
+            AiInstaller::detail::joinPath(selfDirectory(), installManifest.exeName);
+        if (AiUI::platform()->pathExists(exePath)) {
+          installedIcon = AiUI::fileIcon(exePath, false);
+        }
+      }
+      activity.setInstalledIcon(installedIcon);
+      // 静默卸载（无人值守）不建界面，直接删。用户双击卸载程序或从
+      // 「应用与功能」进来都要看见维护页：他可能只是想修一下。
+      if (silent) {
+        activity.setAutoUninstall(selfDirectory(), installManifest);
+      } else {
+        activity.setMaintain(selfDirectory(), installManifest);
+      }
     } else if (!packaged) {
       activity.setManifest(AiInstaller::Manifest{});
       activity.setAbortWith(uninstall && !manifestError.empty()
@@ -140,15 +183,10 @@ int AiUI::runApp() {
       logoPath = prepareLogo(package, package.manifest().logo);
       activity.setLogoPath(logoPath);
 
-      // 提权后的新实例带 --elevated-retry：按带过来的目录与范围直接安装，
-      // 用户只需在 UAC 上点一次「是」。
-      AiInstaller::InstallRequest request;
-      if (AiInstaller::parseElevatedRequest(AiUI::platform()->commandLineArgs(), request)) {
-        activity.setAutoInstall(request.targetDir, request.scope);
-      } else if (silent) {
+      if (silent) {
         // 静默安装默认「仅当前用户」：这条路没人能在 UAC 上点「是」，
         // 选「所有用户」会拉起一个永远等不到的授权框，进程就卡死在那里。
-        activity.setAutoInstall({}, AiInstaller::Scope::kCurrentUser);
+        activity.setAutoRequest({}, AiInstaller::Scope::kCurrentUser);
       }
     }
 

@@ -189,6 +189,17 @@ bool parseManifest(const std::wstring& text, Manifest& out, std::wstring& error)
   manifest.runAfterText = getText(values, "ui.runaftertext", L"立即打开");
   manifest.runAfterChecked = getFlag(values, "ui.runafterchecked", true);
 
+  manifest.maintainTitle = getText(values, "maintain.title", {});
+  manifest.maintainDescription = getText(values, "maintain.description", {});
+  manifest.repairText = getText(values, "maintain.repairtext", L"修复");
+  manifest.repairDetail = getText(values, "maintain.repairdetail", {});
+  manifest.uninstallText = getText(values, "maintain.uninstalltext", L"卸载");
+  manifest.uninstallDetail = getText(values, "maintain.uninstalldetail", {});
+  manifest.keepTitle = getText(values, "maintain.keeptitle", {});
+  manifest.keepMessage = getText(values, "maintain.keepmessage", {});
+  manifest.keepStayText = getText(values, "maintain.keepstaytext", L"保留程序");
+  manifest.keepLeaveText = getText(values, "maintain.keepleavetext", L"仍要卸载");
+
   manifest.configModule = getText(values, "config.module", {});
   manifest.afterInstall = getText(values, "run.afterinstall", {});
 
@@ -315,6 +326,29 @@ std::wstring formatManifest(const Manifest& manifest) {
   }
   if (!manifest.runAfterChecked) text += "runAfterChecked=0\n";
   text += "\n";
+
+  // 维护页文案只在应用真的定制过时才写：默认值由界面层提供，
+  // 全写一遍会让清单变得又长又难读。
+  const bool customMaintain =
+      !manifest.maintainTitle.empty() || !manifest.maintainDescription.empty() ||
+      manifest.repairText != L"修复" || !manifest.repairDetail.empty() ||
+      manifest.uninstallText != L"卸载" || !manifest.uninstallDetail.empty() ||
+      !manifest.keepTitle.empty() || !manifest.keepMessage.empty() ||
+      manifest.keepStayText != L"保留程序" || manifest.keepLeaveText != L"仍要卸载";
+  if (customMaintain) {
+    text += "[maintain]\n";
+    appendLine(text, "title", manifest.maintainTitle);
+    appendLine(text, "description", manifest.maintainDescription);
+    appendLine(text, "repairText", manifest.repairText);
+    appendLine(text, "repairDetail", manifest.repairDetail);
+    appendLine(text, "uninstallText", manifest.uninstallText);
+    appendLine(text, "uninstallDetail", manifest.uninstallDetail);
+    appendLine(text, "keepTitle", manifest.keepTitle);
+    appendLine(text, "keepMessage", manifest.keepMessage);
+    appendLine(text, "keepStayText", manifest.keepStayText);
+    appendLine(text, "keepLeaveText", manifest.keepLeaveText);
+    text += "\n";
+  }
 
   if (!manifest.configModule.empty()) {
     text += "[config]\n";

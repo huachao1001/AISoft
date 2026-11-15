@@ -39,6 +39,7 @@ set(AIUI_SOURCES
   src/widgets/button.cpp
   src/widgets/button_bar.cpp
   src/widgets/breadcrumb_bar.cpp
+  src/widgets/choice_card.cpp
   src/widgets/form_controls.cpp
   src/widgets/image_view.cpp
   src/widgets/input_box.cpp
