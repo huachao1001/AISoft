@@ -38,6 +38,9 @@ void AppSetRotation(int quarterTurns);
 AiUI::RgbaImage AppExportPixels();
 // 原始（未旋转）像素尺寸
 AiUI::Size AppImageSize();
+// 取一个区域的原图（未旋转）像素：像素格显示 RGB 用它。
+// 只拷贝需要的那一块，界面每帧都要问，别在这里做整张遍历。
+bool AppReadPixelRegion(const AiUI::Rect& region, AiUI::RgbaImage& out);
 
 // ── 同目录翻页 ──
 // 打开一张图时顺带记下同目录的可显示图片，左右键据此切换。只记路径，

@@ -192,6 +192,10 @@ void MainActivity::attachPhoto() {
   if (!photo_) return;
   // 缩放/平移任一变化都要刷状态栏的倍数与像素位置
   photo_->setChangeHandler([this] { refreshStatusBar(); });
+  // 放大到像素级时控件会索要可见区域的原图像素来画 RGB 值。
+  // 只给它可见那一块，巨图不必整张再解一遍。
+  photo_->setPixelRegionProvider(
+      [](const AiUI::Rect& region, AiUI::RgbaImage& out) { return AppReadPixelRegion(region, out); });
 }
 
 void MainActivity::attachStatusBar() {
@@ -229,7 +233,14 @@ void MainActivity::refreshStatusBar() {
   fields.size = std::to_wstring(size.width) + L" × " + std::to_wstring(size.height);
 
   std::wstring right;
-  if (photo_) right = util::FormatZoom(photo_->zoom());
+  if (photo_) {
+    right = util::FormatZoom(photo_->zoom());
+    // 像素坐标放状态栏右侧：放大到像素级时用户要能报出「我看的是哪个点」
+    const AiUI::Point pixel = photo_->centerPixel();
+    if (pixel.x >= 0 && pixel.y >= 0) {
+      right += L"  ·  " + std::to_wstring(pixel.x) + L"," + std::to_wstring(pixel.y);
+    }
+  }
   if (const int turns = AppRotation(); turns != 0) {
     if (!right.empty()) right += L"  ·  ";
     right += L"旋转 " + std::to_wstring(turns * 90) + L"°";

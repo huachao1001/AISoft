@@ -8,6 +8,7 @@
 #include "AiUI/platform.h"
 
 #include <algorithm>
+#include <iterator>
 
 App g_app;
 
@@ -139,6 +140,27 @@ AiUI::RgbaImage AppExportPixels() { return rotatePixels(g_pixels, g_rotation); }
 
 AiUI::Size AppImageSize() {
   return AiUI::Size{g_pixels.width, g_pixels.height};
+}
+
+bool AppReadPixelRegion(const AiUI::Rect& region, AiUI::RgbaImage& out) {
+  out = AiUI::RgbaImage{};
+  if (g_pixels.isEmpty()) return false;
+
+  const AiUI::Rect clipped =
+      region.intersect(AiUI::Rect{0, 0, g_pixels.width, g_pixels.height});
+  if (clipped.isEmpty()) return false;
+
+  out.width = clipped.width();
+  out.height = clipped.height();
+  out.pixels.resize(static_cast<size_t>(out.width) * static_cast<size_t>(out.height));
+  for (int y = 0; y < out.height; ++y) {
+    const size_t src = static_cast<size_t>(clipped.top + y) *
+                           static_cast<size_t>(g_pixels.width) +
+                       static_cast<size_t>(clipped.left);
+    std::copy_n(g_pixels.pixels.begin() + static_cast<std::ptrdiff_t>(src), out.width,
+                out.pixels.begin() + static_cast<std::ptrdiff_t>(y) * out.width);
+  }
+  return true;
 }
 
 const std::vector<std::wstring>& AppSiblingImages() { return g_siblings; }
