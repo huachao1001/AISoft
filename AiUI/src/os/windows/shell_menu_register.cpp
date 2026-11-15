@@ -253,6 +253,54 @@ std::wstring hostExePath(const std::wstring& explicitPath) {
   return explicitPath.empty() ? os::backend().executablePath() : explicitPath;
 }
 
+// 「默认应用」登记：只写 ProgID + OpenWithProgids 是不够的，那只是把本程序
+// 塞进「打开方式」候选列表，用户得手工去右键里翻。系统「设置 → 默认应用」
+// 里要能列出本程序、并支持一键设成默认，还要求两处：
+//   - Software\<progId>\Capabilities：声明本程序支持哪些后缀
+//   - Software\RegisteredApplications：把本程序登记进系统应用列表
+// 缺了它们，系统根本不认为存在这么一个「能打开压缩包的应用程序」，用户在
+// 默认应用里连选都选不到。
+//
+// 命名空间用 Software\<progId>：归自己所有，卸载时整棵删掉不会误伤别人。
+bool writeCapabilities(HKEY root, const FileAssociation& association, const std::wstring& exe) {
+  const std::wstring base = L"Software\\" + association.progId + L"\\Capabilities";
+
+  if (!regSetString(root, base, L"ApplicationName", association.description)) return false;
+  if (!regSetString(root, base, L"ApplicationDescription", association.description)) return false;
+  if (!regSetString(root, base, L"ApplicationIcon", exe + L",0")) return false;
+
+  // 支持的后缀逐个映射到自己的 ProgID：系统据此知道本程序能开哪些类型
+  for (const auto& ext : association.extensions) {
+    if (!regSetString(root, base + L"\\FileAssociations", ext.c_str(), association.progId)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// 拆掉「影子登记」：同一个 ProgID 只该有一份。
+//
+// HKCR 是 HKCU 与 HKLM 的合并视图，HKCU 优先。开发期跑过免安装的副本、
+// 或者换过安装位置之后，另一个根键里会留下一份同名 ProgID 指向旧路径，
+// 而实际生效的正是它——注册表看着完全正确，双击却打开了另一份程序，
+// 甚至是一份已经不存在的 exe。只写自己那一边修不好这种状态，必须把影子
+// 拆掉，让系统只剩我们这一份。
+//
+// ProgID 名是我们独占的命名空间，指向别处的同名登记一定是我们自己残留的，
+// 删掉不会误伤别的软件。
+void removeShadowRegistration(HKEY otherRoot, const std::wstring& progId, const std::wstring& exe) {
+  const std::wstring command = regGetString(
+      otherRoot, L"Software\\Classes\\" + progId + L"\\shell\\open\\command", nullptr);
+  if (command.empty()) return;
+  // 指向同一份程序就是自己另一边的登记，留着（两边都装时需要它）
+  if (command.find(exe) != std::wstring::npos) return;
+
+  regDeleteTree(otherRoot, L"Software\\Classes\\" + progId);
+  regDeleteTree(otherRoot, L"Software\\Classes\\Applications\\" + progId);
+  regDeleteTree(otherRoot, L"Software\\" + progId);
+  regDeleteValue(otherRoot, L"Software\\RegisteredApplications", progId.c_str());
+}
+
 }  // namespace
 
 std::wstring WindowsBackend::registerShellMenuHandler(const ShellMenuHandler& handler) {
@@ -390,11 +438,13 @@ InstallScope WindowsBackend::detectShellMenuScope(const ShellMenuHandler& handle
 //
 // Win10 之后系统不允许程序静默抢占默认应用：默认项的最终决定权在
 // HKCU\...\FileExts\<ext>\UserChoice，且带有用户意图哈希，第三方写入会被
-// 系统判为篡改并重置。能做得正确、也够用的只有三步：
+// 系统判为篡改并重置。所以这里分五步，前四步都是「让本程序被系统看见」：
 //   1. 建 ProgID（描述 + 图标 + open 命令）；
 //   2. 把它加进该后缀的 OpenWithProgids，成为「打开方式」里的候选；
-//   3. 把本程序登记到 Applications，让它出现在「选择其他应用」列表。
-// 用户在系统弹出的选择框里点一次确认后，默认项就是本程序。
+//   3. 把本程序登记到 Applications，让它出现在「选择其他应用」列表；
+//   4. 写 Capabilities + RegisteredApplications，让它出现在「默认应用」；
+//   5. 没有 UserChoice 的后缀，把默认项直接指向本程序（双击即生效）。
+// 已经有 UserChoice 的后缀一律不动——那是用户的决定。
 std::wstring WindowsBackend::registerFileAssociations(const FileAssociation& association) {
   if (association.progId.empty() || association.extensions.empty()) {
     return L"文件关联描述不完整";
@@ -447,14 +497,38 @@ std::wstring WindowsBackend::registerFileAssociations(const FileAssociation& ass
     }
   }
 
-  // 4. 填补空缺：后缀还没有任何默认程序时，直接把我们设成默认。
-  //    用户已经选过别的程序就一律不动——那是用户的决定，程序无权覆盖。
-  //    「没有默认」指该后缀既没有 UserChoice，也没有可解析的 ProgID。
+  // 4. 默认应用登记：让系统「设置 → 默认应用」里出现本程序，
+  //    并把声明的后缀全部映射到本程序的 ProgID。
+  if (!writeCapabilities(root, association, exe)) {
+    return L"无法登记默认应用能力";
+  }
+  const std::wstring registeredKey = L"Software\\RegisteredApplications";
+  if (!regSetString(root, registeredKey, association.progId.c_str(),
+                    L"Software\\" + association.progId + L"\\Capabilities")) {
+    return L"无法登记默认应用";
+  }
+
+  // 5. 设成默认程序：把每个后缀的默认 ProgID 指向本程序。
+  //
+  //    系统不允许程序静默写 UserChoice（带用户意图哈希，写了会被判篡改并
+  //    重置），但 HKCU\Software\Classes\<ext> 的默认值在没有 UserChoice 时
+  //    就是事实上的默认程序，双击直接生效、资源管理器的类型列也跟着变。
+  //    用户已经用用户选择框定过别的程序（存在 UserChoice）就一律不动——
+  //    那是用户的决定，程序无权覆盖，只保证我们在「打开方式」里可选。
   for (const auto& ext : association.extensions) {
     if (hasUserChoice(ext)) continue;
-    if (!regGetString(root, L"Software\\Classes\\" + ext, nullptr).empty()) continue;
-    regSetString(root, L"Software\\Classes\\" + ext, nullptr, association.progId);
+    regSetString(HKEY_CURRENT_USER, L"Software\\Classes\\" + ext, nullptr, association.progId);
+    // 全机范围时 HKLM 那份也一起写：新用户首次登录读的是它
+    if (scope == InstallScope::kAllUsers) {
+      regSetString(HKEY_LOCAL_MACHINE, L"Software\\Classes\\" + ext, nullptr,
+                   association.progId);
+    }
   }
+
+  // 6. 拆掉另一边根键里的影子登记。放在最后：这时本边已经写完整，
+  //    即使中途失败也不会出现「两边都没了」的空档。
+  removeShadowRegistration(root == HKEY_CURRENT_USER ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER,
+                           association.progId, exe);
 
   // 让外壳立刻刷新缓存，否则「打开方式」列表要等资源管理器重启才更新
   ::SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
@@ -470,15 +544,27 @@ std::wstring WindowsBackend::unregisterFileAssociations(const FileAssociation& a
   for (const auto& ext : association.extensions) {
     regDeleteValue(root, L"Software\\Classes\\" + ext + L"\\OpenWithProgids",
                    association.progId.c_str());
-    // 只清掉「指向我们」的默认项；用户后来选了别的程序就别动
-    const std::wstring current = regGetString(root, L"Software\\Classes\\" + ext, nullptr);
-    if (::CompareStringOrdinal(current.c_str(), -1, association.progId.c_str(), -1, TRUE) ==
-        CSTR_EQUAL) {
-      regDeleteValue(root, L"Software\\Classes\\" + ext, nullptr);
+    // 只清掉「指向我们」的默认项；用户后来选了别的程序就别动。
+    // 两个根键都查：全机安装时 HKCU 那份也被写过（新用户首次登录读它），
+    // 换过安装位置时另一边也可能残留一份指向我们的。
+    for (const HKEY probe : {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE}) {
+      const std::wstring current = regGetString(probe, L"Software\\Classes\\" + ext, nullptr);
+      if (::CompareStringOrdinal(current.c_str(), -1, association.progId.c_str(), -1, TRUE) ==
+          CSTR_EQUAL) {
+        regDeleteValue(probe, L"Software\\Classes\\" + ext, nullptr);
+      }
     }
   }
-  regDeleteTree(root, L"Software\\Classes\\" + association.progId);
-  regDeleteTree(root, L"Software\\Classes\\Applications\\" + association.progId);
+  // 两个根键的 ProgID 都拆：换过安装位置时另一边会残留一份，
+  // 卸载后它会顶替正确登记，用户看到「卸了还能双击打开压缩包」。
+  for (const HKEY probe : {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE}) {
+    regDeleteTree(probe, L"Software\\Classes\\" + association.progId);
+    regDeleteTree(probe, L"Software\\Classes\\Applications\\" + association.progId);
+    // 默认应用登记也要一起撤：留着会让「设置 → 默认应用」里挂着一个指向
+    // 已删程序的条目，点了只会报错
+    regDeleteValue(probe, L"Software\\RegisteredApplications", association.progId.c_str());
+    regDeleteTree(probe, L"Software\\" + association.progId);
+  }
 
   ::SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
   return {};
@@ -499,6 +585,14 @@ bool WindowsBackend::areFileAssociationsRegistered(const FileAssociation& associ
   // 程序换位置后旧命令会指向失效路径，必须重写
   if (registered.find(exe) == std::wstring::npos) return false;
 
+  // HKCU 会覆盖 HKLM（HKCR 是两者的合并视图，HKCU 优先）。当前用户下留着一份
+  // 指向别的路径的同名 ProgID，实际生效的就是它——只检查安装范围那个根键会
+  // 漏掉这种情况：注册表看似正确，双击却打开了另一份程序。
+  const HKEY other = root == HKEY_CURRENT_USER ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;
+  const std::wstring shadow = regGetString(
+      other, L"Software\\Classes\\" + association.progId + L"\\shell\\open\\command", nullptr);
+  if (!shadow.empty() && shadow.find(exe) == std::wstring::npos) return false;
+
   for (const auto& ext : association.extensions) {
     // 候选登记用的是「值名 = ProgID、数据为空串」，所以只能查值名是否存在
     const std::wstring probeKey = L"Software\\Classes\\" + ext + L"\\OpenWithProgids";
@@ -508,6 +602,18 @@ bool WindowsBackend::areFileAssociationsRegistered(const FileAssociation& associ
                                       nullptr);
     ::RegCloseKey(key);
     if (r != ERROR_SUCCESS) return false;
+  }
+
+  // 「默认应用」登记也在校验范围：缺了它系统不会把本程序当成能开压缩包的
+  // 应用，「设置 → 默认应用」里看不到，等于关联只做了一半。
+  const std::wstring capabilities =
+      regGetString(root, L"Software\\RegisteredApplications", association.progId.c_str());
+  if (capabilities.empty()) return false;
+  // 能力表里至少要有一个后缀，否则系统列表里是个空应用
+  if (regGetString(root, L"Software\\" + association.progId + L"\\Capabilities",
+                   L"ApplicationName")
+          .empty()) {
+    return false;
   }
   return true;
 }
