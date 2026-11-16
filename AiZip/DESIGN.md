@@ -70,16 +70,17 @@
 | 菜单图标 | 每项带宿主程序图标（按 DPI 缩放，150% 下为 24px，位图 32bpp 带 alpha） |
 | 多选退化 | 已消除：判定逻辑在组件里逐项检查，不依赖注册表条件表达式 |
 | 菜单可见性 | Win10 直接出现在右键第一层。Win11 的紧凑菜单只接受带包标识（MSIX/稀疏包）的 `IExplorerCommand`，未打包的 Win32 程序一律归入「显示更多选项」，7-Zip、WinRAR 同样如此；本项目不引入稀疏包，故 Win11 需点「显示更多选项」 |
-| 安装包 | `AiZipSetup.exe` 由**通用安装器 + 追加数据**合成：`AiSetup.exe` 本体一字不改，构建期把 `setup.ini` 清单与 `AiZip.exe`、`aizip_config.dll`、`logo.png` 追加到它末尾，并改写图标与版本资源。安装包本身**只负责解压与删除**。默认装到非系统盘（策略内嵌在 `AiInstaller` 库：按盘符字母序找第一个可写的固定盘并跳过系统盘，非系统盘全部不可写时才用系统盘；盘根不可写会换下一个盘），安装子目录 `AISoft\AIZip` 不含盘符。两个安装范围共用同一套选盘与子目录 |
+| 安装包 | `AiZipSetup.exe` 由**通用安装器 + 追加数据**合成：`AiSetup.exe` 本体一字不改，构建期把 `setup.ini` 清单与 `AiZip.exe`、`AiZipExt.dll`、`AiZipCore.dll`、`logo.png` 追加到它末尾，并改写图标与版本资源。安装包本身**只负责解压与删除**。默认装到非系统盘（策略内嵌在 `AiInstaller` 库：按盘符字母序找第一个可写的固定盘并跳过系统盘，非系统盘全部不可写时才用系统盘；盘根不可写会换下一个盘），安装子目录 `AISoft\AIZip` 不含盘符。两个安装范围共用同一套选盘与子目录 |
 | 安装范围 | 当前用户写 HKCU；所有用户写 HKLM（需提权）。点一次「安装」后自动请求提权，新实例按 `--elevated-retry --dir=` 直接完成安装，无需再点第二次。范围不另存标记：卸载项写在哪个根键就是哪个范围，卸载时 `readInstalledScope` 反查——**不靠「当前是否提权」推断**，因为卸载器带 `requireAdministrator`，那样永远会猜成「所有用户」而清错根键 |
-| 配置模块 | 右键菜单与文件关联封装在 `aizip_config.dll`，按标准 ABI 导出 `AiSetupConfigApply / Remove / IsReady / Version`（见 `AiInstaller/include/AiInstaller/config_abi.h`）。安装包只「按 ABI 调用」它，自己不写注册表；爱压主程序也调同一份实现，因此能自愈菜单 |
-| 两个 DLL 的分工 | 安装目录里会出现两个 DLL，但只有 `aizip_config.dll` 是构建产物、在清单里；`aizip_XXXXXXXX.dll` 是安装时**从前者体内释放出来的**。CMake 的 `aiui_add_shell_menu_dll(… EMBED_INTO aizip_config)` 把 COM 组件编成独立 dll，再作为 `RCDATA 200` 资源嵌进 `aizip_config.dll`；`registerShellMenuHandler` 读回这份资源，落到同目录并拼上内容指纹。分两层是因为两者的加载者不同：外层被安装器与主程序各调一次（按配置 ABI），内层才是 explorer.exe 进程内加载的 COM 组件。指纹后缀不是冗余，而是必需的：资源管理器会一直持有已加载的旧 dll，同名文件替换必然失败，换名字让新旧共存、注册表改指新文件即可 |
+| 配置模块 | 右键菜单注册与文件关联封装在 `AiZipExt.dll`，按标准 ABI 导出 `AiSetupConfigApply / Remove / IsReady / Version`（见 `AiInstaller/include/AiInstaller/config_abi.h`）。安装包只「按 ABI 调用」它，自己不写注册表；爱压主程序也调同一份实现，因此能自愈菜单 |
+| 两个 DLL 的分工 | `AiZipExt.dll` 是**固定名外壳**：既承载配置 ABI，也是 explorer.exe 进程内的 COM 组件。`AiZipCore.dll` 是**菜单逻辑**：只做「选中了什么 → 显示哪些项」的纯计算，由外壳在弹菜单时 `LoadLibrary`、算完立刻 `FreeLibrary`。这样分工的理由是「谁被长期持有」：外壳会被资源管理器一直加载着，改不动；逻辑 dll 用完即卸，任何时刻都能替换，改文案下次右键就生效。两者边界是纯 C 定长缓冲（`AiUI/shell_menu_core.h`）——两个 dll 各有一份静态 CRT，跨边界传 `std::wstring` 等于让一个堆释放另一个堆的内存，会崩资源管理器 |
+| 文件名为什么固定 | 早先组件按内容指纹命名（`aizip_A04292C1.dll`）并外加 `aizip_config.dll`：指纹对付的是「资源管理器持有旧 dll、同名覆盖不了」。代价是安装目录里堆着看不懂的名字、多次升级还留残渣。现在把易变的菜单逻辑挪进 `AiZipCore.dll`，外壳几乎不再改动，固定名就成立。外壳内容真变了、又恰好被持有时，安装器写 `AiZipExt.dll.new` 并登记重启替换，注册表继续指向旧文件；旧文件功能完好，不必为换个版本让菜单失效 |
 | 安装器库 | 通用能力（清单解析、包读取、路径策略、落盘、快捷方式、卸载入口、提权、卸载收尾、通用界面）在 `AiInstaller`，与 `AiUI` 同样定位，可被其它应用用 CMake 引入 |
 | 提权模式 | 提权通道带 `--mode=repair` / `--mode=uninstall`：只凭 `--elevated-retry` 分不清动作，修复请求提权后会被当成安装请求再装一遍。入口里「提权重试」的判断排在「卸载副本判定」之前，否则卸载副本也是合法安装包，会重新弹回维护页 |
 | 进度 | 按「文件数 + 配置 + 命令数 + 收尾步骤」计步推进，不是假动画；进度条下方实时显示当前动作（「正在复制 AiZip.exe」→「正在登记文件类型说明...」→「正在登记卸载入口...」）。安装跑在工作线程上，回调只写快照、UI 线程按 60ms 取走 |
 | 清单命令 | `setup.ini` 的 `[commands]` 可按顺序登记命令行（如 `reg.exe add …`），用来做「一条命令行就能做完」的注册；需要 COM 的复杂注册仍走配置模块。命令里用 `${root}` 取 HKLM/HKCU、`${dir}` 取安装目录，不写死根键与盘符 |
 | 安装后行为 | 装完不自动启动，也不弹提示框：完成页的「立即打开」复选框（默认勾选）由用户决定，勾上才按 `[run] afterInstall` 启动目标目录里的 `AiZip.exe` |
-| 组件位置 | 组件与宿主 exe 同目录（安装版在程序目录，开发期在构建目录），文件名带内容指纹，如 `aizip_5705E357.dll`；指纹与清理规则都在 AiUI 内部，调用方不必知道 |
+| 组件位置 | 两个 dll 都与宿主 exe 同目录（安装版在程序目录，开发期在构建目录），名字固定不带指纹。外壳按同目录的 `AiZipCore.dll` 名字加载逻辑，不写进注册表：两者总是一起装、一起升，多一处状态就多一处对不上的可能 |
 | 卸载 | 从「应用与功能」拉起安装目录里的 `uninstall.exe --uninstall`（安装器本体换名后的裁剪副本，`UninstallString` 直接指向它）：先调配置模块撤销菜单与关联，再删清单文件、快捷方式、卸载项，最后删空目录。`uninstall.exe` 自己与安装时新建的父目录（卸载项的 `InstallCreatedDirs` 记录）由「延迟脚本重试删除」收尾，被资源管理器占用时也能清干净；目录里用户自己放的文件一律保留。卸载用的清单在 `uninstall.exe` **自己末尾**（它是一个载荷为空的合法安装包），安装目录里没有 `installer.manifest` 这类记录文件。双击它也走卸载：卸载副本没有载荷，入口据此判定（见 `AiInstaller/README.md`） |
 | 维护页 | 双击 `uninstall.exe` **不直接删**，先进维护页：两张带大图标的选项卡（`ChoiceCard` / `ChoiceCardGroup`）让用户选「修复」或「卸载」，默认停在修复。理由是双击卸载程序的人多半只是觉得程序不对劲，一按就删等于逼他重装。维护页的标题、说明与卡片文案来自清单 `[maintain]`，留空时界面层有通用兜底；标题左侧图标取安装目录里主程序的系统图标（卸载副本载荷为空，解不出 `logo.png`），取图时按 48×DPI 的设备像素要原生档位，不要拿 16×16 放大。窗口标题也跟着换成 `[maintain] title` |
 | 挽留页 | 选了卸载先劝一次：心形图标 + 「卸载前先想想」+ 一句「只是菜单没了点修复就够了」，主按钮是「保留爱压」（回维护页，保留原选择），次要按钮才是「仍要卸载」。文案走 `[maintain] keepTitle / keepMessage / keepStayText / keepLeaveText` |
@@ -177,8 +178,8 @@ AiZip/
 ├─ assets/layouts/        XML 界面布局（构建期自动转 C++）
 ├─ src/
 │  ├─ app/main.cpp        程序入口、单实例、命令行分发、系统集成自愈
-│  ├─ app/config_client   加载 aizip_config.dll（主程序不碰注册表）
-│  ├─ config/aizip_config 右键菜单与文件关联的标准 ABI 实现（独立 dll）
+│  ├─ app/config_client   加载 AiZipExt.dll（主程序不碰注册表）
+│  ├─ config/aizip_config AiZipExt.dll 里的配置 ABI：菜单注册与文件关联
 │  ├─ app.h/.cpp          应用状态、视图/导航编排、启动请求分发
 │  ├─ archive.h/.cpp      7-Zip 封装：打开/枚举/解压/压缩
 │  ├─ ui_main.h/.cpp      主窗口：装配生成的 MainFrame、拖放、窗口消息
@@ -194,8 +195,8 @@ AiZip/
 │  ├─ dlg_extract.h/.cpp  解压对话框
 │  ├─ dlg_input.h/.cpp    密码/文本输入框
 │  ├─ dlg_progress.h/.cpp 进度对话框
-│  ├─ shell_menu.h/.cpp   右键菜单描述与注册入口（不含平台代码）
-│  ├─ shell_menu_model.cpp 菜单内容：选中项 → 显示哪些项
+│  ├─ shell_menu.h/.cpp   安装范围探测（菜单注册在 AiZipExt.dll）
+│  ├─ shell_menu_model.cpp 菜单内容：选中项 → 显示哪些项（编进 AiZipCore.dll）
 │  ├─ single_instance.h/.cpp  右键多选时的进程聚合
 │  ├─ res/                图标与资源
 │  └─ util.h/.cpp         路径、格式化、DPI

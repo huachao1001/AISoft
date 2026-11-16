@@ -1,7 +1,7 @@
 // 安装范围的探测
 //
 // 只用 AiUI 的中性接口问「我们的菜单现在挂在哪个根键」。菜单本身的注册、
-// 组件释放都在 aizip_config.dll 里，本文件不参与那件事。
+// 组件落地都在 AiZipExt.dll 里，本文件不参与那件事。
 #include "shell_menu.h"
 
 #include "AiUI/platform.h"
@@ -10,8 +10,7 @@
 namespace shell {
 namespace {
 
-// 与 aizip_config.cpp、CMake 里的 aiui_add_shell_menu_dll 必须一致。
-// 发布后不能再改：系统里的注册位置与组件标识都由它推出。
+// 与 aizip_config.cpp、CMake 里的 aiui_add_shell_menu_dll 必须一致。// 发布后不能再改：系统里的注册位置与组件标识都由它推出。
 constexpr const wchar_t* kHandlerId = L"AIZip";
 constexpr const wchar_t* kHandlerClsid = L"{7B1F2C3A-5D4E-4F60-9A8B-1C2D3E4F5A6B}";
 
@@ -27,7 +26,9 @@ AiUI::ShellMenuHandler probe() {
   AiUI::ShellMenuHandler h;
   h.id = kHandlerId;
   h.clsid = kHandlerClsid;
-  h.componentName = L"aizip.dll";
+  h.componentName = L"AiZipExt.dll";
+  h.componentResourceId = 0;
+  h.fixedComponentName = true;
   h.displayName = L"爱压 右键菜单";
   h.targets = {L"*", L"Directory"};
   h.componentDir = componentDir();

@@ -1,6 +1,6 @@
 // 配置模块的调用实现
 //
-// 只做三件事：找到同目录的 aizip_config.dll、校验接口版本、把调用转发过去。
+// 只做三件事：找到同目录的 AiZipExt.dll、校验接口版本、把调用转发过去。
 // 具体写注册表、释放组件全在 dll 里，主程序不碰任何系统 API。
 //
 // 这里用的是 AiInstaller 的标准配置 ABI，与安装器调用的是同一份契约。
@@ -15,7 +15,7 @@ namespace config_client {
 namespace {
 
 // 配置模块的文件名。与安装器、CMake 目标名保持一致。
-constexpr const wchar_t* kModuleName = L"aizip_config.dll";
+constexpr const wchar_t* kModuleName = L"AiZipExt.dll";
 
 using ApplyFn = AiSetupConfigResult (*)(const AiSetupConfigRequest*);
 using RemoveFn = AiSetupConfigResult (*)(const AiSetupConfigRequest*);
@@ -79,11 +79,36 @@ std::wstring resultText(const AiSetupConfigResult& result) {
                           : std::wstring(result.message ? result.message : L"");
 }
 
+// 旧版本留下的组件文件是否还在。
+//
+// 早先组件是「配置 dll + 从它体内释放出来的指纹副本」：aizip_config.dll 与
+// aizip_XXXXXXXX.dll。升级后安装包清单里没有这两个名字，没人会删它们；
+// 而「配置已就绪」会让启动自愈直接返回，残渣就永久留在目录里。
+//
+// 把它们算进「未就绪」，现有的修复流程就会顺手清一次。代价是升级后的第一次
+// 启动多做一次注册，之后目录干净就不再触发。
+bool hasLegacyComponents(const std::wstring& dir) {
+  if (dir.empty()) return false;
+  if (AiUI::platform()->pathExists(dir + L"\\aizip_config.dll")) return true;
+
+  const auto entries = AiUI::platform()->listDirectory(dir, false);
+  for (const auto& entry : entries) {
+    if (entry.isDir) continue;
+    const std::wstring& name = entry.name;
+    if (name.size() != 18) continue;  // "aizip_" + 8 位十六进制 + ".dll"
+    if (AiUI::platform()->compareText(name.substr(0, 6), L"aizip_") != 0) continue;
+    if (AiUI::platform()->compareText(name.substr(14), L".dll") != 0) continue;
+    return true;
+  }
+  return false;
+}
+
 }  // namespace
 
 int apiVersion() { return AISETUP_CONFIG_API_VERSION; }
 
 bool isReady(const std::wstring& installDir, const std::wstring& hostExePath, bool allUsers) {
+  if (hasLegacyComponents(installDir)) return false;
   Session session(installDir);
   if (!session.usable()) return false;
   const AiSetupConfigRequest request = makeRequest(installDir, hostExePath, allUsers, 0);

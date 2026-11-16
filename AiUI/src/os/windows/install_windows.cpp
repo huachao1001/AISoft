@@ -331,8 +331,17 @@ std::wstring WindowsBackend::registerUninstallEntry(const std::wstring& displayN
 std::wstring WindowsBackend::unregisterUninstallEntry(const std::wstring& displayName,
                                                       InstallScope scope) {
   if (displayName.empty()) return {};
-  const HKEY root = scope == InstallScope::kAllUsers ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;
-  regDeleteTree(root, L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\" + displayName);
+  // 两个根键都删。
+  //
+  // 卸载项键名就是显示名，是本程序独占的名字，两边同名项一定是自己的。
+  // 只删 scope 那一边不够：这台机器上 HKLM 与 HKCU 各留过一条（一次全机
+  // 安装 + 一次开发期安装），卸载时按提权状态猜出来的 scope 只会命中一条，
+  // 另一条永远留在「应用与功能」里，用户点了才发现目录已经没了。
+  (void)scope;
+  const HKEY roots[2] = {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+  for (const HKEY root : roots) {
+    regDeleteTree(root, L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\" + displayName);
+  }
   return {};
 }
 
@@ -452,6 +461,15 @@ bool WindowsBackend::deleteFileOnReboot(const std::wstring& path) {
   // MOVEFILE_DELAY_UNTIL_REBOOT 要求管理员权限；失败时上层会放弃清理，
   // 留下的文件不影响功能，比假装成功更好。
   return ::MoveFileExW(path.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT) != 0;
+}
+
+bool WindowsBackend::replaceFileOnReboot(const std::wstring& stagedPath,
+                                         const std::wstring& targetPath) {
+  if (stagedPath.empty() || targetPath.empty()) return false;
+  if (!::PathFileExistsW(stagedPath.c_str())) return false;
+  // REPLACE_EXISTING 在重启阶段才执行，此时没有进程持有 target
+  return ::MoveFileExW(stagedPath.c_str(), targetPath.c_str(),
+                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_DELAY_UNTIL_REBOOT) != 0;
 }
 
 std::wstring WindowsBackend::installSingleResource(int resourceId,

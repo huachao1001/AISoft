@@ -28,15 +28,17 @@ $dist = Join-Path $projectDir "dist"
 
 # 发布清单：宿主 exe 名 → 该工程的产物表（源文件 → dist 里的名字）
 #
-# aizip_config.dll 必须随主程序一起发布：右键菜单、文件关联的实现都在
-# 它里面，少了它主程序就修不了菜单，安装包也打不进这份能力。
+# 两个 dll 必须随主程序一起发布，职责不同：
+#   AiZipExt.dll  配置 ABI + COM 外壳，安装器与资源管理器都加载它
+#   AiZipCore.dll 菜单文案与规则，每次弹菜单才加载，改它即刻生效
 $products = @(
   @{
     Host = "AiZip.exe"
     Artifacts = @(
       @{ Source = "AiZipSetup.exe"; Name = "AiZipSetup.exe" }
       @{ Source = "AiZip.exe"; Name = "AiZip.exe" }
-      @{ Source = "aizip_config.dll"; Name = "aizip_config.dll" }
+      @{ Source = "AiZipExt.dll"; Name = "AiZipExt.dll" }
+      @{ Source = "AiZipCore.dll"; Name = "AiZipCore.dll" }
     )
   }
   @{

@@ -8,6 +8,7 @@
 // 因此它不需要认识爱压；主程序自愈调的也是同一份实现。
 #include "aizip_config.h"
 
+#include "AiUI/platform.h"
 #include "AiUI/shell.h"
 
 #include <string>
@@ -24,8 +25,10 @@ constexpr const wchar_t* kProgId = L"AIZip.Archive";
 constexpr const wchar_t* kMenuDisplayName = L"爱压 右键菜单";
 constexpr const wchar_t* kAssociationDescription = L"爱压 压缩包";
 
-// 组件资源 id：由 CMake 把 aizip.dll 作为 RCDATA 打进本模块。
-constexpr int kComponentResourceId = 200;
+// 外壳 dll 的文件名。本模块自己就是这个文件——注册时直接指向磁盘上这一份，
+// 不再从自己的资源里释放副本：副本必然要指纹换名，安装目录就会多出一个
+// aizip_XXXXXXXX.dll，用户看不懂、卸载还删不干净。
+constexpr const wchar_t* kComponentName = L"AiZipExt.dll";
 
 // 受支持的压缩包后缀：与 arc::Archive::IsArchiveFile、shell_menu_model.cpp
 // 保持同一张表，三处必须同步。
@@ -91,12 +94,16 @@ class ScopeGuard {
 
 // 右键组件描述。componentDir 显式给安装目录：组件跟主程序放一起，
 // 卸载时随目录一并清掉，不留残渣在用户数据目录。
+//
+// componentResourceId = 0：组件就是目录里这个文件本身，注册时直接指向它。
+// fixedComponentName：名字固定，不用内容指纹区分版本。
 AiUI::ShellMenuHandler menuHandler(const AiZipConfigRequest& request) {
   AiUI::ShellMenuHandler handler;
   handler.id = kHandlerId;
   handler.clsid = kHandlerClsid;
-  handler.componentName = L"aizip.dll";
-  handler.componentResourceId = kComponentResourceId;
+  handler.componentName = kComponentName;
+  handler.componentResourceId = 0;
+  handler.fixedComponentName = true;
   handler.displayName = kMenuDisplayName;
   handler.targets = {L"*", L"Directory"};
   handler.scope = scopeOf(request);
@@ -113,6 +120,33 @@ AiUI::FileAssociation fileAssociation(const AiZipConfigRequest& request) {
   association.hostExePath = request.hostExePath;
   for (const wchar_t* ext : kAssociableExts) association.extensions.emplace_back(ext);
   return association;
+}
+
+// 清掉旧版本留在安装目录里的组件文件。
+//
+// 早先组件是「配置 dll + 从它体内释放出来的指纹副本」两个文件：aizip_config.dll
+// 与 aizip_XXXXXXXX.dll。现在合并成固定的 AiZipExt.dll，安装包清单里已经没有
+// 那两个名字，升级时没人会去删它们——留着就是用户看不懂、也卸不掉的残渣。
+//
+// 只删这两个明确的模式，不碰目录里其它任何东西。删不掉的（资源管理器还加载着）
+// 举手示意一下也没用，留给卸载流程与重启删除兜底即可。
+void removeLegacyComponents(const AiZipConfigRequest& request) {
+  const std::wstring dir = request.installDir;
+  if (dir.empty()) return;
+
+  AiUI::platform()->deleteFile(dir + L"\\aizip_config.dll");
+
+  // 指纹副本：aizip_<8位十六进制>.dll
+  AiUI::platform()->deleteFile(dir + L"\\aizip.dll");
+  const auto entries = AiUI::platform()->listDirectory(dir, false);
+  for (const auto& entry : entries) {
+    if (entry.isDir) continue;
+    const std::wstring& name = entry.name;
+    if (name.size() != 18) continue;  // "aizip_" + 8 位十六进制 + ".dll"
+    if (AiUI::platform()->compareText(name.substr(0, 6), L"aizip_") != 0) continue;
+    if (AiUI::platform()->compareText(name.substr(14), L".dll") != 0) continue;
+    AiUI::platform()->deleteFile(entry.fullPath);
+  }
 }
 
 // 统一执行入口：apply 为 true 时写入，false 时撤销
@@ -133,6 +167,9 @@ std::wstring runOne(const AiZipConfigRequest& request, unsigned flag, bool apply
 
 // 逐项执行并汇总第一处失败：全部做完再报，避免一项失败把后面的也跳过
 std::wstring runAll(const AiZipConfigRequest& request, unsigned flags, bool apply) {
+  // 安装后顺手清一次旧文件：升级场景下它们才是真正的残渣来源
+  if (apply) removeLegacyComponents(request);
+
   std::wstring firstError;
   for (const unsigned flag : {kAiZipConfigShellMenu, kAiZipConfigFileAssociations}) {
     if ((flags & flag) == 0) continue;

@@ -127,11 +127,14 @@ class WindowsBackend final : public Backend {
   void queryInstalled(const std::wstring& displayName, InstallScope scope, bool& found,
                       std::wstring& installDir, InstallScope& installedScope) override;
 
+
   // ── 卸载收尾 ──
   std::wstring copySelfTo(const std::wstring& destPath) override;
   bool launchDetached(const std::wstring& exePath, const std::wstring& arguments,
                       const std::wstring& workDir) override;
   bool deleteFileOnReboot(const std::wstring& path) override;
+  bool replaceFileOnReboot(const std::wstring& stagedPath,
+                           const std::wstring& targetPath) override;
 
   // ── 清单式落盘 ──
   std::wstring installSingleResource(int resourceId, const std::wstring& targetPath) override;

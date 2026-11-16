@@ -1171,6 +1171,10 @@ class WindowsPlatform : public Platform {
   bool deleteFileOnReboot(const std::wstring& path) override {
     return os::backend().deleteFileOnReboot(path);
   }
+  bool replaceFileOnReboot(const std::wstring& stagedPath,
+                           const std::wstring& targetPath) override {
+    return os::backend().replaceFileOnReboot(stagedPath, targetPath);
+  }
   std::wstring installSingleResource(int resourceId, const std::wstring& targetPath) override {
     return os::backend().installSingleResource(resourceId, targetPath);
   }

@@ -74,7 +74,17 @@ src/os/ubuntu/         Linux 实现（占位，尚未实现）
 `ShellMenuHandler` 描述加一个纯菜单模型。
 
 平台特有的构建产物（如 Windows 的进程内 COM 组件）也由 AiUI 的 CMake
-函数生成（`aiui_add_shell_menu_dll`），应用只声明源文件与标识。
+函数生成，应用只声明源文件与标识：
+
+| 函数 | 产物 |
+|---|---|
+| `aiui_add_shell_menu_dll` | 外壳：COM 入口 + `registerShellMenuHandler`，可 `MERGE_INTO` 一个已有 dll |
+| `aiui_add_shell_menu_core` | 逻辑：`aiuiBuildShellMenu` 包成纯 C 导出，可随时替换 |
+
+分两层是因为「谁被长期持有」：外壳会被资源管理器一直加载着，改不动；逻辑
+dll 每次弹菜单才加载、算完立刻卸载，文件随时能换，改文案下次右键即生效。
+两者的边界见 `include/AiUI/shell_menu_core.h`——**只用定长缓冲**，两个 dll
+各有一份静态 CRT，跨边界传 `std::wstring` 会崩资源管理器。
 
 
 ## 标题栏由通用控件拼装

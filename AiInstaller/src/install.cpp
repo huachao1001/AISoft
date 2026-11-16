@@ -12,6 +12,7 @@
 #include "AiUI/platform.h"
 
 #include <algorithm>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -79,6 +80,49 @@ void removeEmptyDir(const std::wstring& dir) {
   AiUI::platform()->removeDirectoryIfEmpty(dir);
 }
 
+// 磁盘上那个文件与包里的内容是否逐字节相同。
+//
+// 为什么值得比：安装目录里的 dll 有一类会被别的进程长期持有（资源管理器
+// 加载的右键菜单组件），重写会失败。内容没变就干脆别碰它——这次升级本来
+// 也没打算改它。少了这一步，每次安装都要在一个「其实不用动」的文件上
+// 撞一次共享冲突。
+bool fileMatchesPayload(const Package& package, const ManifestFile& file,
+                        const std::wstring& targetPath) {
+  if (!AiUI::platform()->pathExists(targetPath)) return false;
+  if (AiUI::platform()->fileSize(targetPath) != file.size) return false;
+
+  std::vector<uint8_t> expected;
+  if (!package.readBlob(file.path, expected)) return false;
+  if (expected.size() != file.size) return false;
+
+  const std::string actual = AiUI::platform()->readFile(targetPath, file.size + 1);
+  if (actual.size() != expected.size()) return false;
+  return std::memcmp(actual.data(), expected.data(), expected.size()) == 0;
+}
+
+// 装一个文件；内容没变就跳过，被占用就留到重启替换。
+//
+// 返回空串表示「这次安装不需要再管它」——要么已经写好，要么已是同一份内容，
+// 要么新内容已暂存等重启生效。真的失败才返回原因。
+std::wstring installFile(const Package& package, const ManifestFile& file,
+                         const std::wstring& targetPath) {
+  if (fileMatchesPayload(package, file, targetPath)) return {};
+
+  const std::wstring error = package.extractFile(file, targetPath);
+  if (error.empty()) return {};
+
+  // 覆盖失败：正在被别的进程持有（典型是资源管理器加载的 dll）。
+  // 写不出目标就写同目录的 .new，登记重启替换。本次安装不算失败——
+  // 旧文件功能完好，installer 的语义是「装上了新东西」而不是「换掉了每个字节」。
+  const std::wstring staged = targetPath + L".new";
+  if (package.extractFile(file, staged).empty() &&
+      AiUI::platform()->replaceFileOnReboot(staged, targetPath)) {
+    return {};
+  }
+  AiUI::platform()->deleteFile(staged);
+  return error;
+}
+
 // 读旧版本留下的 installer.dirs 记录。只用于升级场景：老版本把这个文件
 // 写在安装目录里，新版本装到同一目录时得把旧记录接过来，否则卸载后
 // 父目录会空留着。
@@ -112,8 +156,24 @@ std::vector<std::wstring> readLegacyCreatedDirs(const std::wstring& installDir) 
 // 文件里，两处都读并按路径去重：升级安装会把旧记录并入新记录。
 std::vector<std::wstring> readCreatedDirs(const std::wstring& displayName,
                                          const std::wstring& installDir, Scope scope) {
-  std::vector<std::wstring> dirs =
-      AiUI::readInstallDirectories(displayName, toAiScope(scope));
+  // 两边都读并合并：卸载项可能两边各有一条（见 readInstalledScope 的说明），
+  // 只读 scope 那一边会把另一条记录里的父目录丢掉，卸载后那些目录空留着。
+  std::vector<std::wstring> dirs;
+  for (const AiUI::InstallScope candidate :
+       {toAiScope(scope), toAiScope(scope) == AiUI::InstallScope::kAllUsers
+                              ? AiUI::InstallScope::kCurrentUser
+                              : AiUI::InstallScope::kAllUsers}) {
+    for (const auto& dir : AiUI::readInstallDirectories(displayName, candidate)) {
+      bool known = false;
+      for (const auto& existing : dirs) {
+        if (AiUI::platform()->equalsPath(existing, dir)) {
+          known = true;
+          break;
+        }
+      }
+      if (!known) dirs.push_back(dir);
+    }
+  }
   for (const auto& legacy : readLegacyCreatedDirs(installDir)) {
     bool known = false;
     for (const auto& existing : dirs) {
@@ -350,13 +410,26 @@ void runAfterInstall(const std::wstring& installDir, const std::wstring& command
 Scope readInstalledScope(const std::wstring& displayName, const std::wstring& installDir,
                          Scope fallback) {
   // 先查卸载项：卸载项写在 HKLM 还是 HKCU 就代表当初装的范围，不需要另存标记。
-  // 两边都查，因为调用方传进来的 fallback 可能正好猜错那一边。
+  //
+  // 两边的条目可能同时存在（一次全机安装 + 一次当前用户安装，或开发期在
+  // 构建目录跑过一份）。`queryInstalled` 只按「先请求的那一边」返回，猜错
+  // 就会去写另一个根键，结果是「卸载了但菜单还在」。所以两边各问一次，
+  // 优先选 InstallLocation 与本次要卸载的目录一致的那条。
   if (!displayName.empty()) {
-    bool found = false;
-    std::wstring installedDir;
-    AiUI::InstallScope installedScope = AiUI::InstallScope::kCurrentUser;
-    AiUI::queryInstalled(displayName, toAiScope(fallback), found, installedDir, installedScope);
-    if (found) {
+    for (const AiUI::InstallScope candidate :
+         {toAiScope(fallback), toAiScope(fallback) == AiUI::InstallScope::kAllUsers
+                                   ? AiUI::InstallScope::kCurrentUser
+                                   : AiUI::InstallScope::kAllUsers}) {
+      bool found = false;
+      std::wstring installedDir;
+      AiUI::InstallScope installedScope = candidate;
+      AiUI::queryInstalled(displayName, candidate, found, installedDir, installedScope);
+      if (!found) continue;
+      // queryInstalled 查不到会自己换边；换过边就说明 candidate 那一边没有
+      // 登记，不能拿它的结果冒充这一边。
+      if (installedScope != candidate) continue;
+      // 有多个安装时只认目录对得上的那条
+      if (!installDir.empty() && !AiUI::platform()->equalsPath(installedDir, installDir)) continue;
       return installedScope == AiUI::InstallScope::kAllUsers ? Scope::kAllUsers
                                                             : Scope::kCurrentUser;
     }
@@ -496,7 +569,7 @@ std::wstring runInstall(const InstallPlan& plan) {
     const std::wstring stage = L"正在复制 " + file.path;
     progress.report(stage.c_str());
     const std::wstring path = detail::joinPath(request.targetDir, file.path);
-    const std::wstring error = package.extractFile(file, path);
+    const std::wstring error = installFile(package, file, path);
     if (!error.empty()) return error;
     progress.step(stage.c_str());
   }

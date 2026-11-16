@@ -697,10 +697,13 @@ void SetupActivity::runUninstall() {
   request.app = app_;
   // 静默卸载用入口送进来的目录；界面上的卸载用维护通道的目录。
   request.targetDir = autoUninstall_ ? uninstallDir_ : maintainDir_;
-  // 范围以卸载项登记在哪个根键为准。不能靠「当前是否提权」猜：
-  // 卸载器带 requireAdministrator，几乎总是提权状态。
+  // 范围以卸载项登记在哪个根键为准，不能靠「当前是否提权」猜：
+  // 卸载器是 asInvoker，提权与否取决于用户怎么启动它。
+  //
+  // 兜底给「仅当前用户」：兜底只在两条卸载项都查不到时才用得上（目录早被
+  // 手工删了）。此时按全机范围去写 HKLM 只会静默失败，而 HKCU 总写得进去。
   request.scope =
-      readInstalledScope(app_.displayName, request.targetDir, Scope::kAllUsers);
+      readInstalledScope(app_.displayName, request.targetDir, Scope::kCurrentUser);
 
   // 静默卸载（无人值守）没有界面可等：直接同步删完退出，不切进度页。
   // 界面通道要走进度页，删几十个文件同样会占满 UI 线程。

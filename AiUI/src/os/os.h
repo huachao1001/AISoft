@@ -157,6 +157,9 @@ class Backend {
   virtual bool launchDetached(const std::wstring& exePath, const std::wstring& arguments,
                               const std::wstring& workDir) = 0;
   virtual bool deleteFileOnReboot(const std::wstring& path) = 0;
+  // 登记「下次开机时用 staged 覆盖 target」：替换被别的进程占用的文件时用
+  virtual bool replaceFileOnReboot(const std::wstring& stagedPath,
+                                   const std::wstring& targetPath) = 0;
 
   // ── 清单式落盘 ──
   // 把单个内嵌资源写到完整路径（允许带子目录）

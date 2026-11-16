@@ -17,7 +17,7 @@
 # 都由本函数按平台分支，应用侧一行不用改。
 
 function(aiui_add_shell_menu_dll target)
-  cmake_parse_arguments(ARG "" "APP;APP_NAME;CLSID;EMBED_INTO" "SOURCES" ${ARGN})
+  cmake_parse_arguments(ARG "NO_EMBED" "APP;APP_NAME;CLSID;EMBED_INTO;CORE;MERGE_INTO" "SOURCES" ${ARGN})
   if(NOT ARG_APP OR NOT ARG_APP_NAME OR NOT ARG_CLSID OR NOT ARG_SOURCES)
     message(FATAL_ERROR
       "aiui_add_shell_menu_dll 需要 APP / APP_NAME / CLSID / SOURCES")
@@ -35,37 +35,68 @@ function(aiui_add_shell_menu_dll target)
   set(_root "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/..")
   set(_out "${CMAKE_CURRENT_BINARY_DIR}")
 
+  # MERGE_INTO：把 COM 外壳直接编进一个已有目标（例如应用的配置 dll），
+  # 让「注册系统集成」的代码与 COM 类厂落在同一个模块里。安装器与主程序
+  # 调同一份实现，分发时也只有一个文件。
+  if(ARG_MERGE_INTO)
+    set(_merge_target "${ARG_MERGE_INTO}")
+    get_target_property(_merge_type ${_merge_target} TYPE)
+    if(NOT _merge_type STREQUAL "SHARED_LIBRARY")
+      message(FATAL_ERROR "MERGE_INTO 必须指向一个 SHARED 目标")
+    endif()
+  endif()
+
   if(WIN32)
     # ── 组件本体 ──
-    add_library(${target} SHARED
-      "${_root}/src/os/windows/shell_menu_windows.cpp"
-      "${_root}/src/os/windows/shell_menu.def"
-      ${ARG_SOURCES}
-    )
-    target_include_directories(${target} PRIVATE
-      "${_root}/include"
-      "${_out}"
-    )
-    # 应用的菜单模型会引用自己的头文件（如 archive/archive.h），
-    # 组件的 include 路径直接沿用宿主的，避免在调用处重复写一遍
-    get_target_property(_app_includes ${ARG_APP} INCLUDE_DIRECTORIES)
-    if(_app_includes)
-      target_include_directories(${target} PRIVATE ${_app_includes})
+    if(ARG_MERGE_INTO)
+      # 并进既有目标：类厂、DllMain、.def 导出一起加进去。
+      # 该目标原本可能已有一份 DllMain（配置模块不需要），这里不重复加。
+      target_sources(${_merge_target} PRIVATE
+        "${_root}/src/os/windows/shell_menu_windows.cpp"
+        "${_root}/src/os/windows/shell_menu.def"
+        ${ARG_SOURCES}
+      )
+      target_include_directories(${_merge_target} PRIVATE
+        "${_root}/include"
+        "${_out}"
+      )
+      target_link_options(${_merge_target} PRIVATE
+        "/DEF:${_root}/src/os/windows/shell_menu.def"
+        /OPT:REF /OPT:ICF /INCREMENTAL:NO /MANIFEST:NO)
+      target_link_libraries(${_merge_target} PRIVATE shell32 shlwapi ole32 uuid advapi32)
+      set(_component_target "${_merge_target}")
+    else()
+      add_library(${target} SHARED
+        "${_root}/src/os/windows/shell_menu_windows.cpp"
+        "${_root}/src/os/windows/shell_menu.def"
+        ${ARG_SOURCES}
+      )
+      target_include_directories(${target} PRIVATE
+        "${_root}/include"
+        "${_out}"
+      )
+      # 应用的菜单模型会引用自己的头文件（如 archive/archive.h），
+      # 组件的 include 路径直接沿用宿主的，避免在调用处重复写一遍
+      get_target_property(_app_includes ${ARG_APP} INCLUDE_DIRECTORIES)
+      if(_app_includes)
+        target_include_directories(${target} PRIVATE ${_app_includes})
+      endif()
+      target_compile_definitions(${target} PRIVATE
+        UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
+      target_compile_options(${target} PRIVATE /O2 /Gy /utf-8 /W4 /permissive- /Zc:__cplusplus)
+      # .def 显式交给链接器：MSVC 才会按它导出 Dll* 入口。
+      # /MANIFEST:NO：资源管理器不需要清单，少一次加载。
+      target_link_options(${target} PRIVATE
+        "/DEF:${_root}/src/os/windows/shell_menu.def"
+        /OPT:REF /OPT:ICF /INCREMENTAL:NO /MANIFEST:NO)
+      # 体积直接决定资源管理器加载它的开销
+      target_link_libraries(${target} PRIVATE shell32 shlwapi ole32 uuid advapi32)
+      set_target_properties(${target} PROPERTIES
+        PREFIX ""
+        OUTPUT_NAME "${target}"
+      )
+      set(_component_target "${target}")
     endif()
-    target_compile_definitions(${target} PRIVATE
-      UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
-    target_compile_options(${target} PRIVATE /O2 /Gy /utf-8 /W4 /permissive- /Zc:__cplusplus)
-    # .def 显式交给链接器：MSVC 才会按它导出 Dll* 入口。
-    # /MANIFEST:NO：资源管理器不需要清单，少一次加载。
-    target_link_options(${target} PRIVATE
-      "/DEF:${_root}/src/os/windows/shell_menu.def"
-      /OPT:REF /OPT:ICF /INCREMENTAL:NO /MANIFEST:NO)
-    # 体积直接决定资源管理器加载它的开销
-    target_link_libraries(${target} PRIVATE shell32 shlwapi ole32 uuid advapi32)
-    set_target_properties(${target} PROPERTIES
-      PREFIX ""
-      OUTPUT_NAME "${target}"
-    )
   elseif(APPLE OR UNIX)
     message(FATAL_ERROR "AiUI 的右键菜单组件尚未支持当前平台")
   endif()
@@ -79,19 +110,26 @@ function(aiui_add_shell_menu_dll target)
 #define AIUI_SHELL_MENU_EXE_NAME  L\"@ARG_APP_NAME@\"
 #define AIUI_SHELL_MENU_COMPONENT L\"@target@\"
 #define AIUI_SHELL_MENU_RESOURCE_ID 200
+#define AIUI_SHELL_MENU_CORE_NAME L\"@ARG_CORE@\"
+#define AIUI_SHELL_MENU_CORE_VERSION_SYMBOL \"AiuiShellMenuCoreVersion\"
+#define AIUI_SHELL_MENU_CORE_BUILD_SYMBOL \"AiuiBuildShellMenuCore\"
 ")
   configure_file("${_out}/aiui_shell_menu_ids.h.in" "${_out}/aiui_shell_menu_ids.h" @ONLY)
 
   # ── 资源嵌入 ──
-  # 路径必须用正斜杠：写进 C 字符串后反斜杠会被当作转义序列。
-  file(TO_CMAKE_PATH "${_out}/${target}.dll" _dll_path)
-  file(WRITE "${_out}/aiui_shell_menu_path.h.in"
+  # NO_EMBED：组件作为独立文件随安装包分发，不嵌进任何宿主。
+  # 这条路让「外壳 dll」的名字可以固定——它不由 exe 每次释放，改名换不来
+  # 任何好处，只会让安装目录堆出一串看不懂的指纹名。
+  if(NOT ARG_NO_EMBED)
+    # 路径必须用正斜杠：写进 C 字符串后反斜杠会被当作转义序列。
+    file(TO_CMAKE_PATH "${_out}/${target}.dll" _dll_path)
+    file(WRITE "${_out}/aiui_shell_menu_path.h.in"
 "// 由 aiui_add_shell_menu_dll 生成，不要手工编辑。
 #define AIUI_SHELL_MENU_DLL_PATH \"@_dll_path@\"
 ")
-  configure_file("${_out}/aiui_shell_menu_path.h.in" "${_out}/aiui_shell_menu_path.h" @ONLY)
+    configure_file("${_out}/aiui_shell_menu_path.h.in" "${_out}/aiui_shell_menu_path.h" @ONLY)
 
-  file(WRITE "${_out}/aiui_shell_menu_embed.rc"
+    file(WRITE "${_out}/aiui_shell_menu_embed.rc"
 "// 由 aiui_add_shell_menu_dll 生成，不要手工编辑。
 // RCDATA 原样写入，运行时由后端取出落盘。
 #include \"aiui_shell_menu_ids.h\"
@@ -99,12 +137,52 @@ function(aiui_add_shell_menu_dll target)
 
 AIUI_SHELL_MENU_RESOURCE_ID RCDATA AIUI_SHELL_MENU_DLL_PATH
 ")
-  # .rc 的编码必须是 ASCII/本地代码页，上面的内容刻意不含中文
-  target_sources(${_embed_target} PRIVATE "${_out}/aiui_shell_menu_embed.rc")
-  target_include_directories(${_embed_target} PRIVATE "${_out}")
+    # .rc 的编码必须是 ASCII/本地代码页，上面的内容刻意不含中文
+    target_sources(${_embed_target} PRIVATE "${_out}/aiui_shell_menu_embed.rc")
+    target_include_directories(${_embed_target} PRIVATE "${_out}")
 
-  # 组件重建后必须重新打进宿主，否则升级后释放的还是旧组件
-  set_source_files_properties("${_out}/aiui_shell_menu_embed.rc" PROPERTIES
-    OBJECT_DEPENDS "${_out}/${target}.dll")
-  add_dependencies(${_embed_target} ${target})
+    # 组件重建后必须重新打进宿主，否则升级后释放的还是旧组件
+    set_source_files_properties("${_out}/aiui_shell_menu_embed.rc" PROPERTIES
+      OBJECT_DEPENDS "${_out}/${target}.dll")
+    add_dependencies(${_embed_target} ${_component_target})
+  else()
+    target_include_directories(${_component_target} PRIVATE "${_out}")
+  endif()
+endfunction()
+
+# aiui_add_shell_menu_core：把应用的菜单模型编成一个可热替换的逻辑 dll
+#
+# 为什么单独一层：外壳被资源管理器长期持有，改不了文件；逻辑 dll 每次弹菜单
+# 才加载、用完就卸，所以改文案只要换它，下次右键就是新的。
+#
+#   aiui_add_shell_menu_core(AiZipCore SOURCES src/app/shell_menu_model.cpp)
+#
+# 导出的是一套纯 C 接口（见 AiUI/shell_menu_core.h）：定长缓冲，谁分配谁释放。
+function(aiui_add_shell_menu_core target)
+  cmake_parse_arguments(ARG "" "" "SOURCES" ${ARGN})
+  if(NOT ARG_SOURCES)
+    message(FATAL_ERROR "aiui_add_shell_menu_core 需要 SOURCES")
+  endif()
+
+  set(_root "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/..")
+  set(_out "${CMAKE_CURRENT_BINARY_DIR}")
+
+  if(WIN32)
+    add_library(${target} SHARED
+      "${_root}/src/os/windows/shell_menu_core_windows.cpp"
+      ${ARG_SOURCES}
+    )
+    target_include_directories(${target} PRIVATE
+      "${_root}/include"
+      "${_out}"
+    )
+    target_compile_definitions(${target} PRIVATE
+      UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
+    target_compile_options(${target} PRIVATE /O2 /Gy /utf-8 /W4 /permissive- /Zc:__cplusplus)
+    # 逻辑层只做字符串计算：不链 shell32 / ole32，也不链 AiUI 的平台后端。
+    target_link_options(${target} PRIVATE /OPT:REF /OPT:ICF /INCREMENTAL:NO /MANIFEST:NO)
+    set_target_properties(${target} PROPERTIES PREFIX "")
+  elseif(APPLE OR UNIX)
+    message(FATAL_ERROR "AiUI 的右键菜单逻辑模块尚未支持当前平台")
+  endif()
 endfunction()

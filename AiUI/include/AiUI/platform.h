@@ -736,6 +736,17 @@ class Platform {
     (void)path;
     return false;
   }
+  // 登记「下次开机时用 staged 覆盖 target」。
+  //
+  // 用于替换正被别的进程（如资源管理器持有 dll）占用的文件：当场覆盖必然
+  // 失败，而重启时没有任何进程持有它。staged 文件在替换前一直是普通文件，
+  // 替换失败就会留在磁盘上，调用方应把它的清理算进卸载范围。
+  virtual bool replaceFileOnReboot(const std::wstring& stagedPath,
+                                   const std::wstring& targetPath) {
+    (void)stagedPath;
+    (void)targetPath;
+    return false;
+  }
   virtual std::wstring installSingleResource(int resourceId, const std::wstring& targetPath) {
     (void)resourceId;
     (void)targetPath;

@@ -109,37 +109,65 @@ add_custom_command(TARGET AiZip POST_BUILD
   VERBATIM
 )
 
-# ── 系统配置 DLL ──
-# 右键菜单与文件关联放在这里：安装器与主程序都调它，只维护一份实现。
-# 独立成 dll 而不是内嵌进 exe，是为了让安装器在「尚未运行过主程序」时
-# 也能完成注册，同时让主程序能随时调 Apply 自愈。
-add_library(aizip_config SHARED
+# ── 系统集成 DLL（AiZipExt.dll）──
+# 一个 dll 同时承担两件事，都是「装到系统里、被别的进程加载」：
+#   - 配置 ABI：安装器与主程序调它来注册右键菜单、文件关联；
+#   - COM 外壳：资源管理器弹菜单时由它插入菜单项。
+#
+# 名字固定。用指纹换名对付的是「资源管理器持有旧 dll、同名文件覆盖不了」，
+# 但那会让安装目录堆出 aizip_08D0F419.dll 这种看不懂的名字，升几次级还留着
+# 几份残渣。现在把易变的部分挪进独立的逻辑 dll（AiZipCore），外壳几乎不变，
+# 固定名带来的「升级要重启」也就极少发生。
+add_library(aizip_ext SHARED
   src/config/aizip_config.cpp
 )
 
-target_compile_definitions(aizip_config PRIVATE
+target_compile_definitions(aizip_ext PRIVATE
   AISETUP_CONFIG_EXPORTS
   UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS
 )
 # 配置 dll 要按标准 ABI 导出，头文件在 AiInstaller 里
-target_include_directories(aizip_config PRIVATE src/config
+target_include_directories(aizip_ext PRIVATE src/config src/app
   "${CMAKE_CURRENT_SOURCE_DIR}/../AiInstaller/include")
-target_compile_options(aizip_config PRIVATE /O2 /Gy /utf-8 /W4 /permissive- /Zc:__cplusplus)
-target_link_options(aizip_config PRIVATE /OPT:REF /OPT:ICF /INCREMENTAL:NO)
-target_link_libraries(aizip_config PRIVATE AiUI)
+target_compile_options(aizip_ext PRIVATE /O2 /Gy /utf-8 /W4 /permissive- /Zc:__cplusplus)
+target_link_options(aizip_ext PRIVATE /OPT:REF /OPT:ICF /INCREMENTAL:NO)
+target_link_libraries(aizip_ext PRIVATE AiUI)
 
-# 右键菜单的动态组件：静态动词做不出「压缩到 rnd.zip」，只能交给进程内组件。
-# 组件形态、COM 注册、资源内嵌全在 AiUI 里，应用只给一份纯菜单逻辑。
+set_target_properties(aizip_ext PROPERTIES
+  OUTPUT_NAME "AiZipExt"
+  PREFIX ""
+)
+
+# 菜单逻辑：只做「选中了什么 → 显示哪些项」的纯计算，编成独立 dll。
 #
-# EMBED_INTO 指向配置 dll：注册系统集成的代码与组件资源都落在同一个模块里，
-# 安装器与主程序调同一份实现，不必各自内嵌一份。
+# 单独成 dll 的唯一目的是它能被替换：外壳被资源管理器长期持有、改不动，
+# 逻辑 dll 每次弹菜单才加载、用完就卸，所以改文案只换它，下次右键即生效。
+aiui_add_shell_menu_core(aizip_core
+  SOURCES src/app/shell_menu_model.cpp
+)
+
+set_target_properties(aizip_core PROPERTIES
+  OUTPUT_NAME "AiZipCore"
+  PREFIX ""
+)
+
+# COM 外壳并进 AiZipExt：注册代码与类厂落同一个模块，配置 ABI 与 COM
+# 入口共享一份标识，分发时也只有这一个文件。
+#
+# CORE 告诉外壳逻辑模块的文件名，它每次都从同目录按这个名字加载。
+# NO_EMBED：外壳作为独立文件随安装包分发，不由宿主 exe 释放，名字才固定得住。
 aiui_add_shell_menu_dll(aizip
   APP AiZip
   APP_NAME "AiZip.exe"
   CLSID "{7B1F2C3A-5D4E-4F60-9A8B-1C2D3E4F5A6B}"
-  EMBED_INTO aizip_config
+  CORE "AiZipCore.dll"
+  MERGE_INTO aizip_ext
+  NO_EMBED
   SOURCES src/app/shell_menu_model.cpp
 )
+
+# 外壳依赖逻辑模块的存在，先编逻辑再编外壳
+add_dependencies(aizip_ext aizip_core)
 
 # ── 安装程序 ──
 # 安装界面不再是本工程的一部分：AiInstaller 编出通用的 AiSetup.exe，
@@ -171,13 +199,15 @@ add_custom_target(aizip_setup_stage ALL
   DEPENDS "${AIZIP_SETUP_ROOT}/logo.png"
 )
 
-add_dependencies(aizip_setup_stage AiZip aizip_config)
+add_dependencies(aizip_setup_stage AiZip aizip_ext aizip_core)
 
 add_custom_command(TARGET aizip_setup_stage POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_if_different
           "$<TARGET_FILE:AiZip>" "${AIZIP_SETUP_ROOT}/AiZip.exe"
   COMMAND ${CMAKE_COMMAND} -E copy_if_different
-          "$<TARGET_FILE:aizip_config>" "${AIZIP_SETUP_ROOT}/aizip_config.dll"
+          "$<TARGET_FILE:aizip_ext>" "${AIZIP_SETUP_ROOT}/AiZipExt.dll"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "$<TARGET_FILE:aizip_core>" "${AIZIP_SETUP_ROOT}/AiZipCore.dll"
   COMMENT "准备安装包文件"
   VERBATIM
 )

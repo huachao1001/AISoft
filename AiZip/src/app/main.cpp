@@ -66,7 +66,7 @@ int AiUI::runApp() {
   AiUI::Activity::setDefaultTheme(
       &AiUI::ThemeRegistry::getOr(g_app.settings.theme, AiUI::kLightTheme));
 
-  // 右键菜单与文件关联的自愈：实现都在同目录的 aizip_config.dll 里。
+  // 右键菜单与文件关联的自愈：实现都在同目录的 AiZipExt.dll 里。
   //
   // 为什么主程序也要做这件事：这两个能力挂在系统里，会被别的软件清掉、
   // 会因程序换位置而指向失效路径。让主程序每次启动校对一次，用户不必

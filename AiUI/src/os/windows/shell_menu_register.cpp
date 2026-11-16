@@ -86,11 +86,34 @@ bool writeFileAtomic(const std::wstring& path, const void* data, size_t size) {
   return true;
 }
 
-// 释放组件并返回实际落地的路径。
-// 文件名带内容指纹：资源管理器会一直持有已加载的旧 DLL，同名文件根本没法替换；
-// 换个名字让新旧共存，注册表指向新文件即可。
+// 释放组件并返回注册表该指向的路径。
+//
+// 两种命名策略：
+//   - 指纹（默认）：资源管理器会一直持有已加载的旧 DLL，同名文件没法替换，
+//     所以换名共存，注册表指向新文件；
+//   - 固定名：名字可读、目录干净，代价是升级可能撞上「旧文件被持有」。
+//     那种情况把新版暂存成 .new 并登记重启替换，注册表继续指向旧文件——
+//     旧文件功能完好，没必要为了换个版本让菜单失效一整天。
 std::wstring placeComponent(const std::wstring& dir, const std::wstring& fileName,
-                            const std::vector<BYTE>& payload) {
+                            const std::vector<BYTE>& payload, bool fixedName) {
+  if (fixedName) {
+    const std::wstring path = dir + L"\\" + fileName;
+    if (fileMatches(path, payload)) return path;
+    if (writeFileAtomic(path, payload.data(), payload.size())) return path;
+
+    // 覆盖失败：多半是资源管理器正持有它。写 .new 排队到重启，
+    // 本次安装不失败——新内容已经在机器上，只差一次重启生效。
+    const std::wstring staged = path + L".new";
+    if (writeFileAtomic(staged, payload.data(), payload.size())) {
+      if (!::MoveFileExW(staged.c_str(), path.c_str(),
+                         MOVEFILE_REPLACE_EXISTING | MOVEFILE_DELAY_UNTIL_REBOOT)) {
+        ::DeleteFileW(staged.c_str());
+      }
+    }
+    // 旧文件还在就继续用它：内容不一致但不影响这次注册
+    return ::PathFileExistsW(path.c_str()) ? path : std::wstring();
+  }
+
   const size_t dot = fileName.find_last_of(L'.');
   const std::wstring stem = fileName.substr(0, dot);
   const std::wstring ext = fileName.substr(dot);
@@ -332,15 +355,25 @@ std::wstring WindowsBackend::registerShellMenuHandler(const ShellMenuHandler& ha
     return L"菜单处理器描述不完整";
   }
 
-  std::vector<BYTE> payload;
-  if (!readEmbedded(handler.componentResourceId, payload)) {
-    return L"可执行文件里没有右键菜单组件";
-  }
-
   const std::wstring dir = componentDir(handler);
   if (dir.empty()) return L"无法定位组件目录";
-  const std::wstring dll = placeComponent(dir, handler.componentName, payload);
-  if (dll.empty()) return L"无法释放右键菜单组件";
+
+  // 组件有两个来源：内嵌在本模块资源里（应用自己带过去），或者已经装在
+  // 目录里（安装器把 dll 装好后再调它注册）。后者不重写文件——模块把自己
+  // 释放一份副本等于凭空多一个要维护的指纹文件。
+  std::wstring dll;
+  if (handler.componentResourceId != 0) {
+    std::vector<BYTE> payload;
+    if (!readEmbedded(handler.componentResourceId, payload)) {
+      return L"可执行文件里没有右键菜单组件";
+    }
+    dll = placeComponent(dir, handler.componentName, payload, handler.fixedComponentName);
+    if (dll.empty()) return L"无法释放右键菜单组件";
+  } else {
+    dll = dir + L"\\" + handler.componentName;
+    if (!::PathFileExistsW(dll.c_str())) return L"安装目录里没有右键菜单组件";
+  }
+  // 旧命名的 aicmd_*.dll / aizip_*.dll 是历史残渣：注册表已经不再指向它们
   removeLegacyComponents(dir, dll);
 
   const std::wstring exe = hostExePath(handler.hostExePath);
@@ -370,27 +403,69 @@ std::wstring WindowsBackend::registerShellMenuHandler(const ShellMenuHandler& ha
                   L"Software\\Classes\\" + target + L"\\shellex\\ContextMenuHandlers\\" + handler.id);
   }
 
+  // 拆掉另一个根键里的影子登记。
+  //
+  // HKCR 是 HKCU 与 HKLM 的合并视图，HKCU 优先。换过安装范围（或开发期
+  // 在构建目录跑过一份）之后，另一边会留着同名 CLSID 指向旧路径：
+  // 注册表逐项看都对，右键却加载了另一份 dll，甚至是一份已被删掉的。
+  //
+  // 只清「指向别处的」那份：它要么指向另一份程序，要么指向一个已经不存在的
+  // 文件。两者都该走开——前者是我们自己在别处的旧副本，后者是彻底失效的
+  // 残渣。仍然指向本目录组件的另一边登记要留着：所有用户装的那份也服务
+  // 别的账户，删了他们的菜单就没了。
+  const HKEY other = root == HKEY_CURRENT_USER ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;
+  const std::wstring otherInproc =
+      regGetString(other, clsidKey + L"\\InprocServer32", nullptr);
+  const bool otherIsOurs =
+      ::CompareStringOrdinal(otherInproc.c_str(), -1, dll.c_str(), -1, TRUE) == CSTR_EQUAL;
+  if (!otherIsOurs) {
+    for (const auto& target : classRootsFor(handler.targets)) {
+      regDeleteTree(other, handlerKey(handler, target));
+    }
+    regDeleteTree(other, clsidKey);
+  }
+
   // 让资源管理器丢掉已缓存的菜单项
   ::SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
   return {};
 }
 
 std::wstring WindowsBackend::unregisterShellMenuHandler(const ShellMenuHandler& handler) {
-  const HKEY root = classRoot(handler);
-  for (const auto& target : classRootsFor(handler.targets)) {
-    regDeleteTree(root, handlerKey(handler, target));
-  }
-  if (!handler.clsid.empty()) {
-    regDeleteTree(root, L"Software\\Classes\\CLSID\\" + handler.clsid);
+  // 两个根键都清。
+  //
+  // 注销时没人能确定"当初装在哪一边"：调用方给的 scope 常常来自
+  // 「当前是否提权」这类猜测，而卸载器本身带 requireAdministrator，几乎
+  // 总是猜成所有用户。只清一边的后果是另一边的登记活着——用户的右键菜单
+  // 明明已经卸载还在，指向一个不存在的 dll。
+  //
+  // CLSID 与 shellex 挂载都是本程序独占的命名空间（GUID 由应用定义，
+  // 处理器 id 带应用前缀），两边同名项一定是自己的，清掉不会误伤别人。
+  const HKEY roots[2] = {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+  for (const HKEY root : roots) {
+    if (!handler.id.empty()) {
+      for (const auto& target : classRootsFor(handler.targets)) {
+        regDeleteTree(root, handlerKey(handler, target));
+        // 旧版本用不带 AIUI_ 前缀的键；不清掉会同时出现两套入口
+        regDeleteTree(root, L"Software\\Classes\\" + target +
+                               L"\\shellex\\ContextMenuHandlers\\" + handler.id);
+      }
+    }
+    if (!handler.clsid.empty()) {
+      regDeleteTree(root, L"Software\\Classes\\CLSID\\" + handler.clsid);
+    }
   }
 
-  // 组件文件也要清：安装好的程序把组件放在自己目录里，不删就会出现
-  // 「卸载后目录删不掉」的残渣。只是注销菜单（准备立刻重新注册）时，
-  // 调用方不该走这里——重新注册会重新释放同一份。
+  // 组件文件只在「由本模块释放出来」时才清。
+  //
+  // componentResourceId == 0 表示组件是安装包装好的独立文件，它由安装清单
+  // 管理，卸载流程按清单删。这里再删一次有两个坏后果：注销动作往往就是从
+  // 那个 dll 里发起的，删自己会留下一份重启删除记录；而「注销再注册」这类
+  // 修复动作会因为文件没了而注册失败。
   //
   // 这里不用 componentDir(handler)：它会顺手建目录，而卸载不该创建任何东西。
   const std::wstring dir = handler.componentDir;
-  if (!dir.empty() && !handler.componentName.empty() && ::PathFileExistsW(dir.c_str())) {
+  if (handler.componentResourceId != 0 && !dir.empty() && !handler.componentName.empty() &&
+      ::PathFileExistsW(dir.c_str())) {
     removeAllComponentVersions(dir, handler.componentName);
   }
 
@@ -399,7 +474,7 @@ std::wstring WindowsBackend::unregisterShellMenuHandler(const ShellMenuHandler& 
 }
 
 bool WindowsBackend::isShellMenuHandlerRegistered(const ShellMenuHandler& handler) {
-  if (handler.clsid.empty()) return false;
+  if (handler.clsid.empty() || handler.componentName.empty()) return false;
 
   const HKEY root = classRoot(handler);
 
@@ -414,22 +489,47 @@ bool WindowsBackend::isShellMenuHandlerRegistered(const ShellMenuHandler& handle
   const std::wstring dir = componentDir(handler);
   if (dir.empty()) return false;
 
-  std::vector<BYTE> payload;
-  if (!readEmbedded(handler.componentResourceId, payload)) return false;
-
   const std::wstring inproc = L"Software\\Classes\\CLSID\\" + handler.clsid + L"\\InprocServer32";
   const std::wstring actualDll = regGetString(root, inproc, nullptr);
   if (actualDll.empty()) return false;
-  // 文件名带内容指纹，无法按名字比对；只要落在我们的目录且内容就是当前这一份即可
-  const size_t slash = actualDll.find_last_of(L'\\');
-  if (slash == std::wstring::npos || actualDll.substr(0, slash) != dir) return false;
-  if (!fileMatches(actualDll, payload)) return false;
+
+  if (handler.componentResourceId == 0) {
+    // 组件就是目录里那一个文件：比对完整路径即可，不看内容。
+    // 比内容会让「重启后才替换」的暂存状态被当成未就绪，于是每次启动都
+    // 重写一遍注册表——旧文件本来就能用，没有修复的必要。
+    const std::wstring expected = dir + L"\\" + handler.componentName;
+    if (::CompareStringOrdinal(actualDll.c_str(), -1, expected.c_str(), -1, TRUE) != CSTR_EQUAL) {
+      return false;
+    }
+  } else {
+    std::vector<BYTE> payload;
+    if (!readEmbedded(handler.componentResourceId, payload)) return false;
+    // 文件名带内容指纹时无法按名字比对；只要落在我们的目录且内容就是当前这份即可
+    const size_t slash = actualDll.find_last_of(L'\\');
+    if (slash == std::wstring::npos || actualDll.substr(0, slash) != dir) return false;
+    if (!fileMatches(actualDll, payload)) return false;
+  }
 
   const std::wstring exe = hostExePath(handler.hostExePath);
   if (exe.empty()) return false;
   const std::wstring registeredExe =
       regGetString(root, L"Software\\Classes\\CLSID\\" + handler.clsid + L"\\AppPath", nullptr);
-  return ::CompareStringOrdinal(registeredExe.c_str(), -1, exe.c_str(), -1, TRUE) == CSTR_EQUAL;
+  if (::CompareStringOrdinal(registeredExe.c_str(), -1, exe.c_str(), -1, TRUE) != CSTR_EQUAL) {
+    return false;
+  }
+
+  // 另一个根键里若有指向别处（或指向已删文件）的同名 CLSID，实际生效的是
+  // 它——HKCU 优先于 HKLM。这种状态看着已就绪，右键却是另一份程序在响应，
+  // 必须报「未就绪」让上层走一次修复，由注册流程把它拆掉。
+  const HKEY other = root == HKEY_CURRENT_USER ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;
+  const std::wstring otherInproc =
+      regGetString(other, L"Software\\Classes\\CLSID\\" + handler.clsid + L"\\InprocServer32",
+                   nullptr);
+  if (!otherInproc.empty() &&
+      ::CompareStringOrdinal(otherInproc.c_str(), -1, actualDll.c_str(), -1, TRUE) != CSTR_EQUAL) {
+    return false;
+  }
+  return true;
 }
 
 InstallScope WindowsBackend::detectShellMenuScope(const ShellMenuHandler& handler) {

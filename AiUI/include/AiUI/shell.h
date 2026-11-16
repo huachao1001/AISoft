@@ -79,10 +79,21 @@ struct ShellMenuHandler {
   // 组件的类标识文本（"{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}"）。
   // 由构建脚本按 id 派生，应用与组件各拿一份，必须一致。
   std::wstring clsid;
-  // 组件释放到用户目录后的文件名，如 "aizip.dll"，也是平台约定的组件形态。
+  // 组件落地后的文件名，如 "AiZipExt.dll"，也是平台约定的组件形态。
   std::wstring componentName;
   // 组件在本可执行文件 .rc 里的资源 id（RCDATA），由后端取出后落盘。
+  //
+  // 0 表示「组件已经在磁盘上，不必释放」：注册时直接用 componentDir 里的
+  // componentName。安装器把 dll 装进目录、又需要调它自己来注册时走这条路——
+  // 让模块把自己的副本再释放一遍没有意义，还会多出一份要维护的指纹文件。
   int componentResourceId = 200;
+  // true 表示组件文件名固定，不用内容指纹区分版本。
+  //
+  // 指纹的作用是「换名共存」：资源管理器持有旧 dll 时同名文件覆盖不了。
+  // 但换名会让安装目录堆出 aizip_08D0F419.dll 这种看不懂的名字，多次升级
+  // 后还留着几份残渣。固定的名字只有在组件内容确实变了、且恰好被持有时
+  // 才需要特殊处理，那种情况由注册流程自己暂存并在重启后替换。
+  bool fixedComponentName = false;
   // 系统诊断工具里显示的组件名，只用于可读性
   std::wstring displayName;
   // 生效对象，语义同 ShellVerb::targets：{"*"} 所有文件、{"Directory"} 所有目录。

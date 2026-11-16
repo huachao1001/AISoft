@@ -21,6 +21,7 @@
 #include <shlwapi.h>
 
 #include "AiUI/shell_menu.h"
+#include "AiUI/shell_menu_core.h"
 
 #include "aiui_shell_menu_ids.h"
 
@@ -41,6 +42,128 @@ HINSTANCE g_module = nullptr;
 bool IsDirectoryPath(const std::wstring& path) {
   const DWORD attr = ::GetFileAttributesW(path.c_str());
   return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) != 0;
+}
+
+// ── 菜单逻辑模块 ──
+//
+// 菜单文案与规则放在独立 dll 里，本组件只做 COM 外壳。这样：
+//   - 外壳几乎不变，名字可以固定（AiZipExt.dll），不被指纹污染；
+//   - 改文案只换逻辑 dll，它每次用完就卸载，文件随时能替换，下次右键即生效。
+//
+// 边界必须是纯 C + 定长缓冲：两个 dll 各有一份静态 CRT，传 std::wstring
+// 或跨 dll 释放内存会崩资源管理器。
+using CoreVersionFn = int (*)(void);
+using CoreBuildFn = int (*)(const AiUI::ShellMenuCoreSelection*, int,
+                            AiUI::ShellMenuCoreItem*, int);
+
+// 一次「加载 → 调用 → 卸载」。析构时必定卸载：不卸载就锁住文件，
+// 下次升级又得靠重启兜底，本模块存在的意义就没了。
+class CoreCall {
+ public:
+  CoreCall() {
+    const std::wstring path = corePath();
+    if (path.empty()) return;
+    module_ = ::LoadLibraryExW(path.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+    if (!module_) return;
+
+    auto version = reinterpret_cast<CoreVersionFn>(
+        reinterpret_cast<void*>(::GetProcAddress(module_, AIUI_SHELL_MENU_CORE_VERSION_SYMBOL)));
+    build_ = reinterpret_cast<CoreBuildFn>(
+        reinterpret_cast<void*>(::GetProcAddress(module_, AIUI_SHELL_MENU_CORE_BUILD_SYMBOL)));
+    if (!version || !build_) {
+      reset();
+      return;
+    }
+    // 版本不符时宁可不用：按旧理解解读新结构会读越界，宁可菜单不出现
+    if (version() != AiUI::kShellMenuCoreApiVersion) reset();
+  }
+
+  ~CoreCall() { reset(); }
+
+  CoreCall(const CoreCall&) = delete;
+  CoreCall& operator=(const CoreCall&) = delete;
+
+  bool usable() const { return build_ != nullptr; }
+
+  // 算菜单项；返回项数。算不出来返回 0（菜单里不出现本程序）。
+  int build(const std::vector<AiUI::ShellSelectionItem>& selection,
+            AiUI::ShellMenuCoreItem* items, int capacity) {
+    if (!build_ || selection.empty() || capacity <= 0) return 0;
+
+    std::vector<AiUI::ShellMenuCoreSelection> raw;
+    raw.reserve(selection.size());
+    for (const auto& item : selection) {
+      AiUI::ShellMenuCoreSelection entry;
+      entry.path = item.path.c_str();
+      entry.isDirectory = item.isDirectory ? 1 : 0;
+      raw.push_back(entry);
+    }
+
+    int count = 0;
+    try {
+      count = build_(raw.data(), static_cast<int>(raw.size()), items, capacity);
+    } catch (...) {
+      return 0;
+    }
+    if (count < 0) return 0;
+    return count > capacity ? capacity : count;
+  }
+
+ private:
+  // 逻辑 dll 与本组件同目录。不用注册表记路径：两者总是一起安装、一起升级，
+  // 多一处状态就多一处对不上的可能。
+  static std::wstring corePath() {
+    wchar_t dllPath[MAX_PATH] = {};
+    if (!::GetModuleFileNameW(g_module, dllPath, MAX_PATH)) return {};
+    ::PathRemoveFileSpecW(dllPath);
+    std::wstring path = dllPath;
+    path += L"\\";
+    path += AIUI_SHELL_MENU_CORE_NAME;
+    return ::PathFileExistsW(path.c_str()) ? path : std::wstring();
+  }
+
+  void reset() {
+    if (module_) {
+      ::FreeLibrary(module_);
+      module_ = nullptr;
+    }
+    build_ = nullptr;
+  }
+
+  HMODULE module_ = nullptr;
+  CoreBuildFn build_ = nullptr;
+};
+
+// 统一入口：先问逻辑模块，模块不可用再退回编译进来的实现。
+//
+// 退回是为了「装坏了也能用」：逻辑 dll 被杀毒软件吞掉、或者用户手工删了，
+// 菜单不该整个消失。
+std::vector<AiUI::ShellMenuItem> buildMenu(const std::vector<AiUI::ShellSelectionItem>& selection) {
+  CoreCall core;
+  if (core.usable()) {
+    AiUI::ShellMenuCoreItem items[AiUI::kShellMenuCoreMaxItems] = {};
+    const int count = core.build(selection, items, AiUI::kShellMenuCoreMaxItems);
+    if (count > 0) {
+      std::vector<AiUI::ShellMenuItem> out;
+      out.reserve(static_cast<size_t>(count));
+      for (int i = 0; i < count; ++i) {
+        AiUI::ShellMenuItem item;
+        item.label = items[i].label;
+        item.arguments = items[i].arguments;
+        item.separatorAfter = items[i].separatorAfter != 0;
+        out.push_back(std::move(item));
+      }
+      return out;
+    }
+    // 模块算出空菜单是合法结论（比如不该出现），不退回
+    return {};
+  }
+
+  try {
+    return aiuiBuildShellMenu(selection).items;
+  } catch (...) {
+    return {};
+  }
 }
 
 // 宿主程序图标 → 菜单位图。
@@ -95,15 +218,23 @@ std::wstring Quote(const std::wstring& s) {
 
 // 宿主 exe 的路径。注册时写进 CLSID\AppPath，避免依赖「exe 与 dll 同目录」
 // 这种脆弱假设——用户完全可能把 exe 挪到别处。
+//
+// 必须读两个根键：组件所在的 CLSID 可能注册在 HKLM（所有用户安装），而
+// HKCU 里常常还留着开发期那份登记。只读 HKCU 会出现「装好的程序点右键，
+// 启动的却是构建目录里那份 exe」——注册表逐项看都对，行为就是不对。
+//
+// 顺序上先信 HKLM：能装到 HKLM 的那份是走过安装流程的，比开发副本可信。
 std::wstring AppPath() {
   const std::wstring key = std::wstring(L"Software\\Classes\\CLSID\\") + AIUI_SHELL_MENU_CLSID +
                            L"\\AppPath";
-  wchar_t buffer[MAX_PATH * 2] = {};
-  DWORD size = sizeof(buffer);
-  if (::RegGetValueW(HKEY_CURRENT_USER, key.c_str(), nullptr, RRF_RT_REG_SZ, nullptr, buffer,
-                     &size) == ERROR_SUCCESS &&
-      buffer[0] != L'\0') {
-    return buffer;
+  for (const HKEY root : {HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER}) {
+    wchar_t buffer[MAX_PATH * 2] = {};
+    DWORD size = sizeof(buffer);
+    if (::RegGetValueW(root, key.c_str(), nullptr, RRF_RT_REG_SZ, nullptr, buffer, &size) ==
+            ERROR_SUCCESS &&
+        buffer[0] != L'\0' && ::PathFileExistsW(buffer)) {
+      return buffer;
+    }
   }
   // 兜底：组件与 exe 由同一个程序释放，通常在同一目录
   wchar_t dllPath[MAX_PATH] = {};
@@ -174,13 +305,8 @@ class ContextMenu final : public IContextMenu, public IShellExtInit {
     if (flags & (CMF_DEFAULTONLY | CMF_VERBSONLY)) return MakeResult(0);
     if (selection_.empty()) return MakeResult(0);
 
-    // 业务规则全在应用侧；这里只负责把结果摆进菜单，异常一律吞掉
-    std::vector<AiUI::ShellMenuItem> items;
-    try {
-      items = aiuiBuildShellMenu(selection_).items;
-    } catch (...) {
-      return MakeResult(0);
-    }
+    // 业务规则在逻辑模块里；这里只负责把结果摆进菜单，异常一律吞掉
+    std::vector<AiUI::ShellMenuItem> items = buildMenu(selection_);
 
     const UINT capacity = lastCmd - firstCmd + 1;
     if (items.size() > capacity) items.resize(capacity);
@@ -212,12 +338,7 @@ class ContextMenu final : public IContextMenu, public IShellExtInit {
     const UINT cmd = LOWORD(info->lpVerb);
     if (cmd >= kMaxItems) return E_INVALIDARG;
 
-    std::vector<AiUI::ShellMenuItem> items;
-    try {
-      items = aiuiBuildShellMenu(selection_).items;
-    } catch (...) {
-      return E_FAIL;
-    }
+    const std::vector<AiUI::ShellMenuItem> items = buildMenu(selection_);
     if (cmd >= items.size()) return E_INVALIDARG;
 
     return RunCommand(items[cmd].arguments);
