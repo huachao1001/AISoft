@@ -181,6 +181,14 @@ std::vector<std::wstring> AppAddedChildNames(const std::wstring& normalizedDir);
 // 会弹进度框；返回空串表示成功。
 std::wstring AppExportArchive();
 
+// 把选中的列表项准备成可拖拽的真实磁盘路径。
+//
+// 包内条目没有磁盘路径，这里按包内路径解到当前层的镜像目录，再返回落地点；
+// 文件系统模式直接返回原路径。拖拽目标只认真实文件，所以必须先落地。
+// 返回空串表示成功；非空是可读原因（此时 outPaths 为空）。
+std::wstring AppPrepareDragPaths(const std::vector<int>& indices,
+                                 std::vector<std::wstring>& outPaths);
+
 // 放弃所有未导出的改动
 void AppDiscardEdits();
 

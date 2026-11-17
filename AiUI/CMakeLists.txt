@@ -67,6 +67,7 @@ if(WIN32)
     src/os/windows/title_bar_windows.cpp
     src/os/windows/platform_windows.cpp
     src/os/windows/shell_menu_register.cpp
+    src/os/windows/file_drag_windows.cpp
     src/os/windows/install_windows.cpp
     src/os/windows/image_pixels_windows.cpp
   )

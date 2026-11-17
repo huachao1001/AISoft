@@ -130,6 +130,12 @@ struct ListCallbacks {
   std::function<void()> onContextMenu;
   std::function<void(Key key)> onKeyDown;  // 未消费的按键
   std::function<void()> onColumnResized;
+  // 用户按住某一行并拖出控件：参数是被按住的行号。
+  //
+  // 只在确实移动了一段距离后才触发，点一下不会。回调是阻塞的——平台侧
+  // 通常在这里把鼠标交给系统拖拽，直到用户松手才返回。选中状态在此之前
+  // 已更新好，所以业务方直接取当前选中项即可。
+  std::function<void(int row)> onDragStart;
 };
 
 class ListView : public ScrollView {
@@ -239,6 +245,11 @@ class ListView : public ScrollView {
   int dragColumn_ = -1;
   int dragStartX_ = 0;
   int dragStartWidth_ = 0;
+
+  // 拖拽起点：按下某行后记下起点，移动超过阈值才向业务层要拖拽
+  int pressRow_ = -1;
+  Point pressPos_;
+  bool pressArmed_ = false;
 };
 
 }  // namespace AiUI

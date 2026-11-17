@@ -449,6 +449,7 @@ void MainActivity::attachFileList() {
   };
   callbacks.onContextMenu = [this] { showListContextMenu(); };
   callbacks.onKeyDown = [this](AiUI::Key key) { onListKeyDown(key); };
+  callbacks.onDragStart = [this](int row) { onRowDragStart(row); };
   callbacks.onColumnResized = [this] {
     if (!list_) return;
     for (int i = 0; i < kColCount; ++i) {
@@ -681,6 +682,35 @@ std::vector<std::wstring> MainActivity::selectedPaths() const {
   }
   if (out.empty()) out.push_back(g_app.curDir);
   return out;
+}
+
+// 按住行拖出窗口：把选中项当文件交给系统拖拽。
+//
+// 放下位置由系统决定（资源管理器、桌面、别的程序），我们不参与——拖到哪个
+// 目录就等于把内容导出到那里。包内条目会先解到镜像目录，那是拖拽的前提。
+void MainActivity::onRowDragStart(int row) {
+  // 拖拽按「当前选中」而不是被按的那一行：多选后拖任意一行都该拖走整批。
+  // 但选中状态可能还没跟上这一行（按下与移动之间极快时），这里兜一下底。
+  std::vector<int> selected = selectedItemIndices();
+  const int pressedIndex = model_.itemIndexAt(row);
+  const bool pressedSelected =
+      pressedIndex >= 0 &&
+      std::find(selected.begin(), selected.end(), pressedIndex) != selected.end();
+  if (!pressedSelected && pressedIndex >= 0) selected.assign(1, pressedIndex);
+
+  if (selected.empty()) return;
+
+  std::vector<std::wstring> paths;
+  const std::wstring error = AppPrepareDragPaths(selected, paths);
+  if (!error.empty()) {
+    warn(error, nativeWindow());
+    return;
+  }
+
+  AiUI::FileDragDesc desc;
+  desc.sourceWindow = nativeWindow();
+  desc.paths = std::move(paths);
+  AiUI::platform()->startFileDrag(desc);
 }
 
 void MainActivity::onRowActivated(int row) {

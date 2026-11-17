@@ -98,6 +98,8 @@ class Backend {
   // ── 外壳集成 ──
   virtual bool openWithSystem(const std::wstring& path) = 0;
   virtual bool showProperties(NativeHandle owner, const std::wstring& path) = 0;
+  // 发起一次系统拖拽；阻塞到用户松手。语义见 Platform::startFileDrag
+  virtual bool startFileDrag(const FileDragDesc& desc) = 0;
   virtual std::wstring registerShellVerbs(const std::vector<ShellVerb>& verbs) = 0;
   virtual std::wstring unregisterShellVerbs(const std::vector<ShellVerb>& verbs) = 0;
   virtual bool areShellVerbsRegistered(const std::vector<ShellVerb>& verbs) = 0;

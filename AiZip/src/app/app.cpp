@@ -903,6 +903,95 @@ void AppDiscardEdits() {
   g_app.edits = App::EditSession{};
 }
 
+// ── 往外拖拽 ──
+//
+// 拖拽目标（资源管理器、桌面）只认磁盘上的真实文件，所以包内条目必须先落地。
+// 落地目录与「双击打开」用的镜像是同一个：那里已经按包内路径摆好了结构，
+// 拖出去的目录能保住层级。
+//
+// 但镜像里还有用户改过、尚未导出的内容，拖出去必须是他眼前那一份。所以
+// 已经在镜像里出现过的条目一律不再解压覆盖——它们要么是新增的、要么是
+// 打开/改过的，都已经是最终形态。
+
+std::wstring AppPrepareDragPaths(const std::vector<int>& indices,
+                                 std::vector<std::wstring>& outPaths) {
+  outPaths.clear();
+  if (indices.empty()) return L"没有选中任何内容";
+
+  // 文件系统模式：列表项本来就是磁盘路径，直接拖
+  if (!g_app.archiveMode) {
+    for (int index : indices) {
+      if (index < 0 || index >= static_cast<int>(g_app.items.size())) continue;
+      const std::wstring& path = g_app.items[index].fullPath;
+      if (!path.empty() && util::PathExists(path)) outPaths.push_back(path);
+    }
+    return outPaths.empty() ? L"选中的内容已经不存在" : std::wstring();
+  }
+
+  // 包内模式：要拖的每一项都对应镜像里的一个真实路径
+  const std::wstring dir = EnsureStageDir();
+  if (dir.empty()) return L"无法创建临时目录";
+
+  const std::wstring prefix = g_app.innerPath.empty() ? L"" : g_app.innerPath + L"\\";
+  std::vector<uint32_t> entryIndices;   // 需要从包里解出来的条目
+  std::vector<std::wstring> targets;    // 每一项在镜像里的落地点
+
+  for (int index : indices) {
+    if (index < 0 || index >= static_cast<int>(g_app.items.size())) continue;
+    const Item& item = g_app.items[index];
+    const std::wstring inner = prefix + item.name;
+    if (inner.empty()) continue;
+
+    const std::wstring landed = StagePathFor(inner);
+    if (landed.empty()) continue;
+    targets.push_back(landed);
+
+    // 镜像里已经有就是最终形态（新增的或用户改过的），不要再解出来覆盖
+    if (util::PathExists(landed)) continue;
+
+    if (item.isDir) {
+      // 目录要连其下所有成员一起解：7-Zip 按条目下标解，给目录下标不会展开子项
+      for (size_t i = 0; i < g_app.archive.Entries().size(); ++i) {
+        const auto& entry = g_app.archive.Entries()[i];
+        if (!AiUI::platform()->isPathPrefix(inner, entry.path)) continue;
+        const std::wstring disk = StagePathFor(entry.path);
+        if (!disk.empty() && util::PathExists(disk)) continue;
+        entryIndices.push_back(static_cast<uint32_t>(i));
+      }
+    } else if (item.entryIndex >= 0) {
+      entryIndices.push_back(static_cast<uint32_t>(item.entryIndex));
+    }
+  }
+
+  if (!entryIndices.empty()) {
+    arc::ExtractOptions opts;
+    opts.targetDir = dir;
+    std::wstring error;
+    // 拖拽是阻塞的，中途没法弹窗：覆盖一律允许（不覆盖上面已排除了镜像里
+    // 的现存内容），密码只能在这里先问一次。
+    const bool ok = g_app.archive.Extract(
+        entryIndices, opts, nullptr,
+        [](const std::wstring&) -> int { return 3; },  // 3 = 全部覆盖
+        [](std::wstring& out) -> bool {
+          bool accepted = false;
+          ui::RunOnUiThread([&] {
+            std::wstring pwd;
+            accepted = ui::PromptText(DialogOwner(), L"输入密码",
+                                      L"压缩包已加密，请输入密码：", pwd, true);
+            if (accepted) out = pwd;
+          });
+          return accepted;
+        },
+        error);
+    if (!ok) return error.empty() ? L"无法取出选中的内容" : error;
+  }
+
+  for (const auto& landed : targets) {
+    if (util::PathExists(landed)) outPaths.push_back(landed);
+  }
+  return outPaths.empty() ? L"取出的内容找不到落地文件" : std::wstring();
+}
+
 bool AppConfirmDiscardEdits(AiUI::NativeHandle owner) {
   if (!g_app.HasPendingEdits()) return true;
   AiUI::MessageBoxParams params;

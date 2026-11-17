@@ -19,6 +19,10 @@ namespace AiUI {
 // 否则紧随其后的模态循环（如进度框）会立刻结束。
 namespace {
 int g_modalDepth = 0;
+
+// OLE 是否由本进程初始化成功。OleUninitialize 只能配对自己那次
+// OleInitialize 的成功返回，RPC_E_CHANGED_MODE 时别人已经初始化过，不能拆。
+bool g_oleReady = false;
 }  // namespace
 
 namespace os {
@@ -1217,6 +1221,9 @@ class WindowsPlatform : public Platform {
   bool showProperties(NativeHandle owner, const std::wstring& path) override {
     return os::backend().showProperties(owner, path);
   }
+  bool startFileDrag(const FileDragDesc& desc) override {
+    return os::backend().startFileDrag(desc);
+  }
 
   void postToUiThread(std::function<void()> fn) override {
     os::backend().postToUiThread(std::move(fn));
@@ -1283,6 +1290,12 @@ void shutdownPlatform() {
   os::windows::releaseIconCaches();
   os::windows::releaseGdiplus();
   os::windows::markStarted(false);
+  // 与 initHostProcess 里的 OleInitialize 配对。只在确实由我们加过引用时拆，
+  // 否则会把别人按别的套间建立的初始化也一起撤掉。
+  if (g_oleReady) {
+    ::OleUninitialize();
+    g_oleReady = false;
+  }
 }
 
 bool isPlatformReady() { return os::windows::hasStarted(); }
@@ -1299,6 +1312,13 @@ void initHostProcess() {
                                                ICC_TREEVIEW_CLASSES | ICC_PROGRESS_CLASS |
                                                ICC_STANDARD_CLASSES | ICC_BAR_CLASSES};
   ::InitCommonControlsEx(&icc);
+
+  // OLE：往外拖拽（DoDragDrop）要求线程先初始化过。这里用单线程套间，
+  // 与自绘界面「所有 UI 都在主线程」的前提一致。S_FALSE 也是成功——线程
+  // 已经初始化过，引用计数照样加一，收尾时同样要配一次 OleUninitialize。
+  // RPC_E_CHANGED_MODE 说明别处按别的套间初始化了，只能沿用，不能被我们拆掉。
+  const HRESULT ole = ::OleInitialize(nullptr);
+  g_oleReady = ole == S_OK || ole == S_FALSE;
 
   // 工作线程回传 UI 用的收件窗口
   os::backend().prepareUiThreadDispatch();

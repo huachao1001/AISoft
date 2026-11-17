@@ -77,6 +77,8 @@ class MainActivity : public AiUI::Activity {
 
   // ── 列表交互 ──
   void onRowActivated(int row);
+  // 按住行拖出窗口：把选中项作为文件交给系统拖拽
+  void onRowDragStart(int row);
   void showListContextMenu();
   void onListKeyDown(AiUI::Key key);
   std::vector<int> selectedItemIndices() const;

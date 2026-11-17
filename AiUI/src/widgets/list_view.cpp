@@ -516,12 +516,27 @@ bool ListView::onMouseDown(const MouseEvent& e) {
     return true;
   }
   syncSelection(row, e.modifiers.ctrl, e.modifiers.shift);
+  // 记下起点：后面若移动超过阈值就转成往外拖，否则仍按普通点击处理。
+  // 捕获鼠标是为了在用户快速拖出控件时仍能收到移动事件（判定阈值那一瞬间
+  // 指针很可能已经在列表外面）。
+  if (callbacks_.onDragStart && rowCount() > 0) {
+    pressRow_ = row;
+    pressPos_ = e.position;
+    pressArmed_ = true;
+    captureMouse();
+  }
   return true;
 }
 
 void ListView::onMouseUp(const MouseEvent& e) {
   // 滚动条滑块可能正在拖动，先让基类收尾
   ScrollView::onMouseUp(e);
+  // 一次按下以抬起结束，无论有没有转成拖拽都要撤掉待命状态
+  if (pressArmed_) {
+    pressArmed_ = false;
+    pressRow_ = -1;
+    releaseMouse();
+  }
   if (dragColumn_ < 0) return;
   // 拖动期间只改 colWidth_，松手才落进 userWidth_ 并通知持久化
   userWidth_[static_cast<size_t>(dragColumn_)] = colWidth_[static_cast<size_t>(dragColumn_)];
@@ -540,6 +555,25 @@ void ListView::onMouseMove(const MouseEvent& e) {
     colWidth_[static_cast<size_t>(dragColumn_)] = (std::max)(kMinColumnWidth * d / 96, next);
     invalidate();
     return;
+  }
+
+  // 按下某行后移动够远：转成往外拖。
+  //
+  // 阈值用系统拖动判定同一量级（约 4 个设计像素），点一下不会误触发。
+  // 交给业务层后本次按下即告结束——拖拽期间鼠标由系统接管，我们收不到
+  // 后续事件，所以把待命状态清掉，免得松手时又走一遍抬起逻辑。
+  if (pressArmed_) {
+    const int threshold = (std::max)(2, 4 * d / 96);
+    const int dx = e.position.x - pressPos_.x;
+    const int dy = e.position.y - pressPos_.y;
+    if (dx * dx + dy * dy >= threshold * threshold) {
+      const int row = pressRow_;
+      pressArmed_ = false;
+      pressRow_ = -1;
+      releaseMouse();
+      if (callbacks_.onDragStart) callbacks_.onDragStart(row);
+      return;
+    }
   }
 
   // 滚动条的悬停高亮要先更新

@@ -136,6 +136,18 @@ struct MessageBoxParams {
   MessageBoxResult defaultButton = MessageBoxResult::kOk;
 };
 
+// 一次往外拖拽的描述。
+//
+// 拖拽的目标（资源管理器窗口、桌面、别的程序）由系统在放下时决定，所以这里
+// 只描述"拖的是什么"，不描述"拖到哪"。paths 必须是磁盘上真实存在的路径：
+// 系统靠它们生成 CF_HDROP，没有磁盘路径的内容必须先落地再拖。
+struct FileDragDesc {
+  // 拖拽发起窗口，系统据此定位光标与拖拽影像
+  NativeHandle sourceWindow = nullptr;
+  // 被拖走的内容，绝对路径。目录会连同其下全部内容一起被目标程序搬运
+  std::vector<std::wstring> paths;
+};
+
 // 窗口把原生事件翻译成中性事件后回调宿主。
 // 整棵树共用一个窗口，所以这里只有一套回调。
 class WindowHost {
@@ -823,6 +835,18 @@ class Platform {
   virtual bool showProperties(NativeHandle owner, const std::wstring& path) {
     (void)owner;
     (void)path;
+    return false;
+  }
+
+  // 发起一次系统拖拽：把 paths 交给拖拽目标（资源管理器、桌面、别的程序）。
+  //
+  // 这是阻塞调用：系统接管鼠标直到用户松手，返回时拖拽已经结束。所以必须
+  // 在鼠标事件里调用，且调用方要准备好期间界面不响应其他操作。
+  //
+  // 目标路径由系统按放下位置决定，应用不参与。返回 false 表示平台不支持
+  // 或拖拽没能开始。
+  virtual bool startFileDrag(const FileDragDesc& desc) {
+    (void)desc;
     return false;
   }
 

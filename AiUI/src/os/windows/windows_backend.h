@@ -76,6 +76,7 @@ class WindowsBackend final : public Backend {
   // ── 外壳集成 ──
   bool openWithSystem(const std::wstring& path) override;
   bool showProperties(NativeHandle owner, const std::wstring& path) override;
+  bool startFileDrag(const FileDragDesc& desc) override;
   std::wstring registerShellVerbs(const std::vector<ShellVerb>& verbs) override;
   std::wstring unregisterShellVerbs(const std::vector<ShellVerb>& verbs) override;
   bool areShellVerbsRegistered(const std::vector<ShellVerb>& verbs) override;
