@@ -407,6 +407,7 @@ std::string headerFor(const std::string& tag) {
       {"BreadcrumbBar", "AiUI/widgets/breadcrumb_bar.h"},
       {"StatusBar", "AiUI/widgets/status_bar.h"},
       {"ButtonBar", "AiUI/widgets/button_bar.h"},
+      {"ThumbnailStrip", "AiUI/widgets/thumbnail_strip.h"},
       {"CheckBox", "AiUI/widgets/option_view.h"},
       {"RadioButton", "AiUI/widgets/option_view.h"},
       {"RadioGroup", "AiUI/widgets/form_controls.h"},

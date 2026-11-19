@@ -43,6 +43,7 @@ enum class IconId {
   kRotateLeft,  // 逆时针旋转
   kRotateRight, // 顺时针旋转
   kImage,       // 图片（空状态占位）
+  kFullscreen,  // 全屏演示
   // 安装器维护页
   kRepair,      // 修复（扳手）
   kUninstall,   // 卸载（回收站）

@@ -50,6 +50,7 @@ set(AIUI_SOURCES
   src/widgets/photo_view.cpp
   src/widgets/status_bar.cpp
   src/widgets/text_view.cpp
+  src/widgets/thumbnail_strip.cpp
   src/widgets/title_bar.cpp
   src/widgets/tree_view.cpp
 )
@@ -119,6 +120,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     tests/test_core.cpp
     tests/test_photo_view.cpp
     tests/test_photo_view_anim.cpp
+    tests/test_thumbnail_strip.cpp
     tests/test_toast.cpp
   )
   target_include_directories(AiUI_tests PRIVATE tests)

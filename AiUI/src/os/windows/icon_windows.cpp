@@ -97,6 +97,8 @@ constexpr wchar_t glyphFor(IconId id) {
     case IconId::kRotateLeft: return 0xE7AD;
     case IconId::kRotateRight: return 0xE1CD;
     case IconId::kImage: return 0xEB9F;
+    // 全屏：MDL2 的 FullScreen（四角向外）
+    case IconId::kFullscreen: return 0xE740;
     // 修复 / 卸载 / 挽留：MDL2 的 Repair / Delete / Heart
     case IconId::kRepair: return 0xE90F;
     case IconId::kUninstall: return 0xE74D;
