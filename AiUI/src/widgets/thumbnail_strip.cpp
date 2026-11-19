@@ -232,34 +232,30 @@ void ThumbnailStrip::onPaint(Painter& painter, const Rect& rect) {
       painter.strokeRoundRect(card, border, radius, (std::max)(2, d * 2 / 96));
     }
 
-    // 图区：宽度撑满卡片内边，高度固定。图片按“覆盖”裁剪（fill）：让图铺满
-    // 整个内衬，短边对齐、长边裁掉，卡片里看不到一圈空白。相册缩略图的
-    // 第一眼是「这张图长什么样」，留白比裁掉一点边缘更干扰判断。
+    // 图区：宽度撑满卡片内边，高度固定。图片完整显示（contain）：按长边
+    // 等比缩放到刚好放进图区，绝不裁剪——缩略图的作用是让人认出「这是哪张
+    // 图」，切掉边缘就可能看不出主体。留白处是浅内衬，不拉伸图片。
     const Rect frame{card.left + padX, card.top + padY, card.right - padX,
                      card.top + padY + thumbH};
     if (frame.width() > 0) {
       const int innerRadius = (std::max)(2, radius / 2);
-      // 内衬只在图片缺席时可见，有图时图片会把它完全盖住
       painter.fillRoundRect(frame, blendColor(t.pane, t.ink, 0.09f), innerRadius);
 
       const Image& image = thumbnailFor(i);
       if (image.isValid()) {
         const Size src = platform()->imageSize(image);
         if (src.width > 0 && src.height > 0) {
-          // 取较大的缩放比 = 覆盖；较小的 = 完整显示但留白
-          const float k = (std::max)(static_cast<float>(frame.width()) / src.width,
+          // 取较小的缩放比 = 完整放进图区
+          const float k = (std::min)(static_cast<float>(frame.width()) / src.width,
                                      static_cast<float>(frame.height()) / src.height);
-          const int w = (std::max)(1, static_cast<int>(src.width * k));
-          const int h = (std::max)(1, static_cast<int>(src.height * k));
+          // 缩略图放大超过原尺寸只会更糊：留白比糊掉强
+          const int w = (std::max)(1, static_cast<int>(src.width * (std::min)(k, 1.0f)));
+          const int h = (std::max)(1, static_cast<int>(src.height * (std::min)(k, 1.0f)));
           const Rect dst{frame.left + (frame.width() - w) / 2,
                          frame.top + (frame.height() - h) / 2,
                          frame.left + (frame.width() - w) / 2 + w,
                          frame.top + (frame.height() - h) / 2 + h};
-          // 裁到内衬范围：覆盖模式下长边一定会溢出
-          painter.save();
-          painter.clipRect(frame);
           painter.drawImage(image, dst);
-          painter.restore();
         }
       }
     }
