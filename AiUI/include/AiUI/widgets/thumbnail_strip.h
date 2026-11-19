@@ -1,8 +1,8 @@
 // ThumbnailStrip：竖排缩略图条，浏览同目录时的导航用
 //
-// 与 ListView 的区别：这里每项的主体是图，不是文本表格，行高固定、无表头、
-// 无列概念。缩略图按需解码并缓存——一个目录几千张图，打开时全部解码既慢
-// 又占内存，实际只有看得见的那几项会被画到。
+// 与 ListView 的区别：这里每项是一张「卡片」（圆角白底 + 阴影 + 上方图片
+// + 下方文件名），不是表格行。缩略图按需解码并缓存——一个目录几千张图，
+// 打开时全部解码既慢又占内存，实际只有看得见的那几项会被画到。
 #pragma once
 
 #include "AiUI/icon.h"
@@ -15,20 +15,29 @@
 
 namespace AiUI {
 
+// 卡片外观（96 DPI 设计值）
 struct ThumbnailStyle {
-  // 96 DPI 设计值
-  int padX = 10;
-  int padY = 8;
-  int thumbSide = 84;   // 缩略图方框短边
-  int labelGap = 4;
+  // 卡片left/right外边距，也是内容区的上下留白
+  int sideMargin = 10;
+  // 卡片内部留白
+  int cardPadX = 8;
+  int cardPadY = 8;
+  // 图区高度；宽度由卡片宽度决定，图片按长边等比塞进去
+  int thumbH = 92;
+  int labelGap = 6;
   int labelHeight = 18;
-  int radius = 6;
-  int itemGap = 6;
+  int cardRadius = 8;
+  // 卡片之间的竖直间隙；必须大于阴影两侧扩散之和，否则相邻卡片的阴影会连成一片
+  int itemGap = 22;
+  // 阴影：向外扩散多少像素、向下偏移多少、最深一层的 alpha
+  int shadowSpread = 8;
+  int shadowOffsetY = 3;
+  int shadowAlpha = 96;
   int thumbMaxSide = 256;  // 解码上限，按屏幕密度再放大
   // kNoColor 表示跟随主题
   Color background = kNoColor;
-  Color itemBg = kNoColor;
-  Color itemHoverBg = kNoColor;
+  Color cardBg = kNoColor;
+  Color cardHoverBg = kNoColor;
   Color selBg = kNoColor;
   Color selBorder = kNoColor;
   Color text = kNoColor;
@@ -51,7 +60,8 @@ class ThumbnailStrip : public ScrollView {
   void scrollToItem(int index);
 
   void setStyle(const ThumbnailStyle& style);
-  const ThumbnailStyle& style() const { return style_; }
+  // 卡片样式。不叫 style()：ScrollView 已经用这个名字表示滚动条样式
+  const ThumbnailStyle& cardStyle() const { return cardStyle_; }
 
   // 点击某一项；参数是索引
   using SelectHandler = std::function<void(int)>;
@@ -60,12 +70,15 @@ class ThumbnailStrip : public ScrollView {
   int contentHeight() const override;
   int viewportHeight() const override;
   int itemHeight() const;
+  // 卡片矩形（不含阴影）；滚动后已经在视口坐标里
   Rect itemRect(int index) const;
 
  protected:
   Size onMeasure(const Size& available) override;
   void onPaint(Painter& painter, const Rect& rect) override;
   void onScrollChanged() override;
+  // 布局完成后补一次待处理的定位：首次 setSelected 时视口还是 0
+  void onLayout(const Rect& frame) override;
   bool onMouseDown(const MouseEvent& e) override;
   void onMouseMove(const MouseEvent& e) override;
   void onMouseLeave() override;
@@ -77,12 +90,16 @@ class ThumbnailStrip : public ScrollView {
   // 取（必要时解码）某一项的缩略图；失败返回无效 Image
   const Image& thumbnailFor(int index);
   void releaseThumbnails();
+  // 画一张卡片的柔和阴影：多层半透明圆角矩形叠出来，Painter 没有模糊接口
+  void paintShadow(Painter& painter, const Rect& card, int radius) const;
 
   std::vector<std::wstring> items_;
   std::unordered_map<std::wstring, Image> thumbs_;
   int selected_ = -1;
   int hot_ = -1;
-  ThumbnailStyle style_{};
+  // 布局前调用 scrollToItem 时先记下目标，等拿到真实视口高度再滚
+  int pendingScrollTo_ = -1;
+  ThumbnailStyle cardStyle_{};
   SelectHandler onSelect_;
 };
 

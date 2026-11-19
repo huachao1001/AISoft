@@ -21,7 +21,7 @@
   <LinearLayout id="content" orientation="horizontal" weight="1">
 
     <!-- 缩略图条宽度固定：它只是导航，不该和主图抢空间 -->
-    <ThumbnailStrip id="thumbs" width="176" height="match"/>
+    <ThumbnailStrip id="thumbs" width="208" height="match"/>
 
     <FrameLayout id="stage" weight="1">
 

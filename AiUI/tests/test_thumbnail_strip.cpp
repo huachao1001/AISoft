@@ -46,14 +46,61 @@ AIUI_TEST(thumbnail_strip_geometry_follows_item_count) {
 
   AIUI_CHECK_EQ(strip.itemCount(), 3);
   AIUI_CHECK(strip.itemHeight() > 0);
-  // 三行 + 两个间隙
-  const int gap = strip.style().itemGap;
-  AIUI_CHECK_EQ(strip.contentHeight(), strip.itemHeight() * 3 + gap * 2);
+  // 三张卡片 + 两个间隙 + 上下留白
+  const int gap = strip.cardStyle().itemGap;
+  const int margin = strip.cardStyle().sideMargin;
+  AIUI_CHECK_EQ(strip.contentHeight(),
+                margin * 2 + strip.itemHeight() * 3 + gap * 2);
   // 视口不够时内容溢出，滚动上限是差值
   AIUI_CHECK_EQ(strip.maxScroll(), strip.contentHeight() - 300);
 }
 
-// 点击命中正确项并回调；点在行间隙里不触发
+// 卡片在竖直方向按「顶部留白 + 行高 + 间隙」排布，宽度要给滚动条让位
+AIUI_TEST(thumbnail_strip_card_rect_leaves_room) {
+  StripEnv env;
+  ThumbnailStrip strip;
+  strip.setItems(samplePaths(6));
+  strip.layout(Rect{0, 0, 200, 200});
+
+  const ThumbnailStyle& s = strip.cardStyle();
+  const Rect first = strip.itemRect(0);
+  AIUI_CHECK_EQ(first.top, s.sideMargin);
+  AIUI_CHECK_EQ(first.left, s.sideMargin);
+  AIUI_CHECK_EQ(first.height(), strip.itemHeight());
+  // 卡片左右对称：右边距 = 左边距 + 滚动条让位
+  AIUI_CHECK_EQ(200 - first.right, s.sideMargin + strip.scrollBarReserve());
+
+  const Rect second = strip.itemRect(1);
+  AIUI_CHECK_EQ(second.top - first.bottom, s.itemGap);
+}
+
+// 卡片要比阴影宽：间隙必须大于阴影两侧扩散之和，否则相邻阴影会连成一片
+AIUI_TEST(thumbnail_strip_gap_clears_shadow) {
+  StripEnv env;
+  ThumbnailStrip strip;
+  const ThumbnailStyle& s = strip.cardStyle();
+  AIUI_CHECK(s.itemGap > s.shadowSpread);
+  // 卡片高度要装得下：上下内边 + 图 + 名称间距 + 名称
+  AIUI_CHECK_EQ(strip.itemHeight(),
+                s.cardPadY * 2 + s.thumbH + s.labelGap + s.labelHeight);
+}
+
+// 布局前就调用 scrollToItem 时，要等拿到真实视口高度再补一次定位，
+// 否则打开靠后的图会停在列表顶部
+AIUI_TEST(thumbnail_strip_scroll_waits_for_layout) {
+  StripEnv env;
+  ThumbnailStrip strip;
+  strip.setItems(samplePaths(40));
+  // 还没有尺寸：此时定位必须被记住而不是直接丢掉
+  strip.scrollToItem(30);
+  AIUI_CHECK_EQ(strip.scrollOffset(), 0);
+
+  strip.layout(Rect{0, 0, 200, 400});
+  AIUI_CHECK(strip.scrollOffset() > 0);
+  const Rect rc = strip.itemRect(30);
+  AIUI_CHECK(rc.top >= 0);
+  AIUI_CHECK(rc.bottom <= strip.viewportHeight());
+}
 AIUI_TEST(thumbnail_strip_click_selects_item) {
   StripEnv env;
   ThumbnailStrip strip;
@@ -66,21 +113,22 @@ AIUI_TEST(thumbnail_strip_click_selects_item) {
   strip.setOnSelect([&clicked](int index) { clicked = index; });
 
   const int h = strip.itemHeight();
-  const int gap = strip.style().itemGap;
-  root->onMouseDown(mouseAt(80, h / 2));
-  root->onMouseUp(mouseAt(80, h / 2));
+  const int gap = strip.cardStyle().itemGap;
+  const int margin = strip.cardStyle().sideMargin;
+  root->onMouseDown(mouseAt(80, margin + h / 2));
+  root->onMouseUp(mouseAt(80, margin + h / 2));
   AIUI_CHECK_EQ(clicked, 0);
   AIUI_CHECK_EQ(strip.selected(), 0);
 
-  root->onMouseDown(mouseAt(80, h + gap + h / 2));
-  root->onMouseUp(mouseAt(80, h + gap + h / 2));
+  root->onMouseDown(mouseAt(80, margin + h + gap + h / 2));
+  root->onMouseUp(mouseAt(80, margin + h + gap + h / 2));
   AIUI_CHECK_EQ(clicked, 1);
   AIUI_CHECK_EQ(strip.selected(), 1);
 
-  // 行间缝隙：命中不到任何项，选中也不变
+  // 卡片间缝隙：命中不到任何项，选中也不变
   clicked = -1;
-  root->onMouseDown(mouseAt(80, h + 1));
-  root->onMouseUp(mouseAt(80, h + 1));
+  root->onMouseDown(mouseAt(80, margin + h + 1));
+  root->onMouseUp(mouseAt(80, margin + h + 1));
   AIUI_CHECK_EQ(clicked, -1);
   AIUI_CHECK_EQ(strip.selected(), 1);
 }
