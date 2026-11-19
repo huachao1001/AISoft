@@ -33,6 +33,7 @@ class AnimProbe : public PhotoView {
  public:
   using PhotoView::onDelayed;
   using PhotoView::onMouseWheel;
+  using PhotoView::onContextMenu;
 
   // 给一个恒定颜色的像素源：网格文字测试只关心「画了几行、每行多高」，
   // 颜色固定成 (250,120,30) 便于辨认 R/G/B 三行。
@@ -474,6 +475,164 @@ AIUI_TEST(photo_view_button_zoom_stays_smooth) {
   view.onDelayed();
   const float firstFrame = (view.zoom() - before) / (before * 0.25f);
   AIUI_CHECK(firstFrame < 0.10f);
+}
+
+// ─────────────────── 右键复制像素颜色 ───────────────────
+
+// 右键要复制「光标下那一格」的颜色，且只在网格模式（能看清单个像素）时生效。
+// 用「颜色编码自身坐标」的像素源，复制错格立刻看得出来。
+AIUI_TEST(photo_view_context_menu_copies_pixel_under_cursor) {
+  AnimEnv env;
+  env.fake.platform().setImageSize(Size{400, 300});
+  AnimProbe view;
+  view.useCodedPixels();
+  const Rect area{0, 0, 600, 400};
+  view.layout(area);
+  view.loadFile(L"a.png");
+  view.setAnimationDuration(0);
+
+  Point copied{-1, -1};
+  int calls = 0;
+  view.setColorCopyHandler([&](Point pixel) -> std::wstring {
+    copied = pixel;
+    ++calls;
+    return L"已复制";
+  });
+
+  // 网格阈值以下不接管右键：那时用户多半想弹菜单
+  view.setZoomAt(5.0f, area.center());
+  env.fake.platform().advanceMillis(300);
+  view.onDelayed();
+  AIUI_CHECK(!view.isPixelGridVisible());
+  MouseEvent rightClick = wheelAt(area.center().x, area.center().y);
+  rightClick.button = MouseButton::kRight;
+  view.onContextMenu(rightClick);
+  AIUI_CHECK_EQ(calls, 0);
+
+  // 进入网格后，右键复制光标处那一格
+  view.setZoomAt(40.0f, area.center());
+  env.fake.platform().advanceMillis(300);
+  view.onDelayed();
+  AIUI_CHECK(view.isPixelGridVisible());
+
+  const Point cursor{320, 220};
+  rightClick.position = cursor;
+  view.onContextMenu(rightClick);
+  AIUI_CHECK_EQ(calls, 1);
+
+  // 复制到的必须就是光标下那个像素：与 sourcePixelAt 一致
+  Point expected;
+  AIUI_CHECK(view.sourcePixelAt(cursor, expected));
+  AIUI_CHECK_EQ(copied.x, expected.x);
+  AIUI_CHECK_EQ(copied.y, expected.y);
+}
+
+// 图外的右键不该复制任何东西：那里没有像素
+AIUI_TEST(photo_view_context_menu_ignores_point_outside_image) {
+  AnimEnv env;
+  env.fake.platform().setImageSize(Size{200, 100});
+  AnimProbe view;
+  view.useCodedPixels();
+  const Rect area{0, 0, 600, 400};
+  view.layout(area);
+  view.loadFile(L"a.png");
+  view.setAnimationDuration(0);
+
+  int calls = 0;
+  view.setColorCopyHandler([&](Point) -> std::wstring {
+    ++calls;
+    return L"已复制";
+  });
+
+  view.setZoomAt(40.0f, area.center());
+  env.fake.platform().advanceMillis(300);
+  view.onDelayed();
+
+  // 400x100 的图放大 40 倍远超视口，四角一定在图上；找个明确在图外的点：
+  // 缩小到 0.5 倍让图只占中间一小块
+  view.setZoomAt(0.5f, area.center());
+  env.fake.platform().advanceMillis(300);
+  view.onDelayed();
+  AIUI_CHECK(!view.isPixelGridVisible());  // 0.5 倍不进网格，右键本就不接管
+  view.onContextMenu(wheelAt(10, 10));
+  AIUI_CHECK_EQ(calls, 0);
+}
+
+// ─────────────────── 缩放比浮层 ───────────────────
+
+// 缩放进行中，正中心要显示当前倍数；停下后淡出。
+// 这里校验浮层确实被画出来、且文本跟着实时倍数变。
+AIUI_TEST(photo_view_zoom_badge_shows_live_ratio) {
+  AnimEnv env;
+  env.fake.platform().setImageSize(Size{200, 100});
+  AnimProbe view;
+  const Rect area{0, 0, 600, 400};
+  view.layout(area);
+  view.loadFile(L"a.png");
+  view.setAnimationDuration(180);
+
+  RecordingBackend backend;
+  Painter painter(backend);
+
+  // 静止时不显示：状态栏已有倍数，屏幕上再挂一块是噪音
+  backend.clear();
+  view.draw(painter, area);
+  AIUI_CHECK(backend.texts().empty());
+
+  // 滚动缩放一开始，浮层就要出现。第一帧只是建立淡入起点（alpha 仍为 0），
+  // 再推进一帧才有可见透明度——这与真实重绘节奏一致。
+  view.onMouseWheel(wheelAt(area.center().x, area.center().y));
+  env.fake.platform().advanceMillis(16);
+  view.onDelayed();
+  backend.clear();
+  view.draw(painter, area);  // 这一帧建立淡入起点
+
+  env.fake.platform().advanceMillis(16);
+  view.onDelayed();
+  backend.clear();
+  view.draw(painter, area);
+
+  const auto& texts = backend.texts();
+  AIUI_CHECK(!texts.empty());
+  if (!texts.empty()) {
+    // 文本必须是「整数百分比」，且与此刻的 zoom 一致
+    const std::wstring expected =
+        std::to_wstring(static_cast<int>(view.zoom() * 100.0f + 0.5f)) + L"%";
+    AIUI_CHECK(texts.back().text == expected);
+  }
+
+  // 缩放推进几帧后，文本要跟着变（不是冻在第一次那个数）
+  const std::wstring firstText = texts.empty() ? L"" : texts.back().text;
+  for (int f = 0; f < 6; ++f) {
+    env.fake.platform().advanceMillis(16);
+    view.onDelayed();
+  }
+  backend.clear();
+  view.draw(painter, area);
+  const auto& later = backend.texts();
+  AIUI_CHECK(!later.empty());
+  if (!later.empty()) AIUI_CHECK(later.back().text != firstText);
+}
+
+// 浮层可以关掉：关掉后缩放期间也不画
+AIUI_TEST(photo_view_zoom_badge_can_be_disabled) {
+  AnimEnv env;
+  env.fake.platform().setImageSize(Size{200, 100});
+  AnimProbe view;
+  const Rect area{0, 0, 600, 400};
+  view.layout(area);
+  view.loadFile(L"a.png");
+  view.setAnimationDuration(180);
+  view.setZoomBadgeVisible(false);
+
+  RecordingBackend backend;
+  Painter painter(backend);
+  view.onMouseWheel(wheelAt(area.center().x, area.center().y));
+  env.fake.platform().advanceMillis(16);
+  view.onDelayed();
+  backend.clear();
+  view.draw(painter, area);
+  AIUI_CHECK(backend.texts().empty());
 }
 
 // ───────────────────────── 像素格里的 RGB 文字 ─────────────────────────

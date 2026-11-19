@@ -196,6 +196,23 @@ void MainActivity::attachPhoto() {
   // 只给它可见那一块，巨图不必整张再解一遍。
   photo_->setPixelRegionProvider(
       [](const AiUI::Rect& region, AiUI::RgbaImage& out) { return AppReadPixelRegion(region, out); });
+  // 网格模式下右键复制该像素颜色。文本用 CSS 能直接用的 rgba(...)，
+  // 取的就是网格上显示的那三个数，不会出现「看到 86、复制到别的」。
+  // 返回要提示的文本；空字符串表示没取到，控件据此不弹提示。
+  photo_->setColorCopyHandler([](AiUI::Point pixel) -> std::wstring {
+    AiUI::RgbaImage one;
+    if (!AppReadPixelRegion(AiUI::Rect{pixel.x, pixel.y, pixel.x + 1, pixel.y + 1}, one) ||
+        one.isEmpty()) {
+      return std::wstring();
+    }
+    const AiUI::Color c = one.pixels.front();
+    const std::wstring text = L"rgba(" + std::to_wstring(AiUI::colorRed(c)) + L", " +
+                              std::to_wstring(AiUI::colorGreen(c)) + L", " +
+                              std::to_wstring(AiUI::colorBlue(c)) + L", " +
+                              std::to_wstring(AiUI::colorAlpha(c)) + L")";
+    if (!AiUI::platform()->setClipboardText(text)) return std::wstring();
+    return L"已复制 " + text;
+  });
 }
 
 void MainActivity::attachStatusBar() {

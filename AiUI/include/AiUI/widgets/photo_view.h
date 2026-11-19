@@ -103,6 +103,19 @@ class PhotoView : public View {
   // 以它当锚点会把整幅图推出视野，看起来就是「一滚就飞了」。
   bool isOnImage(Point viewPoint) const;
 
+  // 视图点 → 原图像素坐标（已反旋转）。点在图外返回 false。
+  bool sourcePixelAt(Point viewPoint, Point& outPixel) const;
+
+  // 右键取色：宿主实现「把这一点的颜色写进剪贴板」，文本格式由宿主定
+  // （AiPic 用 rgba(r,g,b,a) 便于直接贴进 CSS）。
+  // 返回非空字符串表示成功，内容会作为 Toast 提示显示；空表示没取到颜色。
+  using ColorCopyHandler = std::function<std::wstring(Point pixel)>;
+  void setColorCopyHandler(ColorCopyHandler fn) { onColorCopy_ = std::move(fn); }
+
+  // 缩放比浮层的开关。默认开：缩放期间在正中心显示当前倍数。
+  void setZoomBadgeVisible(bool visible);
+  bool isZoomBadgeVisible() const { return zoomBadgeVisible_; }
+
   // 双击与滚轮的行为在宿主里决定，这里只报事件
   using ZoomHandler = std::function<void(float factor)>;
   void setWheelZoomHandler(ZoomHandler fn) { onWheelZoom_ = std::move(fn); }
@@ -126,6 +139,8 @@ class PhotoView : public View {
   void onMouseLeave() override;
   bool onMouseWheel(const MouseEvent& e) override;
   void onDoubleClick(const MouseEvent& e) override;
+  // 右键：网格模式下复制光标处像素的颜色
+  void onContextMenu(const MouseEvent& e) override;
   void onAttach() override;
   void onDelayed() override;
   Color backgroundColor() const override;
@@ -185,6 +200,9 @@ class PhotoView : public View {
   Point zoomAnchor() const;
   // 「适应窗口」在当前视图尺寸下的倍数（不放大）
   float fitZoomFor(int rotation) const;
+  // 倍数钳制：上限固定，下限由「图像短边至少 30px」决定
+  float clampZoom(float zoom) const;
+  float minZoom() const;
   // 立即按当前尺寸重算「适应窗口」，不做动画
   void applyFitNow();
   // 立即以锚点为中心缩放（不动画）
@@ -216,6 +234,11 @@ class PhotoView : public View {
   void pickBitmap(Image& out, float& ratio) const;
   // 像素格 + RGB 值；alpha 用于跨阈值时淡入
   void paintPixelGrid(Painter& painter, const Rect& view, float alpha);
+  // 缩放比浮层：居中显示当前倍数，缩放中淡入、停下淡出
+  float zoomBadgeFade() const;
+  void updateZoomBadge();
+  bool tickZoomBadge();
+  void paintZoomBadge(Painter& painter, const Rect& view);
   // 每个格子里的 RGB 数值（三行竖直），字号随格子大小自适应
   void paintCellValues(Painter& painter, const Rect& view, float alpha);
 
@@ -264,6 +287,17 @@ class PhotoView : public View {
 
   ZoomHandler onWheelZoom_;
   ChangeHandler onChange_;
-};
+
+  ColorCopyHandler onColorCopy_;
+  // 缩放比浮层：缩放进行中在正中心显示当前倍数
+  bool zoomBadgeVisible_ = true;
+  // 浮层的淡入淡出进度 0..1。用时间解析算，和网格淡入同一套路子。
+  float badgeFade_ = 0.0f;
+  float badgeAlphaFrom_ = 0.0f;
+  float badgeAlphaTo_ = 0.0f;
+  int64_t badgeFadeStartMs_ = 0;
+  bool badgeFading_ = false;
+  // 上一次画出来的倍数文本：值没变就不重画，也方便判断浮层是否真的在显示
+  std::wstring badgeText_;};
 
 }  // namespace AiUI

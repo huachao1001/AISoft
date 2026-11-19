@@ -412,3 +412,63 @@ AIUI_TEST(photo_view_center_pixel_tracks_pan) {
   // 平移 20 个视图像素、倍数 1 时应左移 20 个图像像素
   AIUI_CHECK_EQ(view.centerPixel().x, 80);
 }
+
+// ─────────────────── 最小显示尺寸：短边不小于 30px ───────────────────
+
+// 缩小到底也不能把图缩成一个点：短边必须留在 30px。
+AIUI_TEST(photo_view_zoom_out_keeps_min_side) {
+  PhotoEnv env;
+  env.fake.platform().setImageSize(Size{400, 300});
+  TestPhotoView view;
+  view.layout(Rect{0, 0, 400, 400});
+  view.loadFile(L"a.png");
+  view.setAnimationDuration(0);
+
+  // 一路缩到远超下限：应停在「短边 30px」对应的倍数
+  view.setZoomAt(0.0001f, Point{200, 200});
+  const float shortSide = static_cast<float>(view.imageSize().height) * view.zoom();
+  AIUI_CHECK(shortSide >= 29.0f);
+  AIUI_CHECK(shortSide <= 31.0f);
+}
+
+// 本身就比 30px 还小的图，打开时就要被放大到 30px，而不是原尺寸一小撮。
+AIUI_TEST(photo_view_tiny_image_opens_at_min_side) {
+  PhotoEnv env;
+  env.fake.platform().setImageSize(Size{8, 6});
+  TestPhotoView view;
+  view.layout(Rect{0, 0, 400, 400});
+  view.loadFile(L"a.png");
+
+  // 适应窗口后短边就是 30px：6 * 5 = 30
+  AIUI_CHECK(view.isFitToWindow());
+  const float shortSide = static_cast<float>(view.imageSize().height) * view.zoom();
+  AIUI_CHECK(shortSide >= 29.5f);
+  AIUI_CHECK(shortSide <= 30.5f);
+
+  // 再缩小也不该回到 1:1 以下
+  view.setZoomAt(0.5f, Point{200, 200});
+  const float afterZoomOut = static_cast<float>(view.imageSize().height) * view.zoom();
+  AIUI_CHECK(afterZoomOut >= 29.5f);
+}
+
+// 旋转不改变短边，所以下限与旋转无关；但旋转后仍必须守住 30px。
+AIUI_TEST(photo_view_min_side_survives_rotation) {
+  PhotoEnv env;
+  env.fake.platform().setImageSize(Size{40, 300});
+  TestPhotoView view;
+  view.layout(Rect{0, 0, 400, 400});
+  view.loadFile(L"a.png");
+  view.setAnimationDuration(0);
+
+  // 40x300：短边 40 → 下限 30/40 = 0.75
+  view.setZoomAt(0.01f, Point{200, 200});
+  AIUI_CHECK(std::fabs(view.zoom() - 0.75f) < 0.02f);
+
+  view.rotate(1);
+  view.setZoomAt(0.01f, Point{200, 200});
+  const Size rotated = view.imageSize();
+  const int minSide = rotated.width < rotated.height ? rotated.width : rotated.height;
+  const float shown = static_cast<float>(minSide) * view.zoom();
+  AIUI_CHECK(shown >= 29.5f);
+  AIUI_CHECK(shown <= 30.5f);
+}

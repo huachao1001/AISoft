@@ -13,6 +13,7 @@
 #include "AiUI/font.h"
 #include "AiUI/platform.h"
 #include "AiUI/theme.h"
+#include "AiUI/view_root.h"
 
 #include <algorithm>
 #include <cmath>
@@ -24,6 +25,9 @@ namespace {
 // 一个像素能铺满半屏，任何像素都看得清。
 constexpr float kMinZoom = 0.002f;
 constexpr float kMaxZoom = 256.0f;
+// 图像短边不得小于这个尺寸（设备像素）：再小就看不出这是张图了。
+// 比这还小的图会被强制放大到刚好这么多——否则一打开就是一小撮点。
+constexpr int kMinImageSidePx = 30;
 // 一格滚轮的倍数步进
 constexpr float kWheelStep = 1.15f;
 // 动画帧间隔；每帧都要重画一次，16ms 约 60 帧
@@ -46,6 +50,16 @@ constexpr int kFadeMs = 140;
 // 滚轮跟随的时间常数（毫秒）：每过这么久，剩余距离衰减到约 37%。
 // 90ms 时 180ms 已走掉 87%，300ms 走掉 96%——既跟手又有可见收尾。
 constexpr float kFollowTauMs = 90.0f;
+
+// 缩放比浮层：跑道形半透明黑底，白字。尺寸按 96 DPI 设计，绘制时按实际 DPI 放大。
+constexpr int kBadgeTextPx = 26;
+constexpr int kBadgePadX = 18;
+constexpr int kBadgePadY = 8;
+// 底色不透明度：0x99 在深色画布上能压住图，又不会挡住底下在缩放的内容
+constexpr std::uint8_t kBadgeBgAlpha = 0x99;
+constexpr std::uint8_t kBadgeFgAlpha = 0xff;
+// 浮层淡入淡出时长：比网格略快，它是个读数，不该黏在屏幕上
+constexpr int kBadgeFadeMs = 120;
 
 // 缓动：两端都收住，中间才快。
 //
@@ -248,7 +262,7 @@ Point PhotoView::zoomAnchor() const {
 void PhotoView::setZoom(float zoom) { setZoomAt(zoom, zoomAnchor()); }
 
 void PhotoView::setZoomAt(float zoom, Point anchor) {
-  const float clamped = (std::min)(kMaxZoom, (std::max)(kMinZoom, zoom));
+  const float clamped = clampZoom(zoom);
   // 用户自己定了倍数就不再「跟随窗口」：窗口一变就改回去等于无视他的操作
   fitToWindow_ = false;
 
@@ -268,7 +282,7 @@ void PhotoView::zoomBy(float factor) {
 
 void PhotoView::wheelZoomBy(float factor) {
   if (factor <= 0.0f || sourceSize_.width <= 0) return;
-  const float target = (std::min)(kMaxZoom, (std::max)(kMinZoom, targetZoom() * factor));
+  const float target = clampZoom(targetZoom() * factor);
   fitToWindow_ = false;
   // 已经在这条跟随链上时不要重开：重开会把速度清零，正是「顿挫」的来源。
   // 只把目标往前推，当前倍数与速度都留着，下一帧自然加速过去。
@@ -299,14 +313,33 @@ float PhotoView::targetZoom() const {
 
 Size PhotoView::rotatedSize() const { return rotatedSizeOf(sourceSize_, rotation_); }
 
+float PhotoView::clampZoom(float zoom) const {
+  return (std::min)(kMaxZoom, (std::max)(minZoom(), zoom));
+}
+
+// 最低倍数由「图像短边至少 kMinImageSidePx」反推：
+//   zoom * minSide >= 30  →  zoom >= 30 / minSide
+// 天然很小的图（短边不到 30）这个下限会大于 1，打开就是放大状态。
+float PhotoView::minZoom() const {
+  const Size rotated = rotatedSizeOf(sourceSize_, rotation_);
+  const int minSide = (std::min)(rotated.width, rotated.height);
+  if (minSide <= 0) return kMinZoom;
+  const float bySide =
+      static_cast<float>(kMinImageSidePx) / static_cast<float>(minSide);
+  return (std::max)(kMinZoom, bySide);
+}
+
 float PhotoView::fitZoomFor(int rotation) const {
   const Rect rc = clientRect();
   const Size rotated = rotatedSizeOf(sourceSize_, rotation);
   if (rotated.width <= 0 || rotated.height <= 0 || rc.isEmpty()) return 1.0f;
   const float sx = static_cast<float>(rc.width()) / static_cast<float>(rotated.width);
   const float sy = static_cast<float>(rc.height()) / static_cast<float>(rotated.height);
-  // 适应窗口不放大：小图放大到铺满整屏会糊，也让人误以为原图就那么大
-  return (std::min)(1.0f, (std::max)(kMinZoom, (std::min)(sx, sy)));
+  // 适应窗口通常不放大：小图放大到铺满整屏会糊，也让人误以为原图就那么大。
+  // 但短边不足 30px 时仍要放大到那个尺寸，否则一打开就是一小撮点。
+  const float minSide = minZoom();
+  return (std::min)((std::max)(minSide, 1.0f),
+                    (std::max)(minSide, (std::min)(sx, sy)));
 }
 
 void PhotoView::applyFitNow() {
@@ -432,7 +465,7 @@ void PhotoView::beginZoomTo(float zoom, Point anchor, int durationMs, bool refit
   // 累计格数由 targetZoom() 在进入本函数前读出，所以清掉动画不丢格。
   anim_ = Animation{};
 
-  const float clamped = (std::min)(kMaxZoom, (std::max)(kMinZoom, zoom));
+  const float clamped = clampZoom(zoom);
   const Point center = clientRect().center();
   const float anchorX = static_cast<float>(anchor.x - center.x);
   const float anchorY = static_cast<float>(anchor.y - center.y);
@@ -554,7 +587,7 @@ void PhotoView::tickFollow() {
 
   // 在对数倍数上收敛：滚轮一格是乘法，对数空间里等距收敛让放大/缩小
   // 的快慢观感一致（线性收敛时缩小那一侧会显得拖沓）。
-  const float fromLog = std::log(zoom_ > 0.0f ? zoom_ : kMinZoom);
+  const float fromLog = std::log(zoom_ > 0.0f ? zoom_ : minZoom());
   const float toLog = std::log(anim_.toZoom);
   const float nextLog = fromLog + (toLog - fromLog) * alpha;
   zoom_ = std::exp(nextLog);
@@ -616,7 +649,12 @@ void PhotoView::finishAnimation() {
 void PhotoView::onDelayed() {
   tickAnimation();
   // 缩放动画结束后淡入可能还没走完：继续按帧推进，直到它停下
-  if (anim_.kind == AnimKind::kNone && tickGridFade()) {
+  bool more = false;
+  if (anim_.kind == AnimKind::kNone) {
+    if (tickGridFade()) more = true;
+    if (tickZoomBadge()) more = true;
+  }
+  if (more) {
     invalidate();
     postDelayed(kFrameMs);
   }
@@ -787,9 +825,9 @@ bool PhotoView::tickGridFade() {
   return true;
 }
 
-bool PhotoView::isOnImage(Point viewPoint) const {
+bool PhotoView::sourcePixelAt(Point viewPoint, Point& outPixel) const {
   if (sourceSize_.width <= 0 || sourceSize_.height <= 0 || zoom_ <= 0.0f) return false;
-  // 与 visibleSourceRectAt 同一套反解：视图点 → 图像坐标，再看是否落在图内。
+  // 与 visibleSourceRectAt 同一套反解：视图点 → 图像坐标。
   // 绘制用的是整数平移（translate 只收 int），这里也用同一个取整，否则
   // 图边缘那半个像素上会出现「看着在图上、却判成图外」的不一致。
   const Point center = clientRect().center();
@@ -804,8 +842,17 @@ bool PhotoView::isOnImage(Point viewPoint) const {
   unrotateOffset90(ox, oy, rotation_, lx, ly);
   const float ix = lx / zoom_ + sourceSize_.width / 2.0f;
   const float iy = ly / zoom_ + sourceSize_.height / 2.0f;
-  return ix >= 0.0f && iy >= 0.0f && ix < static_cast<float>(sourceSize_.width) &&
-         iy < static_cast<float>(sourceSize_.height);
+  if (ix < 0.0f || iy < 0.0f || ix >= static_cast<float>(sourceSize_.width) ||
+      iy >= static_cast<float>(sourceSize_.height)) {
+    return false;
+  }
+  outPixel = Point{static_cast<int>(std::floor(ix)), static_cast<int>(std::floor(iy))};
+  return true;
+}
+
+bool PhotoView::isOnImage(Point viewPoint) const {
+  Point ignored;
+  return sourcePixelAt(viewPoint, ignored);
 }
 
 // ───────────────────────── 像素格 ─────────────────────────
@@ -1060,6 +1107,7 @@ void PhotoView::onPaint(Painter& painter, const Rect& rect) {
   // 网格的目标状态每次绘制前对齐一次：缩放、旋转、换图都从这里过，
   // 比在每个改状态的地方各补一句可靠（漏一处就会出现网格不跟着变）。
   updateGridFade();
+  updateZoomBadge();
 
   if (!image_.isValid() || sourceSize_.width <= 0) {
     // 空状态也画个小图标，免得整块区域纯色一片让人以为没加载出来
@@ -1155,6 +1203,9 @@ void PhotoView::onPaint(Painter& painter, const Rect& rect) {
   // 像素格与 RGB 值叠在图之上：只在静止且放大够多时画，跨阈值时淡入
   const float grid = gridFade();
   if (grid > 0.0f) paintPixelGrid(painter, rect, grid);
+
+  // 缩放比浮层压在最上层：它是临时的读数，不该被任何内容挡住
+  paintZoomBadge(painter, rect);
 }
 
 Size PhotoView::onMeasure(const Size& available) {
@@ -1268,6 +1319,110 @@ void PhotoView::onDoubleClick(const MouseEvent& e) {
     return;
   }
   zoomToFit();
+}
+
+void PhotoView::onContextMenu(const MouseEvent& e) {
+  // 只有进了网格模式才复制颜色：那是「用户在看某一个像素」的唯一明确信号。
+  // 没开网格时右键多半是想弹菜单，抢掉会让人莫名其妙。
+  if (!onColorCopy_ || !isPixelGridVisible()) return;
+  Point pixel;
+  if (!sourcePixelAt(e.position, pixel)) return;
+
+  // 宿主返回的就是要提示的文本，控件不必知道剪贴板里放了什么格式
+  const std::wstring message = onColorCopy_(pixel);
+  if (message.empty()) return;
+  // 提示交给窗口级的 Toast：它画在整棵树之上，也由 ViewRoot 自己驱动淡出，
+  // 不必让图片控件替它排帧
+  if (ViewRoot* r = root()) r->showToast(message);
+}
+
+// ───────────────────────── 缩放比浮层 ─────────────────────────
+
+void PhotoView::setZoomBadgeVisible(bool visible) {
+  if (zoomBadgeVisible_ == visible) return;
+  zoomBadgeVisible_ = visible;
+  if (!visible) {
+    badgeFade_ = 0.0f;
+    badgeAlphaFrom_ = 0.0f;
+    badgeAlphaTo_ = 0.0f;
+    badgeFading_ = false;
+  }
+  invalidate();
+}
+
+// 浮层的显示程度。与网格淡入同一套路子：目标按「是否在缩放」翻，
+// 当前值由「翻的那一刻过了多久」解析算出，不逐帧累加。
+float PhotoView::zoomBadgeFade() const {
+  if (!badgeFading_) return badgeAlphaTo_;
+  const int64_t elapsed = platform()->monotonicMillis() - badgeFadeStartMs_;
+  const float raw = kBadgeFadeMs > 0
+                        ? static_cast<float>(elapsed) / static_cast<float>(kBadgeFadeMs)
+                        : 1.0f;
+  if (raw >= 1.0f) return badgeAlphaTo_;
+  return lerp(badgeAlphaFrom_, badgeAlphaTo_, easeInOut(raw));
+}
+
+void PhotoView::updateZoomBadge() {
+  // 缩放进行中才显示：静止时的倍数状态栏已经有了，屏幕上再挂一块只是噪音
+  const bool want = zoomBadgeVisible_ && sourceSize_.width > 0 &&
+                    anim_.kind == AnimKind::kZoom;
+  const float target = want ? 1.0f : 0.0f;
+  if (std::fabs(target - badgeAlphaTo_) < 0.0001f) return;
+
+  // 起点取此刻的值：连续缩放时目标反复翻转，从当前值接着走才连续
+  badgeAlphaFrom_ = zoomBadgeFade();
+  badgeAlphaTo_ = target;
+  badgeFadeStartMs_ = platform()->monotonicMillis();
+  if (badgeFading_) return;
+  badgeFading_ = true;
+  postDelayed(kFrameMs);
+}
+
+bool PhotoView::tickZoomBadge() {
+  if (!badgeFading_) return false;
+  if (platform()->monotonicMillis() - badgeFadeStartMs_ >= kBadgeFadeMs) {
+    badgeFading_ = false;
+    return false;
+  }
+  return true;
+}
+
+void PhotoView::paintZoomBadge(Painter& painter, const Rect& view) {
+  const float alpha = zoomBadgeFade();
+  if (alpha <= 0.0f) return;
+
+  // 倍数文本：与状态栏一样按百分比。缩放中途值每帧都变，所以每帧重算，
+  // 不做缓存——这里只有一次整数格式化和一次阴影测量，代价可以忽略。
+  const int percent = static_cast<int>(zoom_ * 100.0f + 0.5f);
+  const std::wstring text = std::to_wstring(percent) + L"%";
+
+  const int dpi = (std::max)(96, this->dpi());
+  auto px = [dpi](int designPx) { return designPx * dpi / 96; };
+
+  const int textPx = px(kBadgeTextPx);
+  const Font& font = fonts.forPixelSize(textPx);
+  if (!font.isValid()) return;
+
+  // 跑道形：左右圆角半径取高度的一半，两端就是半圆。
+  // 用字体行高估宽度，再留出左右内边距——不调 measureText 是因为这个
+  // 后端没有暴露文本测量，估宽在这里足够（文本只有 3~5 个字符）。
+  const int padX = px(kBadgePadX);
+  const int padY = px(kBadgePadY);
+  const int textWidth = static_cast<int>(text.size()) * textPx * 65 / 100;
+  const int boxW = textWidth + padX * 2;
+  const int boxH = textPx + padY * 2;
+  if (boxW <= 0 || boxH <= 0) return;
+
+  const Rect box{view.center().x - boxW / 2, view.center().y - boxH / 2,
+                 view.center().x - boxW / 2 + boxW, view.center().y - boxH / 2 + boxH};
+  const int radius = boxH / 2;
+
+  const std::uint8_t bgAlpha =
+      static_cast<std::uint8_t>(static_cast<float>(kBadgeBgAlpha) * alpha + 0.5f);
+  const std::uint8_t fgAlpha =
+      static_cast<std::uint8_t>(static_cast<float>(kBadgeFgAlpha) * alpha + 0.5f);
+  painter.fillRoundRect(box, makeColor(0, 0, 0, bgAlpha), radius);
+  painter.drawText(box, text, makeColor(0xff, 0xff, 0xff, fgAlpha), font, TextAlign::kCenter);
 }
 
 void PhotoView::onAttach() {
