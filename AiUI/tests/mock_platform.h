@@ -161,6 +161,11 @@ class FakeWindow : public AiUI::PlatformWindow {
     ++toggleCalls_;
   }
   bool isMaximized() const override { return maximized_; }
+  void setFullscreen(bool fullscreen) override {
+    fullscreen_ = fullscreen;
+    ++fullscreenCalls_;
+  }
+  bool isFullscreen() const override { return fullscreen_; }
   void close() override { ++closeCalls_; }
   void startDragMove() override { ++dragMoveCalls_; }
   void startDragResize(AiUI::HitTarget edge) override { resizeEdge_ = edge; }
@@ -178,6 +183,7 @@ class FakeWindow : public AiUI::PlatformWindow {
   const std::wstring& title() const { return title_; }
   int minimizeCalls() const { return minimizeCalls_; }
   int toggleMaximizeCalls() const { return toggleCalls_; }
+  int fullscreenCalls() const { return fullscreenCalls_; }
   int closeCalls() const { return closeCalls_; }
   int dragMoveCalls() const { return dragMoveCalls_; }
   AiUI::HitTarget resizeEdge() const { return resizeEdge_; }
@@ -199,6 +205,8 @@ class FakeWindow : public AiUI::PlatformWindow {
   bool visible_ = false;
   bool captured_ = false;
   bool blink_ = false;
+  bool fullscreen_ = false;
+  int fullscreenCalls_ = 0;
   int delayMs_ = -1;
   int focusCalls_ = 0;
   int fullInvalidations_ = 0;

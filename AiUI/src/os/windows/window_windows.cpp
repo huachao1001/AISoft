@@ -341,6 +341,44 @@ class WindowsWindow : public PlatformWindow {
 
   bool isMaximized() const override { return hwnd_ && ::IsZoomed(hwnd_); }
 
+  bool isFullscreen() const override { return fullscreen_; }
+
+  // 全屏：切到无边框并铺满当前显示器。必须换样式而不是只改尺寸——
+  // 留着 WS_CAPTION 系统就会继续在顶部留一条标题栏，自绘区域也对不齐。
+  void setFullscreen(bool fullscreen) override {
+    if (!hwnd_ || fullscreen_ == fullscreen) return;
+    fullscreen_ = fullscreen;
+
+    if (fullscreen) {
+      savedStyle_ = ::GetWindowLongW(hwnd_, GWL_STYLE);
+      savedExStyle_ = ::GetWindowLongW(hwnd_, GWL_EXSTYLE);
+      savedPlacement_.length = sizeof(savedPlacement_);
+      ::GetWindowPlacement(hwnd_, &savedPlacement_);
+
+      ::SetWindowLongW(hwnd_, GWL_STYLE,
+                       (savedStyle_ & ~(DWORD)(WS_CAPTION | WS_THICKFRAME | WS_SYSMENU)) |
+                           WS_POPUP);
+      MONITORINFO info{};
+      info.cbSize = sizeof(info);
+      if (::GetMonitorInfoW(::MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST), &info)) {
+        ::SetWindowPos(hwnd_, HWND_TOP, info.rcMonitor.left, info.rcMonitor.top,
+                       info.rcMonitor.right - info.rcMonitor.left,
+                       info.rcMonitor.bottom - info.rcMonitor.top,
+                       SWP_FRAMECHANGED | SWP_NOACTIVATE);
+      }
+    } else {
+      ::SetWindowLongW(hwnd_, GWL_STYLE, savedStyle_);
+      ::SetWindowLongW(hwnd_, GWL_EXSTYLE, savedExStyle_);
+      if (savedPlacement_.length) {
+        ::SetWindowPlacement(hwnd_, &savedPlacement_);
+      }
+      ::SetWindowPos(hwnd_, nullptr, 0, 0, 0, 0,
+                     SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    // 客户区尺寸变了：让视图树按新尺寸重排，否则内容还停在旧边界
+    host_.onResize(clientRect().width(), clientRect().height());
+  }
+
   // 还原态外框：最大化时 GetWindowPlacement 仍保留还原尺寸，持久化窗口用
   Rect normalBounds() const override {
     if (!hwnd_) return windowRect();
@@ -815,6 +853,12 @@ class WindowsWindow : public PlatformWindow {
   // 最小尺寸（96 DPI 设计值），0 表示不限制
   int minWidth_ = 0;
   int minHeight_ = 0;
+
+  // 全屏状态与进入前的窗口样式/位置，退出时原样恢复
+  bool fullscreen_ = false;
+  DWORD savedStyle_ = 0;
+  DWORD savedExStyle_ = 0;
+  WINDOWPLACEMENT savedPlacement_{};
 };
 
 namespace {

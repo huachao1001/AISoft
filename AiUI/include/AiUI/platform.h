@@ -256,6 +256,10 @@ class PlatformWindow {
   // 最大化与还原之间切换
   virtual void toggleMaximize() = 0;
   virtual bool isMaximized() const = 0;
+  // 全屏演示：去掉边框与标题栏，铺满当前显示器（含任务栏区域）。
+  // 退出后回到进入前的样式与位置，最大化状态也一并保留。
+  virtual void setFullscreen(bool fullscreen) { (void)fullscreen; }
+  virtual bool isFullscreen() const { return false; }
   // 还原态下的外框矩形；最大化时也返回还原尺寸，用于持久化
   virtual Rect normalBounds() const { return windowRect(); }
   virtual void close() = 0;
