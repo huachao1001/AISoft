@@ -118,6 +118,13 @@ class PhotoView : public View {
   void setPixelGridZoom(float zoom) { gridZoom_ = zoom; }
   float pixelGridZoom() const { return gridZoom_; }
 
+  // 图片是否含半透明像素。界面上的 Image 只是后端句柄、查不到 alpha，
+  // 所以由宿主在解码像素时算好再告诉控件。为真时在图片下面铺一层棋盘格，
+  // 透明处看到的是「这里没有像素」而不是画布底色。换图时控件会复位成 false，
+  // 宿主每次加载完都要重新设置。
+  void setImageHasAlpha(bool hasAlpha) { hasAlpha_ = hasAlpha; }
+  bool imageHasAlpha() const { return hasAlpha_; }
+
   // 视图点底下是否有图像像素。缩放只看图上的点：光标停在画布空白处时
   // 以它当锚点会把整幅图推出视野，看起来就是「一滚就飞了」。
   bool isOnImage(Point viewPoint) const;
@@ -258,6 +265,11 @@ class PhotoView : public View {
   void pickBitmap(Image& out, float& ratio) const;
   // 像素格 + RGB 值；alpha 用于跨阈值时淡入
   void paintPixelGrid(Painter& painter, const Rect& view, float alpha);
+  // 半透明图的棋盘格底纹。
+  // 格子锚在视图坐标系：拖动时格子不动，用户拖的是图片本身，
+  // 衬底应当像「桌面」一样固定，才有放大镜在纸面上移动的感觉。
+  // 只画在图片外框之内，画布空白处仍是纯色。
+  void paintAlphaBackdrop(Painter& painter, const Rect& view);
   // 缩放比浮层：居中显示当前倍数，缩放中淡入、停下淡出
   float zoomBadgeFade() const;
   void updateZoomBadge();
@@ -299,6 +311,8 @@ class PhotoView : public View {
   RgbaImage pixelCache_;
   Rect pixelCacheRect_{};
   float gridZoom_ = 10.0f;
+  // 图片含半透明像素时为真：图片下面铺棋盘格底纹
+  bool hasAlpha_ = false;
 
   // 网格/锐化的淡入淡出。跨过阈值不是「啪一下出现」，而是在 kFadeMs 里
   // 从 0 渐变到 1（反向同理）。用时间而不是倍数当自变量：倍数是用户滚出来

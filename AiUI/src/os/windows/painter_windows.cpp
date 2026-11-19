@@ -97,6 +97,29 @@ class GdiplusBackend : public PaintBackend {
     g_->FillPath(&brush, &path);
   }
 
+  void fillCheckerboard(const Rect& rc, Color colorA, Color colorB, int cell) override {
+    if (!g_ || rc.isEmpty() || cell <= 0) return;
+    // 做一块 2×2 格的小图当纹理刷，一次 FillRectangle 铺满整块。
+    // 逐格 fillRect 在满屏画布上要提交上千次绘制，每帧都做明显拖慢重绘。
+    const int side = cell * 2;
+    Gdiplus::Bitmap tile(side, side, PixelFormat32bppARGB);
+    {
+      Graphics tg(&tile);
+      SolidBrush a(toGdiplus(colorA));
+      SolidBrush b(toGdiplus(colorB));
+      tg.FillRectangle(&a, 0, 0, side, side);
+      tg.FillRectangle(&b, cell, 0, cell, cell);
+      tg.FillRectangle(&b, 0, cell, cell, cell);
+    }
+    // GDI+ 会按「位图 DPI / 目标 DPI」缩放纹理块。新位图默认 96，
+    // 150% 屏上格子会被放大成 1.5 倍，与调用方按 device px 算的 cell 不符。
+    tile.SetResolution(g_->GetDpiX(), g_->GetDpiY());
+    // WrapModeTile 的图案锚在画刷原点，也就是当前变换的 (0,0)：
+    // 调用方在固定坐标系里画，格子就随坐标系固定，不跟着内容平移。
+    TextureBrush brush(&tile, WrapModeTile);
+    g_->FillRectangle(&brush, toGdiplus(rc));
+  }
+
   void strokeRoundRect(const Rect& rc, Color color, int radius, int lineWidth) override {
     if (!g_ || rc.isEmpty()) return;
     // 描边以路径为中心线向两侧各展开半个线宽。路径压在整数边界上时，

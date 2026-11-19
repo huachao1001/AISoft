@@ -22,6 +22,8 @@ AiUI::RgbaImage g_pixels;
 std::wstring g_path;
 bool g_hasImage = false;
 int g_rotation = 0;
+// 是否含半透明像素。打开时扫一遍定下，绘制阶段只读这个 bool
+bool g_hasAlpha = false;
 
 // 同目录的可显示图片，按文件名排好；左右键翻页靠它的顺序
 std::vector<std::wstring> g_siblings;
@@ -110,6 +112,15 @@ bool AppOpenImage(const std::wstring& path) {
   g_pixels = std::move(pixels);
   g_path = util::AbsolutePath(path);
   g_hasImage = true;
+  // 扫一遍 alpha：绘制阶段要逐帧决定铺不铺棋盘格，不能每帧再扫整张图。
+  // 全不透明是绝大多数情况，扫到第一个半透明像素就停，通常几毫秒内结束。
+  g_hasAlpha = false;
+  for (AiUI::Color px : g_pixels.pixels) {
+    if (AiUI::colorAlpha(px) < 255) {
+      g_hasAlpha = true;
+      break;
+    }
+  }
   // 换图意味着换内容：旋转归零，否则新图会顶着上一张的角度打开
   g_rotation = 0;
 
@@ -122,6 +133,7 @@ void AppCloseImage() {
   g_pixels = AiUI::RgbaImage{};
   g_path.clear();
   g_hasImage = false;
+  g_hasAlpha = false;
   g_rotation = 0;
   g_siblings.clear();
   g_siblingIndex = 0;
@@ -141,6 +153,8 @@ AiUI::RgbaImage AppExportPixels() { return rotatePixels(g_pixels, g_rotation); }
 AiUI::Size AppImageSize() {
   return AiUI::Size{g_pixels.width, g_pixels.height};
 }
+
+bool AppImageHasAlpha() { return g_hasAlpha; }
 
 bool AppReadPixelRegion(const AiUI::Rect& region, AiUI::RgbaImage& out) {
   out = AiUI::RgbaImage{};

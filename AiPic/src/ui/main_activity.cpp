@@ -327,6 +327,8 @@ bool MainActivity::openImage(const std::wstring& path) {
     AppCloseImage();
     return false;
   }
+  // loadFile 会复位棋盘格状态（新图的 alpha 未知），这里补上
+  photo_->setImageHasAlpha(AppImageHasAlpha());
 
   refreshStage();
   refreshStatusBar();
@@ -359,6 +361,8 @@ void MainActivity::stepImage(int delta) {
     AppOpenImage(previous);
     if (photo_) photo_->loadFile(previous);
   }
+  // 无论前进还是回退，位图和像素都已换成当前这张，棋盘格状态要跟上
+  if (photo_) photo_->setImageHasAlpha(AppImageHasAlpha());
   // 演示态下换图也要铺满屏幕：loadFile 会回到「最多 100%」
   if (presenting_ && photo_) photo_->zoomToFit();
   refreshStage();

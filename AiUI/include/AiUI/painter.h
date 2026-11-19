@@ -12,6 +12,7 @@
 #include "AiUI/types.h"
 
 #include <string>
+#include <algorithm>
 
 namespace AiUI {
 
@@ -44,6 +45,38 @@ class PaintBackend {
 
   virtual void fillRect(const Rect& rc, Color color) = 0;
   virtual void fillRoundRect(const Rect& rc, Color color, int radius) = 0;
+  // 棋盘格：透明区域的「没有像素」底纹，两色按 cell 大小交替铺满 rc。
+  //
+  // 图案相位锚在**坐标系原点**而不是 rc 的左上角：调用方就是要靠这个特性，
+  // 让底纹在内容移动时保持不动（拖动图片时格子固定，才有放大镜的感觉）。
+  // 若锚在 rc 上，每次 rc 一变图案就跟着平移，格子就「粘」在图片上了。
+  // 默认实现逐行填，够用但慢；后端有贴图能力时应当覆盖。
+  virtual void fillCheckerboard(const Rect& rc, Color colorA, Color colorB, int cell) {
+    if (rc.isEmpty() || cell <= 0) return;
+    fillRect(rc, colorA);
+    // 负坐标也要正确分块，所以用向下取整除法而不是整数截断
+    auto floorDiv = [cell](int v) {
+      return v >= 0 ? v / cell : -(((-v) + cell - 1) / cell);
+    };
+    // 分块边界必须落在 cell 的整数倍上，不能从 rc.top/left 起步：
+    // 否则第一块只是被 rc 切掉一角的半格，图案和相邻块对不上。
+    const int x0 = floorDiv(rc.left) * cell;
+    const int y0 = floorDiv(rc.top) * cell;
+    for (int y = y0; y < rc.bottom; y += cell) {
+      const int top = (std::max)(y, rc.top);
+      const int bottom = (std::min)(y + cell, rc.bottom);
+      // y 已是 cell 的整数倍，直接取奇偶；负数在补码下 & 1 同样正确
+      const bool oddRow = ((y / cell) & 1) != 0;
+      for (int x = x0; x < rc.right; x += cell) {
+        const int left = (std::max)(x, rc.left);
+        const int right = (std::min)(x + cell, rc.right);
+        if (right <= left || bottom <= top) continue;
+        const bool oddCol = ((x / cell) & 1) != 0;
+        if (oddRow == oddCol) continue;
+        fillRect(Rect{left, top, right, bottom}, colorB);
+      }
+    }
+  }
   virtual void strokeRoundRect(const Rect& rc, Color color, int radius, int lineWidth) = 0;
   virtual void drawGradientRect(const Rect& rc, Color top, Color bottom) = 0;
   virtual void drawGradientRoundRect(const Rect& rc, Color top, Color bottom, int radius) = 0;
@@ -124,6 +157,10 @@ class Painter {
   }
   void drawGradientRoundRect(const Rect& rc, Color top, Color bottom, int radius) {
     backend_.drawGradientRoundRect(rc, top, bottom, radius);
+  }
+  // 棋盘格底纹：格子相位锚在坐标系原点，内容移动时图案不动
+  void fillCheckerboard(const Rect& rc, Color colorA, Color colorB, int cell) {
+    backend_.fillCheckerboard(rc, colorA, colorB, cell);
   }
   void drawHLine(int left, int right, int y, Color color) {
     backend_.fillRect(Rect{left, y, right, y + 1}, color);

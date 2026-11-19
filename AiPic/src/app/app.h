@@ -38,6 +38,9 @@ void AppSetRotation(int quarterTurns);
 AiUI::RgbaImage AppExportPixels();
 // 原始（未旋转）像素尺寸
 AiUI::Size AppImageSize();
+// 当前图是否含半透明像素：为真时界面要在图片下铺棋盘格底纹。
+// 在打开时扫一遍算好，绘制阶段不再逐帧判断（大图扫一遍很贵）。
+bool AppImageHasAlpha();
 // 取一个区域的原图（未旋转）像素：像素格显示 RGB 用它。
 // 只拷贝需要的那一块，界面每帧都要问，别在这里做整张遍历。
 bool AppReadPixelRegion(const AiUI::Rect& region, AiUI::RgbaImage& out);

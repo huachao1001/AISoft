@@ -174,6 +174,9 @@ bool PhotoView::loadFile(const std::wstring& path) {
   image_ = loaded;
   proxy_ = Image{};
   proxyRatio_ = 0.0f;
+  // 新图的 alpha 情况未知：控件查不到位图的 alpha，等宿主解码像素后告知。
+  // 这里必须先复位，否则上一张半透明图的棋盘格会残留到新图上。
+  hasAlpha_ = false;
 
   sourceSize_ = platform()->imageSize(image_);
   if (sourceSize_.width <= 0 || sourceSize_.height <= 0) {
@@ -216,6 +219,7 @@ void PhotoView::setImage(const Image& image) {
   image_ = image;
   proxy_ = Image{};
   proxyRatio_ = 0.0f;
+  hasAlpha_ = false;  // 同 loadFile：等宿主告知
   sourceSize_ = image_.isValid() ? platform()->imageSize(image) : Size{};
   pan_ = PanF{};
   anim_ = Animation{};
@@ -231,6 +235,7 @@ void PhotoView::clearImage() {
   image_ = Image{};
   proxy_ = Image{};
   proxyRatio_ = 0.0f;
+  hasAlpha_ = false;
   path_.clear();
   sourceSize_ = Size{};
   zoom_ = 1.0f;
@@ -981,6 +986,10 @@ void PhotoView::paintPixelGrid(Painter& painter, const Rect& view, float alpha) 
             static_cast<size_t>(x - pixelCacheRect_.left);
         if (at >= pixelCache_.pixels.size()) continue;
         const Color px = pixelCache_.pixels[at];
+        // 只重填全不透明的格子。半透明的那些，下面那张缩放位图已经把
+        // 「像素 + 棋盘格」合成好了；这里再按 alpha 填一遍就是混合两次，
+        // 颜色会比原图更深，底纹也被糊掉。透明格直接跳过，底纹自然露出。
+        if (colorAlpha(px) < 255) continue;
         painter.fillRect(rc, makeColor(colorRed(px), colorGreen(px), colorBlue(px), cellAlpha));
       }
     }
@@ -1135,6 +1144,24 @@ void PhotoView::paintCellValues(Painter& painter, const Rect& view, float alpha)
   }
 }
 
+// 棋盘格底纹：只画在图片框内，格子固定在视图坐标系
+void PhotoView::paintAlphaBackdrop(Painter& painter, const Rect& view) {
+  // 棋盘格尺寸按屏幕密度取：96 DPI 下 12px，150% 屏就是 18px。
+  // 太小会糊成灰雾（8px 在满屏透明图上几乎看不出格），太大又像马赛克。
+  const int dpi = (std::max)(96, this->dpi());
+  int cell = (12 * dpi + 48) / 96;
+  if (cell < 6) cell = 6;
+
+  // 配色取业界惯例的「白 + 浅灰」，不用纯黑：
+  // 深色棋盘格会与暗色图片糊成一片，也容易让人误以为图片本身有黑块。
+  // 这两种灰在浅色和深色主题下都能与画布底色区分开。
+  const Color light = makeColor(0xff, 0xff, 0xff);
+  const Color dark = makeColor(0xcc, 0xcc, 0xcc);
+
+  // 相位锚在视图原点：拖动图片时格子不动，观感是「放大镜在固定纸面上移动」。
+  painter.fillCheckerboard(view, light, dark, cell);
+}
+
 // ───────────────────────── 绘制 ─────────────────────────
 
 void PhotoView::onPaint(Painter& painter, const Rect& rect) {
@@ -1211,6 +1238,23 @@ void PhotoView::onPaint(Painter& painter, const Rect& rect) {
   };
   const Rect dstSub{dstOf(source.left), dstOfY(source.top), dstOf(source.right),
                     dstOfY(source.bottom)};
+
+  // 半透明图像先铺棋盘格底纹，图片再叠上去，透明像素处才看得到它。
+  //
+  // 底纹锚在视图坐标系（拖动时格子不动），但只覆盖图片占的那块。
+  // 图片框在视图里的位置由 pan/zoom/旋转决定，和绘制位图用同一套取整，
+  // 否则底纹会比图片多出或少掉一条边。矩形是轴对齐的：这里用旋转后的
+  // 外接框，旋转 90° 倍数时它就是图片本身的框，非整倍数动画期间略大一点
+  // 也不影响观感（此时底纹随图片一起转，本身就是个矩形）。
+  if (hasAlpha_) {
+    const Size rotated = rotatedSizeOf(sourceSize_, rotation_);
+    const int boxW = static_cast<int>(std::lround(static_cast<double>(rotated.width) * zoom_));
+    const int boxH = static_cast<int>(std::lround(static_cast<double>(rotated.height) * zoom_));
+    const Rect imageBox{tx - boxW / 2, ty - boxH / 2, tx - boxW / 2 + boxW,
+                        ty - boxH / 2 + boxH};
+    const Rect clipped = imageBox.intersect(rect);
+    if (!clipped.isEmpty()) paintAlphaBackdrop(painter, clipped);
+  }
 
   painter.save();
   // 平移量是浮点（动画逐帧反解出来的），但后端 translate 只收整数。
