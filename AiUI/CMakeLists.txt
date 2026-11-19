@@ -30,6 +30,7 @@ set(AIUI_SOURCES
   src/font.cpp
   src/shell.cpp
   src/install.cpp
+  src/toast.cpp
 
   src/events/event_dispatcher.cpp
   # 布局
@@ -118,6 +119,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     tests/test_core.cpp
     tests/test_photo_view.cpp
     tests/test_photo_view_anim.cpp
+    tests/test_toast.cpp
   )
   target_include_directories(AiUI_tests PRIVATE tests)
   target_link_libraries(AiUI_tests PRIVATE AiUI)

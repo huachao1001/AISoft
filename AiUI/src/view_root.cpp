@@ -150,6 +150,18 @@ void ViewRoot::onExpose(const Rect& update) {
     }
   }
 
+  // 提示条压在最上方：它是对刚才那次操作的即时回执，不该被任何内容挡住。
+  // 裁剪用 dirtyBounds：上浮中的块可能比标脏时的位置更高，用 bounds 会切掉顶部。
+  if (toast_.isVisible()) {
+    const Rect toastArea = toast_.dirtyBounds(area, dpi()).intersect(target);
+    if (!toastArea.isEmpty()) {
+      painter.save();
+      painter.clipRect(toastArea);
+      toast_.paint(painter, area, dpi());
+      painter.restore();
+    }
+  }
+
   painter.restore();
   canvas->commit();
 }
@@ -266,10 +278,9 @@ void ViewRoot::onTimer() {
 }
 
 void ViewRoot::onDelayTimer() {
-  if (delayed_.empty()) return;
+  const int64_t now = platform()->monotonicMillis();
 
   // 计时器只有一个：到期时把已到点的任务一次性发完，再按最早的那个重装
-  const int64_t now = platform()->monotonicMillis();
   std::vector<View*> due;
   std::vector<DelayedTask> rest;
   due.reserve(delayed_.size());
@@ -281,6 +292,19 @@ void ViewRoot::onDelayTimer() {
     }
   }
   delayed_.swap(rest);
+
+  // 提示条到点就推进；推进结果决定下一次醒来的时刻。
+  // 区域必须在 tick 之前取：淡出收尾那一拍 tick 会立刻 hide()，
+  // 之后 bounds() 已是空矩形，那一帧的旧像素就再也刷不掉了。
+  // 用 dirtyBounds：它覆盖整段上浮行程，不会因为标脏与落笔之间的时间差漏边。
+  if (toast_.isVisible() && (toastWakeMs_ < 0 || toastWakeMs_ <= now)) {
+    const Rect before = toast_.dirtyBounds(clientRect(), dpi());
+    toastWakeMs_ = toast_.tick(now);
+    if (!before.isEmpty()) invalidateRect(before);
+    const Rect after = toast_.dirtyBounds(clientRect(), dpi());
+    if (!after.isEmpty()) invalidateRect(after);
+  }
+
   // 先重装定时器再回调：回调里可能又 postDelayed，那时会再次改写
   scheduleNextDelayed();
 
@@ -315,18 +339,41 @@ void ViewRoot::postDelayed(View* view, int ms) {
   scheduleNextDelayed();
 }
 
+void ViewRoot::showToast(const std::wstring& text) {
+  toast_.show(text);
+  toastWakeMs_ = platform()->monotonicMillis();
+  // 新提示可能比旧的长，先把旧提示整段行程刷掉，再刷新提示的区域
+  invalidateRect(toast_.dirtyBounds(clientRect(), dpi()));
+  // 立刻排第一帧，之后由 onDelayTimer 自己按需续期
+  scheduleNextDelayed();
+}
+
+void ViewRoot::hideToast() {
+  if (!toast_.isVisible()) return;
+  const Rect dirty = toast_.dirtyBounds(clientRect(), dpi());
+  toast_.hide();
+  toastWakeMs_ = -1;
+  if (!dirty.isEmpty()) invalidateRect(dirty);
+  scheduleNextDelayed();
+}
+
 void ViewRoot::scheduleNextDelayed() {
-  if (delayed_.empty()) {
-    if (window_) window_->setDelayTimer(0);
+  // 系统只有一只单次定时器：视图等待与提示条取最早的那个
+  int64_t earliest = -1;
+  for (const DelayedTask& task : delayed_) {
+    if (earliest < 0 || task.deadline < earliest) earliest = task.deadline;
+  }
+  if (toastWakeMs_ >= 0 && (earliest < 0 || toastWakeMs_ < earliest)) {
+    earliest = toastWakeMs_;
+  }
+
+  if (!window_) return;
+  if (earliest < 0) {
+    window_->setDelayTimer(0);
     return;
   }
-  // 系统只有一只单次定时器，按最近到期的时间重装；到点后再装下一个
-  int64_t earliest = delayed_.front().deadline;
-  for (const DelayedTask& task : delayed_) {
-    if (task.deadline < earliest) earliest = task.deadline;
-  }
   const int64_t wait = earliest - platform()->monotonicMillis();
-  if (window_) window_->setDelayTimer(static_cast<int>(wait > 0 ? wait : 1));
+  window_->setDelayTimer(static_cast<int>(wait > 0 ? wait : 1));
 }
 
 void ViewRoot::setImeCaret(int x, int y) {

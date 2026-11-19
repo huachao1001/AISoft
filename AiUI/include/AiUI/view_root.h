@@ -10,11 +10,13 @@
 #pragma once
 
 #include "AiUI/platform.h"
+#include "AiUI/toast.h"
 #include "AiUI/view.h"
 
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace AiUI {
@@ -91,6 +93,11 @@ class ViewRoot : public WindowHost {
   void setBlinkTimer(bool on);
   // 一次性延时：ms 毫秒后通知 view（0 表示取消该 view 的等待）
   void postDelayed(View* view, int ms);
+  // 提示条：每窗口一条，画在整棵树之上、不吃鼠标
+  void showToast(const std::wstring& text);
+  // 立刻收起提示条（不进淡出）；窗口销毁前调用，避免留下悬空状态
+  void hideToast();
+  Toast& toast() { return toast_; }
   // 输入法候选框跟随光标（窗口坐标）
   void setImeCaret(int x, int y);
 
@@ -151,6 +158,9 @@ class ViewRoot : public WindowHost {
     int64_t deadline;  // 毫秒计时器，绝对时间
   };
   std::vector<DelayedTask> delayed_;
+  // 提示条下一次需要重绘的时刻；-1 表示不必再醒
+  int64_t toastWakeMs_ = -1;
+  Toast toast_;
 
   Color background_ = kNoColor;
   bool layoutPending_ = false;
