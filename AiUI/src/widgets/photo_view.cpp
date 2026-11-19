@@ -337,9 +337,11 @@ float PhotoView::fitZoomFor(int rotation) const {
   const float sy = static_cast<float>(rc.height()) / static_cast<float>(rotated.height);
   // 适应窗口通常不放大：小图放大到铺满整屏会糊，也让人误以为原图就那么大。
   // 但短边不足 30px 时仍要放大到那个尺寸，否则一打开就是一小撮点。
+  // 演示态例外：投影时观众离得远，图小到一半屏幕才是更糟的结果。
   const float minSide = minZoom();
-  return (std::min)((std::max)(minSide, 1.0f),
-                    (std::max)(minSide, (std::min)(sx, sy)));
+  const float fill = (std::max)(minSide, (std::min)(sx, sy));
+  // 允许放大时直接铺满；否则封顶在 100%
+  return fitAllowsUpscale_ ? fill : (std::min)((std::max)(minSide, 1.0f), fill);
 }
 
 void PhotoView::applyFitNow() {
@@ -450,6 +452,32 @@ void PhotoView::beginRotate(int turns) {
 void PhotoView::setPan(Point pan) {
   pan_ = PanF{static_cast<float>(pan.x), static_cast<float>(pan.y)};
   clampPan();
+  dropPixelCache();
+  invalidate();
+  notifyChanged();
+}
+
+PhotoView::ViewState PhotoView::saveViewState() const {
+  ViewState state;
+  state.zoom = zoom_;
+  state.panX = pan_.x;
+  state.panY = pan_.y;
+  state.fitToWindow = fitToWindow_;
+  return state;
+}
+
+void PhotoView::restoreViewState(const ViewState& state) {
+  anim_ = Animation{};
+  fitToWindow_ = state.fitToWindow;
+  if (fitToWindow_) {
+    // 当时是「跟随窗口」，回来要按当前尺寸重算：旧倍数属于旧窗口
+    applyFitNow();
+  } else {
+    zoom_ = clampZoom(state.zoom);
+    pan_ = PanF{state.panX, state.panY};
+    clampPan();
+  }
+  displayAngle_ = static_cast<float>(rotation_ * 90);
   dropPixelCache();
   invalidate();
   notifyChanged();

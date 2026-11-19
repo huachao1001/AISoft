@@ -12,6 +12,7 @@
 #include "AiUI/widgets/image_view.h"
 #include "AiUI/widgets/photo_view.h"
 #include "AiUI/widgets/status_bar.h"
+#include "AiUI/widgets/thumbnail_strip.h"
 
 #include <algorithm>
 #include <utility>
@@ -121,12 +122,14 @@ void MainActivity::onCreate() {
   toolBar_ = findView<AiUI::ButtonBar>("toolBar");
   photo_ = findView<AiUI::PhotoView>("photo");
   status_ = findView<AiUI::StatusBar>("status");
+  thumbs_ = findView<AiUI::ThumbnailStrip>("thumbs");
   homePane_ = findView<AiUI::View>("homePane");
 
   attachToolBar();
   attachHome();
   attachPhoto();
   attachStatusBar();
+  attachThumbs();
 
   // 拖放与单实例转发挂在 AiUI 建的顶层窗口上
   g_app.mainWnd = nativeWindow();
@@ -164,9 +167,12 @@ void MainActivity::attachToolBar() {
   btnRotateRight_ = toolBar_->addButton(makeButtonSpec(L"右转", AiUI::IconId::kRotateRight), 2);
   if (btnRotateRight_) btnRotateRight_->setOnClick([this] { rotate(1); });
 
+  btnPresent_ = toolBar_->addButton(makeButtonSpec(L"演示", AiUI::IconId::kFullscreen), 3);
+  if (btnPresent_) btnPresent_->setOnClick([this] { setPresenting(true); });
+
   AiUI::ButtonSpec saveSpec = makeButtonSpec(L"另存为", AiUI::IconId::kSave);
   saveSpec.style = AiUI::ButtonStyle::kPrimary;
-  btnSaveAs_ = toolBar_->addButton(saveSpec, 3);
+  btnSaveAs_ = toolBar_->addButton(saveSpec, 4);
   if (btnSaveAs_) btnSaveAs_->setOnClick([this] { saveAs(); });
 
   refreshToolBar();
@@ -223,12 +229,34 @@ void MainActivity::attachStatusBar() {
   refreshStatusBar();
 }
 
+void MainActivity::attachThumbs() {
+  if (!thumbs_) return;
+  // 点缩略图等同于翻到那一张：走同一条 openImage 路径，状态栏与标题才会一起更新
+  thumbs_->setOnSelect([this](int index) {
+    if (presenting_) return;
+    const auto& siblings = AppSiblingImages();
+    if (index < 0 || index >= static_cast<int>(siblings.size())) return;
+    if (index == AppSiblingIndex()) return;
+    openImage(siblings[static_cast<size_t>(index)]);
+  });
+}
+
 // ───────────────────────── 状态同步 ─────────────────────────
 
 void MainActivity::refreshStage() {
   const bool has = AppHasImage();
   if (homePane_) homePane_->show(!has);
   if (photo_) photo_->show(has);
+  // 缩略图条只在有图、且不在演示态时有意义：空状态页与投影都要独占整块宽度
+  // （翻页会走这里，所以演示判断不能只放在 setPresenting 里）
+  if (thumbs_) thumbs_->show(has && !presenting_);
+}
+
+void MainActivity::refreshThumbs() {
+  if (!thumbs_) return;
+  thumbs_->setItems(AppSiblingImages());
+  thumbs_->setSelected(AppSiblingIndex());
+  thumbs_->scrollToItem(AppSiblingIndex());
 }
 
 void MainActivity::refreshStatusBar() {
@@ -275,7 +303,7 @@ void MainActivity::refreshToolBar() {
   const bool has = AppHasImage();
   for (AiUI::Button* button :
        {btnZoomIn_, btnZoomOut_, btnFit_, btnActual_, btnRotateLeft_, btnRotateRight_,
-        btnSaveAs_}) {
+        btnPresent_, btnSaveAs_}) {
     if (button) button->setEnabled(has);
   }
 }
@@ -303,16 +331,22 @@ bool MainActivity::openImage(const std::wstring& path) {
   refreshStage();
   refreshStatusBar();
   refreshToolBar();
+  refreshThumbs();
   updateTitle();
+  // 演示态下打开新图同样要铺满：loadFile 默认最多 100%
+  if (presenting_ && photo_) photo_->zoomToFit();
   return true;
 }
 
 void MainActivity::closeImage() {
+  // 演示态下关图会把界面留在「没有图」的演示布局里，先退出来
+  if (presenting_) setPresenting(false);
   AppCloseImage();
   if (photo_) photo_->clearImage();
   refreshStage();
   refreshStatusBar();
   refreshToolBar();
+  refreshThumbs();
   updateTitle();
 }
 
@@ -325,9 +359,12 @@ void MainActivity::stepImage(int delta) {
     AppOpenImage(previous);
     if (photo_) photo_->loadFile(previous);
   }
+  // 演示态下换图也要铺满屏幕：loadFile 会回到「最多 100%」
+  if (presenting_ && photo_) photo_->zoomToFit();
   refreshStage();
   refreshStatusBar();
   refreshToolBar();
+  refreshThumbs();
   updateTitle();
 }
 
@@ -396,6 +433,44 @@ void MainActivity::saveAs() {
   g_app.settings.lastDir = util::DirName(util::AbsolutePath(target));
 }
 
+void MainActivity::setPresenting(bool presenting) {
+  if (presenting_ == presenting) return;
+  if (presenting && !AppHasImage()) return;
+  presenting_ = presenting;
+
+  // 演示态只留图片：工具栏、缩略图条与状态栏都是「编辑时」的辅助，
+  // 投影出去只会占掉画面。退出时按各控件本身的状态恢复。
+  if (toolBar_) toolBar_->show(!presenting);
+  if (status_) status_->show(!presenting);
+  if (thumbs_) thumbs_->show(!presenting && AppHasImage());
+  if (homePane_) homePane_->show(!AppHasImage());
+
+  // 标题栏与系统边框一起收起：留着标题栏就不是「全屏」了
+  if (AiUI::Window* win = window()) {
+    if (presenting) {
+      titleBarVisible_ = win->isTitleBarVisible();
+      win->setTitleBarVisible(false);
+    } else {
+      win->setTitleBarVisible(titleBarVisible_);
+    }
+    if (AiUI::PlatformWindow* pw = win->platformWindow()) pw->setFullscreen(presenting);
+  }
+
+  // 演示态允许放大到铺满：投影时观众离得远，宁可糊一点也要占满屏幕；
+  // 退出时恢复「最多 100%」，否则小图会在正常窗口里被撑大。
+  if (photo_) {
+    photo_->setFitAllowsUpscale(presenting);
+    if (presenting) {
+      // 先拍快照再适应：退出演示要回到用户调好的倍数与位置
+      savedView_ = photo_->saveViewState();
+      // 换过可用区域就重新适应一次：演示时整屏都是画布，用户要看最大的图
+      photo_->zoomToFit();
+    } else {
+      photo_->restoreViewState(savedView_);
+    }
+  }
+}
+
 // ───────────────────────── 窗口级行为 ─────────────────────────
 
 bool MainActivity::onKeyDown(const AiUI::Key& key, const AiUI::Modifiers& mods) {
@@ -415,12 +490,25 @@ bool MainActivity::onKeyDown(const AiUI::Key& key, const AiUI::Modifiers& mods) 
   // 翻页用左右键：这与资源管理器的方向一致，不必记任何修饰键
   switch (key) {
     case AiUI::Key::kLeft:
+    case AiUI::Key::kUp:
+    case AiUI::Key::kPageUp:
       if (!AppHasImage()) return false;
       stepImage(-1);
       return true;
     case AiUI::Key::kRight:
+    case AiUI::Key::kDown:
+    case AiUI::Key::kPageDown:
       if (!AppHasImage()) return false;
       stepImage(1);
+      return true;
+    case AiUI::Key::kF5:
+      if (!AppHasImage()) return false;
+      setPresenting(true);
+      return true;
+    case AiUI::Key::kEscape:
+      // Esc 只用于退出演示；正常窗口下不抢这个键（系统可能留给别的用途）
+      if (!presenting_) return false;
+      setPresenting(false);
       return true;
     // 键位映射只到数字键：+/- 在键盘上是 OEM 键，后端不转成 Key，
     // 所以整理成「0 整图、1 原大」这两个人人记得住的数字。

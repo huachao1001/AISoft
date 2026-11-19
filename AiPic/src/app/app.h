@@ -46,5 +46,7 @@ bool AppReadPixelRegion(const AiUI::Rect& region, AiUI::RgbaImage& out);
 // 打开一张图时顺带记下同目录的可显示图片，左右键据此切换。只记路径，
 // 不预加载内容：一个目录几千张图也不该拖慢打开动作。
 const std::vector<std::wstring>& AppSiblingImages();
+// 当前图在同目录列表里的序号；无图或列表失效时返回 -1
+int AppSiblingIndex();
 // 在当前目录里跳到前/后一张；返回 false 表示没有可跳的目标
 bool AppStepImage(int delta);

@@ -165,6 +165,10 @@ bool AppReadPixelRegion(const AiUI::Rect& region, AiUI::RgbaImage& out) {
 
 const std::vector<std::wstring>& AppSiblingImages() { return g_siblings; }
 
+int AppSiblingIndex() {
+  return g_siblingsValid ? static_cast<int>(g_siblingIndex) : -1;
+}
+
 bool AppStepImage(int delta) {
   if (!g_siblingsValid || g_siblings.empty() || delta == 0) return false;
   const long long next = static_cast<long long>(g_siblingIndex) + delta;

@@ -48,8 +48,27 @@ class PhotoView : public View {
   // 以指定锚点为中心缩放。「鼠标在哪就放大哪」是看图的基本预期：
   // 光标下的像素必须钉在原地，否则每滚一格图都从光标底下溜走。
   void setZoomAt(float zoom, Point anchor);
-  // 适应窗口：整张图放得下，不放大。带动画，终态是「跟随窗口」
+  // 适应窗口：整张图放得下。默认不放大——小图拉伸到整屏会糊，
+  // 但投影演示时恰恰需要「填满屏幕」，所以放大与否可配。带动画，终态是
+  // 「跟随窗口」
   void zoomToFit();
+  // 适应窗口时是否允许放大到铺满；默认 false
+  void setFitAllowsUpscale(bool allowed) { fitAllowsUpscale_ = allowed; }
+  bool fitAllowsUpscale() const { return fitAllowsUpscale_; }
+
+  // 视图状态的快照：临时改变可用区域（如全屏演示）后要能原样退回来，
+  // 否则用户调好的倍数与位置会被一次「适应窗口」抹掉。
+  struct ViewState {
+    float zoom = 1.0f;
+    // 保留精度：动画逐帧反解出的小数平移，取整会让恢复后抖一下
+    float panX = 0.0f;
+    float panY = 0.0f;
+    bool fitToWindow = false;
+  };
+  ViewState saveViewState() const;
+  // 恢复快照。恢复的是「用户当时的选择」：当时若处于适应窗口，
+  // 会按恢复那一刻的尺寸重算，而不是硬套旧倍数。
+  void restoreViewState(const ViewState& state);
   // 缩放到 100%（物理像素 1:1）
   void zoomToActual();
   // 在当前倍数上乘以 factor，围绕锚点
@@ -256,6 +275,8 @@ class PhotoView : public View {
   float proxyRatio_ = 0.0f;
   // 处于「适应窗口」：视图尺寸变化时重算 zoom_，用户自己缩放则清掉
   bool fitToWindow_ = false;
+  // 适应窗口是否允许放大；false 时最多到 100%
+  bool fitAllowsUpscale_ = false;
   // 90° 的整数倍，取值 0..3；绘制时只做坐标变换，不重采样
   int rotation_ = 0;
   // 绘制用的角度：旋转动画期间不等于 rotation_ * 90

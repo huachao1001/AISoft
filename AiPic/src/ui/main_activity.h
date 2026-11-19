@@ -7,14 +7,15 @@
 
 #include "AiUI/activity.h"
 #include "AiUI/events.h"
+#include "AiUI/widgets/photo_view.h"
 
 #include <string>
 
 namespace AiUI {
 class Button;
 class ButtonBar;
-class PhotoView;
 class StatusBar;
+class ThumbnailStrip;
 class View;
 }  // namespace AiUI
 
@@ -33,6 +34,11 @@ class MainActivity : public AiUI::Activity {
   // 按当前图所在的目录跳到前/后一张
   void stepImage(int delta);
 
+  // 全屏演示：隐藏工具栏、缩略图条与状态栏，只留图片。
+  // 方向键/PageUp/PageDown 切图，Esc 退出。
+  void setPresenting(bool presenting);
+  bool isPresenting() const { return presenting_; }
+
   // 另存为：把当前旋转导出成文件
   void saveAs();
 
@@ -49,6 +55,7 @@ class MainActivity : public AiUI::Activity {
   void attachHome();
   void attachPhoto();
   void attachStatusBar();
+  void attachThumbs();
 
   // ── 状态同步 ──
   // 有图/无图决定看图层与首页谁显示
@@ -56,6 +63,8 @@ class MainActivity : public AiUI::Activity {
   void refreshStatusBar();
   // 按钮可用性：没有图时缩放与另存没有意义
   void refreshToolBar();
+  // 缩略图条：跟随同目录列表与当前项
+  void refreshThumbs();
   void updateTitle();
 
   // ── 动作 ──
@@ -70,6 +79,7 @@ class MainActivity : public AiUI::Activity {
   AiUI::ButtonBar* toolBar_ = nullptr;
   AiUI::PhotoView* photo_ = nullptr;
   AiUI::StatusBar* status_ = nullptr;
+  AiUI::ThumbnailStrip* thumbs_ = nullptr;
   AiUI::View* homePane_ = nullptr;
 
   AiUI::Button* btnZoomIn_ = nullptr;
@@ -78,7 +88,14 @@ class MainActivity : public AiUI::Activity {
   AiUI::Button* btnActual_ = nullptr;
   AiUI::Button* btnRotateLeft_ = nullptr;
   AiUI::Button* btnRotateRight_ = nullptr;
+  AiUI::Button* btnPresent_ = nullptr;
   AiUI::Button* btnSaveAs_ = nullptr;
+
+  bool presenting_ = false;
+  // 演示态会临时隐藏标题栏，退出时按原值恢复
+  bool titleBarVisible_ = true;
+  // 进入演示前的缩放与位置：退出时原样退回，不把用户调好的视图弄丢
+  AiUI::PhotoView::ViewState savedView_{};
 };
 
 // 进程内唯一的主窗口

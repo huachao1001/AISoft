@@ -96,6 +96,69 @@ AIUI_TEST(photo_view_fit_does_not_enlarge_small_image) {
   AIUI_CHECK_EQ(view.imageSize().height, 100);
 }
 
+AIUI_TEST(photo_view_fit_can_enlarge_for_presentation) {
+  PhotoEnv env;
+  env.fake.platform().setImageSize(Size{200, 100});
+  TestPhotoView view;
+  view.layout(Rect{0, 0, 400, 400});
+  // 演示态要铺满屏幕：200x100 在 400x400 里取 400/200=2 倍
+  view.setFitAllowsUpscale(true);
+  AIUI_CHECK(view.loadFile(L"a.png"));
+  AIUI_CHECK(std::fabs(view.zoom() - 2.0f) < 0.001f);
+
+  // 关掉开关后重新适应，回到 1:1
+  view.setAnimationDuration(0);
+  view.setFitAllowsUpscale(false);
+  view.zoomToFit();
+  AIUI_CHECK(std::fabs(view.zoom() - 1.0f) < 0.001f);
+}
+
+// 演示态进出：缩放与位置要能原样退回，而不是留在铺满状态
+AIUI_TEST(photo_view_view_state_roundtrip) {
+  PhotoEnv env;
+  env.fake.platform().setImageSize(Size{200, 100});
+  TestPhotoView view;
+  view.layout(Rect{0, 0, 400, 400});
+  view.setAnimationDuration(0);
+  view.loadFile(L"a.png");
+
+  // 用户自己放大并拖动后的状态
+  view.setZoomAt(3.0f, Point{260, 180});
+  const float zoomBefore = view.zoom();
+  const Point panBefore = view.pan();
+  const PhotoView::ViewState saved = view.saveViewState();
+
+  // 演示：铺满屏幕
+  view.setFitAllowsUpscale(true);
+  view.zoomToFit();
+  AIUI_CHECK(std::fabs(view.zoom() - 2.0f) < 0.001f);
+
+  // 退出演示：倍数与位置回到自己调好的样子
+  view.setFitAllowsUpscale(false);
+  view.restoreViewState(saved);
+  AIUI_CHECK(std::fabs(view.zoom() - zoomBefore) < 0.001f);
+  AIUI_CHECK(std::abs(view.pan().x - panBefore.x) <= 1);
+  AIUI_CHECK(std::abs(view.pan().y - panBefore.y) <= 1);
+}
+
+// 快照记录的是「跟随窗口」这个选择，恢复时按当时的尺寸重算
+AIUI_TEST(photo_view_view_state_keeps_fit_mode) {
+  PhotoEnv env;
+  env.fake.platform().setImageSize(Size{200, 100});
+  TestPhotoView view;
+  view.layout(Rect{0, 0, 400, 400});
+  view.setAnimationDuration(0);
+  view.loadFile(L"a.png");
+  AIUI_CHECK(view.isFitToWindow());
+
+  const PhotoView::ViewState saved = view.saveViewState();
+  view.setZoomAt(4.0f, Point{200, 200});  // 用户自己缩放，退出跟随模式
+
+  view.restoreViewState(saved);
+  AIUI_CHECK(view.isFitToWindow());
+  AIUI_CHECK(std::fabs(view.zoom() - 1.0f) < 0.001f);
+}
+
 AIUI_TEST(photo_view_fit_shrinks_large_image_to_fit) {
   PhotoEnv env;
   env.fake.platform().setImageSize(Size{2000, 1000});
