@@ -118,6 +118,9 @@ bool RemoveDirectoryTree(const std::wstring& dir) {
 }
 
 bool CopyFileTo(const std::wstring& from, const std::wstring& to) {
+  // 同一条路径：写模式会先截断目标，等于把源文件清空后再读，必然失败
+  if (platform()->equalsPath(from, to)) return true;
+
   auto in = platform()->openFileStream(from, false);
   if (!in) return false;
   auto out = platform()->openFileStream(to, true);

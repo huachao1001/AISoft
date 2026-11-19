@@ -16,14 +16,26 @@ namespace ui {
 void HandleDroppedFiles(const std::vector<std::wstring>& paths) {
   if (paths.empty()) return;
 
+  // 从本窗口拖出去又落回自己身上：内容就是它自己的镜像副本，直接忽略。
+  // 放行会走"加进这个包"，而源和目标可能是同一批文件，复制会先截断源。
+  std::vector<std::wstring> external;
+  external.reserve(paths.size());
+  for (const auto& p : paths) {
+    if (!g_app.stageDir.empty() && AiUI::platform()->isPathPrefix(g_app.stageDir, p)) continue;
+    external.push_back(p);
+  }
+  if (external.empty()) return;
+
+  const std::vector<std::wstring>& dropped = external;
+
   // 已经在浏览某个压缩包：拖进来的东西就是「加进这个包」。
   // 注意别把「拖另一个压缩包进来」也当成追加——那看着更像要打开它，
   // 用户拖一个包进来的意图是切换目标，不是把一个包塞进另一个包。
   if (g_app.archiveMode && !g_app.homeMode) {
     const bool allArchives =
-        paths.size() == 1 && arc::Archive::IsArchiveFile(paths[0]);
+        dropped.size() == 1 && arc::Archive::IsArchiveFile(dropped[0]);
     if (!allArchives) {
-      const std::wstring error = AppAddToArchive(paths, g_app.innerPath);
+      const std::wstring error = AppAddToArchive(dropped, g_app.innerPath);
       if (!error.empty()) {
         AiUI::MessageBoxParams params;
         params.title = L"爱压";
@@ -40,10 +52,10 @@ void HandleDroppedFiles(const std::vector<std::wstring>& paths) {
     }
   }
 
-  if (paths.size() == 1 && arc::Archive::IsArchiveFile(paths[0])) {
-    AppOpenArchive(paths[0]);
+  if (dropped.size() == 1 && arc::Archive::IsArchiveFile(dropped[0])) {
+    AppOpenArchive(dropped[0]);
   } else {
-    ShowCompressDialog(g_app.mainWnd, paths);
+    ShowCompressDialog(g_app.mainWnd, dropped);
   }
 }
 

@@ -567,6 +567,14 @@ std::wstring AppAddToArchive(const std::vector<std::wstring>& sources,
   const std::wstring dir = EnsureStageDir();
   if (dir.empty()) return L"无法创建临时目录";
 
+  // 源就落在镜像目录里：这是用户把刚从本窗口拖出去的内容又拖了回来，
+  // 不是新文件。放行的话源和目标可能是同一个文件，复制会把它清空。
+  for (const std::wstring& src : sources) {
+    if (AiUI::platform()->isPathPrefix(dir, src)) {
+      return L"这些内容本来就在压缩包里，不需要再添加。\n如果想调整位置，请用拖拽到目标文件夹的方式。";
+    }
+  }
+
   // 新文件只落到镜像里，包里原有内容一律不动：导出时再从原包直接解出来。
   // 这就是打开大包不必先解压的原因。
   const std::wstring relDir = innerDir;
