@@ -1,4 +1,4 @@
-// SidePanel 与 Tooltip：折叠落到终态、顶栏文案、提示框不越界
+// SidePanel / PanelToggle / Tooltip：折叠落到终态、开关按钮方向、提示框不越界
 #include "mock_platform.h"
 #include "test_framework.h"
 
@@ -36,34 +36,16 @@ AIUI_TEST(side_panel_collapses_immediately_without_window) {
   panel.setCollapsed(true);
   AIUI_CHECK(panel.isCollapsed());
   AIUI_CHECK(panel.isAnimating() == false);
-  // 宽度收敛到顶栏那条窄边，而不是 0：收完还留一个可点的展开按钮
-  AIUI_CHECK(panel.layoutParams().width == PanelHeaderStyle{}.collapsedWidth);
-  AIUI_CHECK(panel.header() != nullptr);
-  AIUI_CHECK(panel.header()->isCollapsed());
+  // 收成 0 宽：侧栏不再保留任何「窄边」，开关按钮在状态栏里
+  AIUI_CHECK(panel.layoutParams().width == 0);
 
   panel.setCollapsed(false);
   AIUI_CHECK(!panel.isCollapsed());
   AIUI_CHECK(panel.layoutParams().width == 208);
 }
 
-// 收缩条不承担文字：侧栏就这么窄，目录名放不下几个字，认目录交给状态栏。
-// 这里只留一个动作，别再把标题塞回来。
-AIUI_TEST(side_panel_header_carries_no_title) {
-  PanelEnv env;
-  SidePanel panel;
-  AIUI_CHECK(panel.create(nullptr, Rect{0, 0, 208, 500}));
-
-  RecordingBackend backend;
-  Painter painter(backend);
-  panel.header()->draw(painter, panel.header()->clientRect());
-
-  for (const TextCall& call : backend.texts()) {
-    AIUI_CHECK(call.text.empty());
-  }
-}
-
-// 顶栏落在底部，内容占它上方
-AIUI_TEST(side_panel_header_sits_at_the_bottom) {
+// 收起后宽度归零：整块让给看图区，而不是留一条要人继续认的窄边
+AIUI_TEST(side_panel_collapsed_takes_no_width) {
   PanelEnv env;
   SidePanel panel;
   panel.setExpandedWidth(208);
@@ -71,31 +53,113 @@ AIUI_TEST(side_panel_header_sits_at_the_bottom) {
   panel.setContent(body);
   AIUI_CHECK(panel.create(nullptr, Rect{0, 0, 208, 500}));
 
-  const int headerH = PanelHeaderStyle{}.height;
-  AIUI_CHECK(panel.header()->bounds().bottom == 500);
-  AIUI_CHECK(panel.header()->bounds().top == 500 - headerH);
-  AIUI_CHECK(body->bounds().top == 0);
-  AIUI_CHECK(body->bounds().bottom == panel.header()->bounds().top);
+  panel.setCollapsed(true, false);
+  panel.layout(Rect{0, 0, panel.layoutParams().width, 500});
+  AIUI_CHECK(panel.layoutParams().width == 0);
+  // 收完之后主体藏起来，不再参与绘制
+  AIUI_CHECK(!body->isVisible());
+
+  panel.setCollapsed(false, false);
+  panel.layout(Rect{0, 0, panel.layoutParams().width, 500});
+  AIUI_CHECK(body->isVisible());
 }
 
-// 收成窄边后顶栏只剩一块：高度不超过宽度，按钮才落得进去
-AIUI_TEST(side_panel_collapsed_header_stays_square) {
+// 内容填满整个侧栏：没有自带的顶栏或收缩条占高度
+AIUI_TEST(side_panel_content_fills_the_column) {
   PanelEnv env;
   SidePanel panel;
   panel.setExpandedWidth(208);
+  auto* body = new View();
+  panel.setContent(body);
   AIUI_CHECK(panel.create(nullptr, Rect{0, 0, 208, 500}));
 
-  panel.setCollapsed(true, false);
-  // 宽度改的是布局参数，父容器下一轮排版才生效；这里手动跑一轮
+  AIUI_CHECK(body->bounds().top == 0);
+  AIUI_CHECK(body->bounds().bottom == 500);
+  AIUI_CHECK(body->bounds().width() == 208);
+}
+
+// 动画中途内容保持展开宽度：窄下来的是窗口，不是卡片被压扁
+AIUI_TEST(side_panel_keeps_body_width_while_animating) {
+  PanelEnv env;
+  SidePanel panel;
+  panel.setExpandedWidth(208);
+  auto* body = new View();
+  panel.setContent(body);
+  AIUI_CHECK(panel.create(nullptr, Rect{0, 0, 208, 500}));
+
+  panel.setCollapsed(true, true);
+  // 动画已起步但没走完：仍应处于动画中
+  AIUI_CHECK(panel.isAnimating());
   panel.layout(Rect{0, 0, panel.layoutParams().width, 500});
-  const Rect header = panel.header()->bounds();
-  AIUI_CHECK(header.width() == PanelHeaderStyle{}.collapsedWidth);
-  AIUI_CHECK(header.height() <= header.width());
-  AIUI_CHECK(header.bottom == 500);
-  // 按钮要整个落在这一块里，否则收起来就点不到展开
-  const Rect button = panel.header()->toggleRect();
-  AIUI_CHECK(button.left >= 0 && button.right <= header.width());
-  AIUI_CHECK(button.top >= 0 && button.bottom <= header.height());
+  AIUI_CHECK(body->bounds().width() == 208);
+}
+
+// 开关按钮只换箭头方向：展开时指左（收起），收起时指右（展开）
+AIUI_TEST(panel_toggle_flips_its_arrow) {
+  PanelEnv env;
+  PanelToggle toggle;
+  AIUI_CHECK(toggle.create(nullptr, Rect{0, 0, 30, 30}));
+
+  AIUI_CHECK(!toggle.isCollapsed());
+  toggle.setCollapsed(true);
+  AIUI_CHECK(toggle.isCollapsed());
+  toggle.setCollapsed(false);
+  AIUI_CHECK(!toggle.isCollapsed());
+}
+
+// 开关按钮点击要回调一次，且只在按到按钮上才算
+AIUI_TEST(panel_toggle_reports_click) {
+  PanelEnv env;
+  PanelToggle toggle;
+  AIUI_CHECK(toggle.create(nullptr, Rect{0, 0, 30, 30}));
+
+  int clicks = 0;
+  toggle.setOnToggle([&clicks] { ++clicks; });
+
+  // 走合成的窗口事件：按钮在整棵树里要能被正确命中
+  ViewRoot* root = toggle.root();
+  AIUI_CHECK(root != nullptr);
+  root->sendMouseDown(Point{15, 15});
+  root->sendMouseUp(Point{15, 15});
+  AIUI_CHECK(clicks == 1);
+
+  // 没按下就抬起，不应该算一次点击
+  root->sendMouseUp(Point{15, 15});
+  AIUI_CHECK(clicks == 1);
+}
+
+// 按钮是个小方块：图标居中，四边留白对称，放进状态栏不会比文字高太多
+AIUI_TEST(panel_toggle_measures_as_a_square) {
+  PanelEnv env;
+  PanelToggle toggle;
+  // 默认布局参数是撑满父容器，要量自然尺寸得先放开
+  toggle.setLayoutParams(LayoutParams::wrap());
+  const Size size = toggle.measure(Size{100, 36});
+  AIUI_CHECK(size.width == size.height);
+  AIUI_CHECK(size.height <= 36);
+
+  AIUI_CHECK(toggle.create(nullptr, Rect{0, 0, size.width, size.height}));
+  const Rect icon = toggle.iconRect();
+  AIUI_CHECK(icon.left >= 0 && icon.right <= size.width);
+  AIUI_CHECK(icon.top >= 0 && icon.bottom <= size.height);
+  // 水平方向要居中
+  AIUI_CHECK(icon.left == size.width - icon.right);
+}
+
+// 设了状态源就以它为准：别的路径改了侧栏，箭头也跟着掉头，
+// 不必要求每条改动路径都记得手动同步
+AIUI_TEST(panel_toggle_follows_collapsed_source) {
+  PanelEnv env;
+  SidePanel panel;
+  PanelToggle toggle;
+  toggle.setCollapsedSource([&panel] { return panel.isCollapsed(); });
+
+  AIUI_CHECK(!toggle.isCollapsed());
+  panel.setCollapsed(true, false);
+  AIUI_CHECK(toggle.isCollapsed());
+  // 手动设过也压不过真实状态
+  toggle.setCollapsed(false);
+  AIUI_CHECK(toggle.isCollapsed());
 }
 
 // 提示框优先贴在锚点上方，且两端都要留在客户区内

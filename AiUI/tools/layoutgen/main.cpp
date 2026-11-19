@@ -409,7 +409,7 @@ std::string headerFor(const std::string& tag) {
       {"ButtonBar", "AiUI/widgets/button_bar.h"},
       {"ThumbnailStrip", "AiUI/widgets/thumbnail_strip.h"},
       {"SidePanel", "AiUI/widgets/side_panel.h"},
-      {"PanelHeader", "AiUI/widgets/side_panel.h"},
+      {"PanelToggle", "AiUI/widgets/side_panel.h"},
       {"CheckBox", "AiUI/widgets/option_view.h"},
       {"RadioButton", "AiUI/widgets/option_view.h"},
       {"RadioGroup", "AiUI/widgets/form_controls.h"},

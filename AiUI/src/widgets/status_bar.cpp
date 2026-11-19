@@ -4,6 +4,7 @@
 #include "AiUI/font.h"
 
 #include <algorithm>
+#include <vector>
 
 namespace AiUI {
 
@@ -46,31 +47,52 @@ void StatusBar::onPaint(Painter& painter, const Rect& rect) {
     x = iconRect.right + 8 * d / 96;
   }
 
-  // 路径：按可用宽度从左侧裁掉，保证后面的标签不错位
-  std::wstring shown = fields_.left;
-  while (!shown.empty() && painter.measureText(shown, fonts.uiSmall) > (limit - x)) {
-    shown.erase(shown.begin());
-  }
-  const Rect textRect{x, rect.top, limit, rect.bottom};
-  painter.drawTextEllipsis(textRect, shown, textColor, fonts.uiSmall);
-  x += painter.measureText(shown, fonts.uiSmall);
-  x = (std::min)(x, limit);
+  const int tagPadX = style_.tagPadX * d / 96;
+  const int tagGap = 8 * d / 96;
 
-  if (!fields_.tag.empty()) {
-    const int tagPadX = style_.tagPadX * d / 96;
-    const int tagWidth = painter.measureText(fields_.tag, fonts.uiSmall) + tagPadX * 2;
-    const int tagHeight = style_.tagHeight * d / 96;
-    const Rect tagRect{x + 8 * d / 96, centerY - tagHeight / 2,
-                       x + 8 * d / 96 + tagWidth, centerY + tagHeight / 2};
-    if (tagRect.right < limit) {
-      painter.fillRoundRect(tagRect, tagBg, style_.tagRadius * d / 96);
-      painter.drawText(tagRect, fields_.tag, tagInk, fonts.uiSmall, TextAlign::kCenter);
-      x = tagRect.right + 8 * d / 96;
-    }
+  // 规格胶囊（格式、分辨率、大小、序号）是这张图的硬信息，比路径更该保住：
+  // 先量出它们一共要多宽，路径只拿剩下的部分。路径本身可从左侧裁掉，
+  // 胶囊不行——裁一半的「1600×…」毫无用处。
+  std::vector<std::wstring> pills;
+  if (!fields_.tag.empty()) pills.push_back(fields_.tag);
+  for (const std::wstring& badge : fields_.badges) {
+    if (!badge.empty()) pills.push_back(badge);
   }
+  int pillsWidth = 0;
+  for (const std::wstring& text : pills) {
+    pillsWidth += tagGap + painter.measureText(text, fonts.uiSmall) + tagPadX * 2;
+  }
+
+  // 路径的右边界：给胶囊留够位置，实在放不下就一条路径都不画
+  const int pathLimit = (std::max)(x, limit - pillsWidth);
+
+  // 路径：按可用宽度从左侧裁掉，保证后面的标签不错位
+  if (pathLimit > x) {
+    std::wstring shown = fields_.left;
+    while (!shown.empty() && painter.measureText(shown, fonts.uiSmall) > (pathLimit - x)) {
+      shown.erase(shown.begin());
+    }
+    const Rect textRect{x, rect.top, pathLimit, rect.bottom};
+    painter.drawTextEllipsis(textRect, shown, textColor, fonts.uiSmall);
+    x += painter.measureText(shown, fonts.uiSmall);
+  }
+
+  // 一个胶囊：放不下就停在这里，后面的也不再画——只画一半的胶囊比不画更糟
+  auto drawPill = [&](const std::wstring& text) {
+    if (text.empty()) return;
+    const int width = painter.measureText(text, fonts.uiSmall) + tagPadX * 2;
+    const int height = style_.tagHeight * d / 96;
+    const Rect pill{x + tagGap, centerY - height / 2, x + tagGap + width, centerY + height / 2};
+    if (pill.right > limit) return;
+    painter.fillRoundRect(pill, tagBg, style_.tagRadius * d / 96);
+    painter.drawText(pill, text, tagInk, fonts.uiSmall, TextAlign::kCenter);
+    x = pill.right;
+  };
+
+  for (const std::wstring& text : pills) drawPill(text);
 
   if (!fields_.size.empty() && x < limit) {
-    const Rect sizeRect{x, rect.top, limit, rect.bottom};
+    const Rect sizeRect{x + tagGap, rect.top, limit, rect.bottom};
     painter.drawText(sizeRect, fields_.size, textColor, fonts.uiSmall, TextAlign::kLeft);
   }
   if (rightLeft > 0) {

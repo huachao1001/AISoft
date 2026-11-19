@@ -105,12 +105,36 @@ int Button::preferredWidth() {
     textWidth = static_cast<int>(spec_.label.size()) * fonts.ui.pixelHeight();
   }
 
-  const bool showIcon = spec_.hasIcon && spec_.placement != IconPlacement::kNone;
+  const bool showIcon = hasIcon();
   int width = spec_.padX * 2 * d / 96;
   if (showIcon) width += spec_.iconSize * d / 96;
   if (showIcon && showText) width += spec_.iconGap * d / 96;
   if (showText) width += textWidth;
   return width;
+}
+
+// hasIcon 只说明「允许有这个图标位」，图标本身还可能是 kNone。
+// 后者要当没有图标：否则紧凑模式把文字撤掉，只剩一个空方块可点。
+bool Button::hasIcon() const {
+  return spec_.hasIcon && spec_.icon != IconId::kNone && spec_.placement != IconPlacement::kNone;
+}
+
+int Button::compactWidth() {
+  // 没有图标就没有可省的：文字是唯一能认出这个按钮的东西，不能撤
+  if (!hasIcon()) return preferredWidth();
+  const int d = dpi();
+  // 只留图标与左右内边距；内边距收一半，图标按钮不必像带文字的按钮那样宽
+  return spec_.padX * d / 96 + spec_.iconSize * d / 96;
+}
+
+void Button::setCompact(bool compact) {
+  // 没有图标就没有可省的：这里直接拒掉，免得 isCompact() 说是紧凑、
+  // 实际却因为撤不掉文字而照旧画成原样，状态与外观对不上
+  if (compact && !hasIcon()) return;
+  if (compact_ == compact) return;
+  compact_ = compact;
+  requestLayout();
+  invalidate();
 }
 
 Size Button::onMeasure(const Size& available) {
@@ -132,8 +156,11 @@ void Button::onPaint(Painter& painter, const Rect& rect) {
     painter.strokeRoundRect(rect, border, spec_.radius * d / 96);
   }
 
-  const bool showIcon = spec_.hasIcon && spec_.placement != IconPlacement::kNone;
-  const bool showText = spec_.placement != IconPlacement::kOnly && !spec_.label.empty();
+  const bool showIcon = hasIcon();
+  // 紧凑模式下只留图标
+  const bool showText =
+      spec_.placement != IconPlacement::kOnly && !spec_.label.empty() &&
+      !(compact_ && showIcon);
   const int iconSize = spec_.iconSize * d / 96;
   const int gap = spec_.iconGap * d / 96;
 

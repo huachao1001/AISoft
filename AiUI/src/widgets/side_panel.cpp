@@ -1,7 +1,6 @@
-// SidePanel / PanelHeader 实现
+// SidePanel / PanelToggle 实现
 #include "AiUI/widgets/side_panel.h"
 
-#include "AiUI/font.h"
 #include "AiUI/platform.h"
 
 #include <algorithm>
@@ -24,94 +23,86 @@ float easeInOut(float t) {
 
 }  // namespace
 
-// ───────────────────────── PanelHeader ─────────────────────────
+// ───────────────────────── PanelToggle ─────────────────────────
 
-void PanelHeader::setStyle(const PanelHeaderStyle& style) {
+void PanelToggle::setStyle(const PanelToggleStyle& style) {
   style_ = style;
   requestLayout();
   invalidate();
 }
 
-void PanelHeader::setCollapsed(bool collapsed) {
+void PanelToggle::setCollapsed(bool collapsed) {
   if (collapsed_ == collapsed) return;
   collapsed_ = collapsed;
-  // 只换按钮方向：它是「下一步会怎样」的提示
+  // 只换箭头方向：它是「下一步会怎样」的提示
   invalidate();
 }
 
-// 排法跟「实际宽度」走，而不是跟目标态走：动画过程中宽度一路收窄，
-// 横排放不下时自然切成居中摆放，看着是被挤出去的，不会突然跳一下。
-bool PanelHeader::isNarrow() const {
-  const int d = dpi();
-  return clientRect().width() < style_.collapsedWidth * d / 96 * 2;
+// 有状态源时以它为准：箭头永远反映侧栏真实状态，不必要求每条改动路径
+// （点击、快捷键、自动化脚本）都记得手动同步一次。
+bool PanelToggle::isCollapsed() const {
+  return collapsedSource_ ? collapsedSource_() : collapsed_;
 }
 
-Rect PanelHeader::localToggleRect() const {
+Rect PanelToggle::iconRect() const {
   const int d = dpi();
   const Rect rc = clientRect();
-  // 固定的小方块按钮；窄边上先保证不越界
-  const int side = (std::max)(1, (std::min)(22 * d / 96, rc.width() - 4 * d / 96));
-  if (isNarrow()) {
-    // 窄边就是个方块：按钮居中，四周留白对称
-    const int x = (rc.width() - side) / 2;
-    const int y = (rc.height() - side) / 2;
-    return Rect{x, y, x + side, y + side};
-  }
-  const int right = rc.right - style_.padRight * d / 96;
-  const int centerY = rc.center().y;
-  return Rect{right - side, centerY - side / 2, right, centerY + side / 2};
+  const int side = (std::max)(1, (std::min)(style_.iconSize * d / 96, (std::min)(rc.width(), rc.height())));
+  return Rect{(rc.width() - side) / 2, (rc.height() - side) / 2, (rc.width() + side) / 2,
+              (rc.height() + side) / 2};
 }
 
-Rect PanelHeader::toggleRect() const { return localToggleRect(); }
-
-Size PanelHeader::onMeasure(const Size& available) {
-  // 宽度由 SidePanel 独占下发（它自己摆子视图），这里只报自然高度
-  return Size{available.width, style_.height * dpi() / 96};
+Size PanelToggle::onMeasure(const Size& available) {
+  (void)available;
+  // 方形按钮：图标四周留同样多的空白，放在状态栏里不至于比文字高
+  const int d = dpi();
+  const int side = style_.iconSize * d / 96 + 14 * d / 96;
+  return Size{side, side};
 }
 
-void PanelHeader::onPaint(Painter& painter, const Rect& rect) {
+void PanelToggle::onPaint(Painter& painter, const Rect& rect) {
   const int d = dpi();
   const Theme& t = theme();
-  const Color iconColor = t.iconMuted;
 
-  // 分隔线压在朝内容那一侧：顶栏在底部，线就在它上面
-  if (!isNarrow()) {
-    painter.drawHLine(rect.left, rect.right, rect.top, t.line);
+  if (style_.topDivider) {
+    const Color line = style_.divider != kNoColor ? style_.divider : t.line;
+    painter.drawHLine(rect.left, rect.right, rect.top, line);
   }
 
-  const Rect button = localToggleRect();
   if (hot_ || pressed_) {
-    const Color hoverBg = style_.buttonHover != kNoColor ? style_.buttonHover : t.btnHoverBg;
-    painter.fillRoundRect(button, hoverBg, 4 * d / 96);
+    const Color bg = pressed_ && style_.downBackground != kNoColor
+                         ? style_.downBackground
+                         : (style_.hoverBackground != kNoColor ? style_.hoverBackground : t.btnHoverBg);
+    painter.fillRoundRect(rect.inset(2 * d / 96, 2 * d / 96, 2 * d / 96, 2 * d / 96), bg, 5 * d / 96);
   }
 
-  // 展开态按钮指向左（收起），折叠态指向右（展开）：
-  // kChevron 本身是「右」，所以展开时转 180°。绕按钮中心转，
-  // 否则图标会跑到原点那一侧去。
-  const Rect iconRect = button.inset(5 * d / 96, 5 * d / 96, 5 * d / 96, 5 * d / 96);
+  Color ink = style_.icon != kNoColor ? style_.icon : t.iconMuted;
+  if (!isEnabled()) ink = style_.iconDisabled != kNoColor ? style_.iconDisabled : t.textFaint;
+
+  // 展开态指左（收起），收起态指右（展开）：kChevron 本身是「右」，
+  // 所以展开时转 180°。绕图标中心转，否则它会跑到原点那一侧去。
+  const Rect icon = iconRect();
   painter.save();
-  if (!collapsed_) {
-    painter.translate(button.center().x, button.center().y);
+  if (!isCollapsed()) {
+    painter.translate(icon.center().x, icon.center().y);
     painter.rotate(180.0f);
     painter.drawIcon(IconId::kChevron,
-                     Rect{-iconRect.width() / 2, -iconRect.height() / 2, iconRect.width() / 2,
-                          iconRect.height() / 2},
-                     iconColor);
+                     Rect{-icon.width() / 2, -icon.height() / 2, icon.width() / 2, icon.height() / 2},
+                     ink);
   } else {
-    painter.drawIcon(IconId::kChevron, iconRect, iconColor);
+    painter.drawIcon(IconId::kChevron, icon, ink);
   }
   painter.restore();
 }
 
-bool PanelHeader::onMouseDown(const MouseEvent& e) {
-  if (e.button != MouseButton::kLeft) return false;
-  if (!localToggleRect().contains(e.position)) return false;
+bool PanelToggle::onMouseDown(const MouseEvent& e) {
+  if (e.button != MouseButton::kLeft || !isEnabled()) return false;
   pressed_ = true;
   invalidate();
   return true;
 }
 
-void PanelHeader::onMouseUp(const MouseEvent& e) {
+void PanelToggle::onMouseUp(const MouseEvent& e) {
   (void)e;
   if (!pressed_) return;
   pressed_ = false;
@@ -119,41 +110,28 @@ void PanelHeader::onMouseUp(const MouseEvent& e) {
   if (onToggle_) onToggle_();
 }
 
-void PanelHeader::onMouseMove(const MouseEvent& e) {
-  const bool hot = localToggleRect().contains(e.position);
+void PanelToggle::onMouseMove(const MouseEvent& e) {
+  const bool hot = clientRect().contains(e.position);
   if (hot == hot_) return;
   hot_ = hot;
-  setCursor(hot ? CursorShape::kHand : CursorShape::kArrow);
+  setCursor(hot && isEnabled() ? CursorShape::kHand : CursorShape::kArrow);
   invalidate();
 }
 
-void PanelHeader::onMouseLeave() {
+void PanelToggle::onMouseLeave() {
   if (!hot_ && !pressed_) return;
   hot_ = false;
   pressed_ = false;
   invalidate();
 }
 
-Color PanelHeader::backgroundColor() const {
-  if (style_.background != kNoColor) return style_.background;
-  return theme().headerBg;
-}
+Color PanelToggle::backgroundColor() const { return kNoColor; }
 
 // ───────────────────────── SidePanel ─────────────────────────
 
 SidePanel::~SidePanel() {
   // 子视图归 ViewGroup 所有，这里只断开引用
-  header_ = nullptr;
   body_ = nullptr;
-}
-
-void SidePanel::ensureHeader() {
-  if (header_) return;
-  header_ = new PanelHeader();
-  header_->setId(makeId("panelHeader"));
-  header_->setOnToggle([this] { setCollapsed(!collapsed_); });
-  // 顶栏先加：折叠动画里它是唯一还看得见的部件
-  addView(header_, LayoutParams{}.withSize(LayoutParams::kMatchParent, LayoutParams::kWrapContent));
 }
 
 void SidePanel::setContent(View* body) {
@@ -171,11 +149,7 @@ void SidePanel::setExpandedWidth(int width) {
   if (!collapsed_ && !animating_) applyWidth(width);
 }
 
-int SidePanel::targetWidth() const {
-  if (!collapsed_) return expandedWidth_;
-  const PanelHeaderStyle hs = header_ ? header_->style() : PanelHeaderStyle{};
-  return hs.collapsedWidth;
-}
+int SidePanel::targetWidth() const { return collapsed_ ? 0 : expandedWidth_; }
 
 void SidePanel::setCollapsed(bool collapsed, bool animated) {
   if (collapsed_ == collapsed && !animating_) return;
@@ -189,7 +163,6 @@ void SidePanel::setCollapsed(bool collapsed, bool animated) {
     animating_ = false;
     lastAppliedWidth_ = target;
     applyWidth(target);
-    if (header_) header_->setCollapsed(collapsed);
     if (body_) body_->show(!collapsed);
     if (onCollapsedChanged_) onCollapsedChanged_();
     return;
@@ -203,14 +176,10 @@ void SidePanel::setCollapsed(bool collapsed, bool animated) {
   animTo_ = target;
   if (animFrom_ == animTo_) {
     animating_ = false;
-    if (header_) header_->setCollapsed(collapsed);
     if (body_) body_->show(!collapsed);
     if (onCollapsedChanged_) onCollapsedChanged_();
     return;
   }
-  // 只先换按钮方向（它是「下一步会怎样」的提示），标题排法留给宽度自己决定：
-  // 宽度一路收窄，横排放不下时自然转竖排，看着是被挤出去而不是跳一下。
-  if (header_) header_->setCollapsed(collapsed);
   animating_ = true;
   animStartMs_ = platform()->monotonicMillis();
   lastAppliedWidth_ = animFrom_;
@@ -239,8 +208,7 @@ void SidePanel::onDelayed() {
   if (done) {
     animating_ = false;
     applyWidth(animTo_);
-    // 收完之后才换顶栏形态、藏内容：中途换会让画面先闪一下
-    if (header_) header_->setCollapsed(collapsed_);
+    // 收完之后才藏内容：中途藏会让画面先空一块
     if (body_) body_->show(!collapsed_);
     if (onCollapsedChanged_) onCollapsedChanged_();
     return;
@@ -258,22 +226,13 @@ void SidePanel::applyWidth(int designWidth) {
 Size SidePanel::onMeasure(const Size& available) { return available; }
 
 void SidePanel::onLayout(const Rect& frame) {
-  const int d = dpi();
-  if (header_) {
-    // 顶栏贴在底部。高度不超过宽度：收成窄边后它就是底下一个方块，
-    // 宽度一路收窄时高度跟着收敛，不会在动画收尾那一刻突然变矮。
-    const int designH = header_->style().height * d / 96;
-    const int h = (std::min)({designH, frame.width(), frame.height()});
-    header_->layout(Rect{0, frame.height() - h, frame.width(), frame.height()});
-  }
   if (!body_) return;
-
-  const int bottom = header_ ? header_->bounds().top : frame.height();
+  const int d = dpi();
   // 动画期间内容保持展开宽度：窄下来的是「窗口」，不是里面的卡片，
-  // 看起来才是被推出去，而不是被压扁。折叠完成后它本来就隐藏了。
+  // 看起来才是被推出去，而不是被压扁。收起完成后它本来就隐藏了。
   const int bodyWidth =
       animating_ ? (std::max)(frame.width(), expandedWidth_ * d / 96) : frame.width();
-  body_->layout(Rect{0, 0, bodyWidth, (std::max)(0, bottom)});
+  body_->layout(Rect{0, 0, bodyWidth, frame.height()});
 }
 
 }  // namespace AiUI

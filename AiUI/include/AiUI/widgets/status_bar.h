@@ -6,6 +6,7 @@
 #include "AiUI/view.h"
 
 #include <string>
+#include <vector>
 
 namespace AiUI {
 
@@ -13,6 +14,9 @@ struct StatusFields {
   std::wstring left;   // 路径或包路径
   std::wstring tag;    // 格式标签，空则不画
   std::wstring size;   // 大小
+  // 追加的胶囊标签（分辨率、文件大小、序号之类）。渲染成与 tag 同款的
+  // 圆角底，排在 size 之后；空串跳过，方便调用方按条件塞。
+  std::vector<std::wstring> badges;
   std::wstring right;  // 右侧统计
   bool showHome = false;
 };

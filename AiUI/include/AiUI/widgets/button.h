@@ -69,6 +69,14 @@ class Button : public View {
   // 内容自适应宽度（物理像素）
   int preferredWidth();
 
+  // 紧凑模式：只画图标、不画文字，宽度也跟着收紧。
+  // 工具栏在窗口变窄时靠它保住所有动作都还点得到——藏起文字总比按钮跑到
+  // 窗口外、连点都点不到要好。没有图标的按钮在紧凑模式下仍显示文字。
+  void setCompact(bool compact);
+  bool isCompact() const { return compact_; }
+  // 只含图标时的宽度；没有图标时等于 preferredWidth()
+  int compactWidth();
+
  protected:
   void onPaint(Painter& painter, const Rect& rect) override;
   Size onMeasure(const Size& available) override;
@@ -80,10 +88,13 @@ class Button : public View {
  private:
   // 按状态解析出背景、边框、墨色
   void resolvePalette(Color& background, Color& border, Color& ink) const;
+  // 真的能画出图标：既要允许图标位，图标本身也不能是 kNone
+  bool hasIcon() const;
 
   ButtonSpec spec_{};
   bool hot_ = false;
   bool pressed_ = false;
+  bool compact_ = false;
 };
 
 }  // namespace AiUI

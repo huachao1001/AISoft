@@ -65,14 +65,6 @@ TitleBar::TitleBar() : defaults_(titleBarDefaults()) {
     buttons_->setGravity(Gravity::kCenter);
     return buttons_;
   };
-  auto makeTags = [this] {
-    tags_ = new LinearLayout(Orientation::kHorizontal);
-    tags_->setId(kTitleBarIdTags);
-    tags_->setGravity(Gravity::kCenter);
-    // 标签自己贴在一起太挤，统一给一档间距；空的时候不占宽度
-    tags_->setSpacing(6);
-    return tags_;
-  };
   auto makeButton = [this](int id, IconId icon, bool close, Handler TitleBar::*handler) {
     auto* button = new Button();
     button->setId(id);
@@ -87,7 +79,6 @@ TitleBar::TitleBar() : defaults_(titleBarDefaults()) {
 
   auto* icon = makeIcon();
   auto* title = makeTitle();
-  auto* tags = makeTags();
   auto* buttons = makeButtons();
   minimizeButton_ =
       makeButton(kTitleBarIdMinimize, IconId::kMinimize, false, &TitleBar::onMinimize_);
@@ -103,25 +94,18 @@ TitleBar::TitleBar() : defaults_(titleBarDefaults()) {
       LayoutParams{}.withSize(defaults_.appIconSize, LayoutParams::kWrapContent);
   const LayoutParams titleParams =
       LayoutParams{}.withSize(LayoutParams::kWrapContent, LayoutParams::kMatchParent);
-  const LayoutParams tagsParams =
-      LayoutParams{}.withSize(LayoutParams::kWrapContent, LayoutParams::kMatchParent);
   const LayoutParams buttonsParams =
       LayoutParams{}.withSize(LayoutParams::kWrapContent, LayoutParams::kMatchParent);
 
-  // 顺序：图标、标题、标签、弹簧、按钮。
-  //
-  // 标签紧跟在标题后面而不是靠右：它描述的是这张图（分辨率、大小、第几张），
-  // 跟标题是一组信息，离远了会读成「窗口状态」。
+  // 顺序：图标、标题、弹簧、按钮。
   if (defaults_.buttonsOnLeft) {
     band_->addView(buttons, buttonsParams);
     band_->addView(spacer, spacerParams);
-    band_->addView(tags, tagsParams);
     band_->addView(icon, iconParams);
     band_->addView(title, titleParams);
   } else {
     band_->addView(icon, iconParams);
     band_->addView(title, titleParams);
-    band_->addView(tags, tagsParams);
     band_->addView(spacer, spacerParams);
     band_->addView(buttons, buttonsParams);
   }
@@ -308,16 +292,13 @@ void TitleBar::syncButtonIcons() {
 // ───────────────────────── 布局 ─────────────────────────
 
 Size TitleBar::onMeasure(const Size& available) {
-  // 标题按文字宽度自然排，但不能把右侧标签挤出窗口：上限 = 可用宽度减去
-  // 图标、标签区、系统按钮与内边距。标签宽度要实测，它是随内容变的。
+  // 标题按文字宽度自然排，但不能把右侧系统按钮挤出窗口：上限 = 可用宽度
+  // 减去图标、系统按钮与内边距。按钮宽度要实测，它随平台默认值变。
   if (titleView_) {
     const int d = dpi();
     int reserved = (defaults_.padLeft + defaults_.padRight) * d / 96;
     const bool showIcon = showTitleIcon_ && appIcon_.isValid() && defaults_.appIconSize > 0;
     if (showIcon) reserved += (defaults_.appIconSize + defaults_.iconGap) * d / 96;
-    if (tags_ && tags_->isVisible()) {
-      reserved += tags_->measure(Size{available.width, available.height}).width;
-    }
     if (buttons_ && buttons_->isVisible()) {
       reserved += buttons_->measure(Size{available.width, available.height}).width;
     }

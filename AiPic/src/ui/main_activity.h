@@ -14,9 +14,9 @@
 namespace AiUI {
 class Button;
 class ButtonBar;
+class PanelToggle;
 class SidePanel;
 class StatusBar;
-class TagView;
 class ThumbnailStrip;
 class View;
 }  // namespace AiUI
@@ -58,7 +58,7 @@ class MainActivity : public AiUI::Activity {
   void attachPhoto();
   void attachStatusBar();
   void attachThumbs();
-  // 侧栏：宽度以布局为准，收缩后只留底部一条
+  // 侧栏：宽度以布局为准，开关按钮在状态栏最左边
   void attachSidePanel();
 
   // ── 状态同步 ──
@@ -70,12 +70,6 @@ class MainActivity : public AiUI::Activity {
   // 缩略图条：跟随同目录列表与当前项
   void refreshThumbs();
   void updateTitle();
-
-  // ── 标题栏标签 ──
-  // 分辨率、文件大小、第几张：三者都是「关于这张图」的规格，
-  // 放进标题栏比塞状态栏更容易一眼扫到
-  void attachTitleTags();
-  void refreshTitleTags();
 
   // ── 动作 ──
   void zoomBy(float factor);
@@ -91,12 +85,9 @@ class MainActivity : public AiUI::Activity {
   AiUI::StatusBar* status_ = nullptr;
   AiUI::ThumbnailStrip* thumbs_ = nullptr;
   AiUI::SidePanel* sidePanel_ = nullptr;
+  // 状态栏最左边的侧栏收起/展开开关
+  AiUI::PanelToggle* panelToggle_ = nullptr;
   AiUI::View* homePane_ = nullptr;
-
-  // 标题栏上的三个信息标签；没有图时整组隐藏
-  AiUI::TagView* tagSize_ = nullptr;
-  AiUI::TagView* tagBytes_ = nullptr;
-  AiUI::TagView* tagIndex_ = nullptr;
 
   AiUI::Button* btnZoomIn_ = nullptr;
   AiUI::Button* btnZoomOut_ = nullptr;

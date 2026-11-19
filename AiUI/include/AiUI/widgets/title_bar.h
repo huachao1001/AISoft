@@ -48,8 +48,6 @@ constexpr int kTitleBarIdButtons = 0x7A04;
 constexpr int kTitleBarIdMinimize = 0x7A05;
 constexpr int kTitleBarIdMaximize = 0x7A06;
 constexpr int kTitleBarIdClose = 0x7A07;
-// 标题右侧的信息标签区：宿主往里加 TagView 之类的短标签
-constexpr int kTitleBarIdTags = 0x7A08;
 
 // 标题栏默认度量（96 DPI 设计值）。平台差异只有按钮在哪一侧与几个数字，
 // 实现放在 src/os/<platform>/，通用层只读数据。
@@ -114,8 +112,6 @@ class TitleBar : public FrameLayout { public:
   // 默认关闭，因为有些标题（如「设置」）截断反而更难认。
   void setTitleMiddleEllipsis(bool enabled);
   bool isTitleMiddleEllipsis() const { return titleMiddleEllipsis_; }
-  // 标题右侧的标签区：宿主往里 addView 即可，标签之间的间距由它统一给
-  LinearLayout* tagArea() const { return tags_; }
   // 标题左侧的应用图标；无效时不画
   void setAppIcon(Image icon);
   void setTitleIconVisible(bool visible);
@@ -166,7 +162,6 @@ class TitleBar : public FrameLayout { public:
   LinearLayout* band_ = nullptr;
   ImageView* iconView_ = nullptr;
   TextView* titleView_ = nullptr;
-  LinearLayout* tags_ = nullptr;
   LinearLayout* buttons_ = nullptr;
   Button* minimizeButton_ = nullptr;
   Button* maximizeButton_ = nullptr;

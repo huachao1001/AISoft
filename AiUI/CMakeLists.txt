@@ -127,6 +127,8 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     tests/test_toast.cpp
     tests/test_side_panel.cpp
     tests/test_offscreen.cpp
+    tests/test_button_bar.cpp
+    tests/test_status_bar.cpp
   )
   target_include_directories(AiUI_tests PRIVATE tests)
   target_link_libraries(AiUI_tests PRIVATE AiUI)

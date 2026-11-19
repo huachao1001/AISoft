@@ -14,7 +14,6 @@
 #include "AiUI/widgets/photo_view.h"
 #include "AiUI/widgets/side_panel.h"
 #include "AiUI/widgets/status_bar.h"
-#include "AiUI/widgets/tag_view.h"
 #include "AiUI/widgets/thumbnail_strip.h"
 #include "AiUI/widgets/title_bar.h"
 
@@ -134,9 +133,8 @@ void MainActivity::onCreate() {
   attachHome();
   attachPhoto();
   attachStatusBar();
-  attachThumbs();
   attachSidePanel();
-  attachTitleTags();
+  attachThumbs();
 
   // 拖放与单实例转发挂在 AiUI 建的顶层窗口上
   g_app.mainWnd = nativeWindow();
@@ -245,6 +243,19 @@ void MainActivity::attachSidePanel() {
   // 布局变化时自己重算，而用户手动调过的倍数不该因为收个侧栏就被重置。
   const int width = sidePanel_->layoutParams().width;
   if (width > 0) sidePanel_->setExpandedWidth(width);
+
+  // 开关按钮在状态栏最左边（由布局创建）。入口固定在左下角，不管侧栏收没
+  // 收都在同一处；侧栏里也就不必再留一条只为放按钮的栏。
+  panelToggle_ = findView<AiUI::PanelToggle>("panelToggle");
+  if (!panelToggle_) return;
+  // 箭头直接跟侧栏状态走，不必在每条改动路径上都手动同步
+  panelToggle_->setCollapsedSource([this] { return sidePanel_ && sidePanel_->isCollapsed(); });
+  panelToggle_->setOnToggle([this] {
+    if (!sidePanel_) return;
+    sidePanel_->setCollapsed(!sidePanel_->isCollapsed());
+    // 动画只改宽度不重画按钮，这里主动刷一次让箭头立刻掉头
+    if (panelToggle_) panelToggle_->invalidate();
+  });
 }
 
 void MainActivity::attachThumbs() {
@@ -265,9 +276,12 @@ void MainActivity::refreshStage() {
   const bool has = AppHasImage();
   if (homePane_) homePane_->show(!has);
   if (photo_) photo_->show(has);
-  // 侧栏（含顶栏）只在有图、且不在演示态时有意义：空状态页与投影都要独占
-  // 整块宽度。翻页会走这里，所以演示判断不能只放在 setPresenting 里。
-  if (sidePanel_) sidePanel_->show(has && !presenting_);
+  // 侧栏只在有图、且不在演示态时有意义：空状态页与投影都要独占整块宽度。
+  // 翻页会走这里，所以演示判断不能只放在 setPresenting 里。
+  // 开关按钮跟着一起隐：侧栏都不在，按钮点了也没有可见结果。
+  const bool showPanel = has && !presenting_;
+  if (sidePanel_) sidePanel_->show(showPanel);
+  if (panelToggle_) panelToggle_->show(showPanel);
 }
 
 void MainActivity::refreshThumbs() {
@@ -292,8 +306,20 @@ void MainActivity::refreshStatusBar() {
   const AiUI::Size size = AppImageSize();
   fields.left = path;
   fields.tag = util::FormatLabel(path);
-  // 尺寸用乘号而不是「x」：和状态栏里其它数字排在一起更像规格
-  fields.size = std::to_wstring(size.width) + L" × " + std::to_wstring(size.height);
+  // 分辨率、文件大小、第几张：三样都是「关于这张图」的规格，跟格式标签
+  // 并排成胶囊比塞在标题栏更合适——标题栏本来就不该堆信息。
+  fields.badges.push_back(std::to_wstring(size.width) + L"×" + std::to_wstring(size.height));
+
+  // 文件大小：读不到就不给这个胶囊，比显示 0 B 诚实
+  const uint64_t bytes = AiUI::platform()->fileSize(path);
+  if (bytes > 0) fields.badges.push_back(util::FormatBytes(bytes));
+
+  // 第几张 / 共几张：只在同目录有多张时才有意义
+  const int count = static_cast<int>(AppSiblingImages().size());
+  const int index = AppSiblingIndex();
+  if (count > 1 && index >= 0) {
+    fields.badges.push_back(std::to_wstring(index + 1) + L"/" + std::to_wstring(count));
+  }
 
   std::wstring right;
   if (photo_) {
@@ -334,63 +360,12 @@ void MainActivity::updateTitle() {
     setTitle(L"爱图");
     // 无图时标题就是应用名，不该再被当成文件名截断
     if (bar) bar->setTitleMiddleEllipsis(false);
-    refreshTitleTags();
     return;
   }
-  // 标题只放文件名：分辨率、大小、序号已经做成标签，重复写反而挤
+  // 标题只放文件名：分辨率、大小、序号都在状态栏，重复写反而挤
   setTitle(util::BaseName(AppImagePath()));
   // 文件名必须中段省略：尾部省略会把扩展名裁掉，而那正是要认的信息
   if (bar) bar->setTitleMiddleEllipsis(true);
-  refreshTitleTags();
-}
-
-void MainActivity::attachTitleTags() {
-  AiUI::Window* win = window();
-  AiUI::TitleBar* bar = win ? win->titleBar() : nullptr;
-  if (!bar || !bar->tagArea()) return;
-
-  // 标签全部按内容宽度排，不加权重：它们是信息，不参与撑开空间
-  const AiUI::LayoutParams tagParams =
-      AiUI::LayoutParams{}.withSize(AiUI::LayoutParams::kWrapContent,
-                                    AiUI::LayoutParams::kWrapContent);
-  auto addTag = [&]() {
-    auto* tag = new AiUI::TagView();
-    bar->tagArea()->addView(tag, tagParams);
-    return tag;
-  };
-  tagSize_ = addTag();
-  tagBytes_ = addTag();
-  tagIndex_ = addTag();
-
-  // 文件名要保住扩展名，尾部省略会把 .png 裁掉
-  bar->setTitleMiddleEllipsis(true);
-  // 上限由 TitleBar 在布局时按窗口宽度算出，这里不用管
-}
-
-void MainActivity::refreshTitleTags() {
-  if (!tagSize_ || !tagBytes_ || !tagIndex_) return;
-
-  const bool has = AppHasImage();
-  AiUI::TagView* tags[] = {tagSize_, tagBytes_, tagIndex_};
-  for (AiUI::TagView* tag : tags) tag->show(has);
-  if (!has) return;
-
-  const AiUI::Size size = AppImageSize();
-  tagSize_->setText(std::to_wstring(size.width) + L"×" + std::to_wstring(size.height));
-
-  // 文件大小：读不到就不显示这个标签，比显示 0 B 诚实
-  const uint64_t bytes = AiUI::platform()->fileSize(AppImagePath());
-  tagBytes_->setText(bytes > 0 ? util::FormatBytes(bytes) : std::wstring());
-  tagBytes_->show(bytes > 0);
-
-  // 第几张 / 共几张：只在同目录有多张时才有意义
-  const int count = static_cast<int>(AppSiblingImages().size());
-  const int index = AppSiblingIndex();
-  const bool showIndex = count > 1 && index >= 0;
-  tagIndex_->show(showIndex);
-  if (showIndex) {
-    tagIndex_->setText(std::to_wstring(index + 1) + L"/" + std::to_wstring(count));
-  }
 }
 
 // ───────────────────────── 动作 ─────────────────────────
@@ -524,6 +499,7 @@ void MainActivity::setPresenting(bool presenting) {
   if (toolBar_) toolBar_->show(!presenting);
   if (status_) status_->show(!presenting);
   if (sidePanel_) sidePanel_->show(!presenting && AppHasImage());
+  if (panelToggle_) panelToggle_->show(!presenting && AppHasImage());
   if (homePane_) homePane_->show(!AppHasImage());
 
   // 标题栏与系统边框一起收起：留着标题栏就不是「全屏」了
