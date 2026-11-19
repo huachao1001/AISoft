@@ -49,6 +49,7 @@ set(AIUI_SOURCES
   src/widgets/password_box.cpp
   src/widgets/photo_view.cpp
   src/widgets/status_bar.cpp
+  src/widgets/tag_view.cpp
   src/widgets/text_view.cpp
   src/widgets/thumbnail_strip.cpp
   src/widgets/title_bar.cpp

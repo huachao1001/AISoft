@@ -127,6 +127,10 @@ int View::px(int value) const { return value * dpi() / 96; }
 Size View::measure(const Size& available) {
   measured_ = onMeasure(available);
   const int d = dpi();
+  // 内容尺寸上限先于固定尺寸生效：它约束的是内容想要的宽度
+  if (params_.maxWidth > 0) {
+    measured_.width = (std::min)(measured_.width, params_.maxWidth * d / 96);
+  }
 
   // 布局参数优先于内容尺寸
   if (params_.width == LayoutParams::kMatchParent) {

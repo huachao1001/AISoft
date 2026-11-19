@@ -200,6 +200,67 @@ class Painter {
                       TextAlign::kLeft);
   }
 
+  // 中间省略号：保留首尾、省略中段。
+  //
+  // 文件名必须这样处理——尾部省略会把扩展名干掉，而「是不是 png」恰好是
+  // 用户最先要认的信息；首部省略则认不出是哪份文件。两头各留一截才对。
+  // 尾段优先保住扩展名与版本号，所以尾部保留的字数按可用宽度反推，
+  // 但不能少于「扩展名 + 一点名字」，否则只剩个 ".png"。
+  void drawTextMiddleEllipsis(const Rect& rc, const std::wstring& text, Color color,
+                              const Font& font) {
+    if (text.empty() || rc.isEmpty()) return;
+    const int limit = rc.width();
+    if (measureText(text, font) <= limit) {
+      backend_.drawText(rc, text, color, font, TextAlign::kLeft);
+      return;
+    }
+    static const std::wstring dots = L"…";
+    const int dotsW = measureText(dots, font);
+    if (dotsW >= limit) {
+      // 连省略号都放不下，交给尾部省略去裁
+      drawTextEllipsis(rc, text, color, font);
+      return;
+    }
+
+    const int total = static_cast<int>(text.size());
+    // 尾部先按一半宽度起步，再二分加长：把宽度预算均分给首尾，
+    // 长文件名两侧都能留下可辨认的片段
+    int tail = total / 2;
+    int lo = 1;
+    int hi = total;
+    while (lo < hi) {
+      const int mid = (lo + hi + 1) / 2;
+      if (measureText(text.substr(static_cast<size_t>(total - mid)), font) + dotsW <=
+          limit) {
+        lo = mid;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    tail = (std::min)(lo, total - 1);
+
+    // 剩余宽度给首段
+    const int tailW = measureText(text.substr(static_cast<size_t>(total - tail)), font);
+    const int headBudget = limit - tailW - dotsW;
+    int head = 0;
+    if (headBudget > 0) {
+      lo = 0;
+      hi = total - tail;
+      while (lo < hi) {
+        const int mid = (lo + hi + 1) / 2;
+        if (backend_.measureText(text, 0, mid, font) <= headBudget) {
+          lo = mid;
+        } else {
+          hi = mid - 1;
+        }
+      }
+      head = lo;
+    }
+    backend_.drawText(rc, text.substr(0, static_cast<size_t>(head)) + dots +
+                              text.substr(static_cast<size_t>(total - tail)),
+                      color, font, TextAlign::kLeft);
+  }
+
   int measureText(const std::wstring& text, const Font& font) {
     return backend_.measureText(text, 0, static_cast<int>(text.size()), font);
   }

@@ -15,6 +15,8 @@ struct TextStyle {
   Color Theme::*colorRole = nullptr;
   TextAlign align = TextAlign::kLeft;
   bool ellipsis = true;  // 超宽时显示省略号
+  // 省略中段而不是尾部：文件名要保住扩展名，尾部省略会把 .png 裁掉
+  bool middleEllipsis = false;
   bool bold = false;
   bool smallFont = false;  // 用小字号
   // 放大一档：进度条这类需要一眼看清的场合用

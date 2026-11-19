@@ -44,6 +44,11 @@ struct LayoutParams {
   // LinearLayout 里按权重分配剩余空间；0 表示不参与拉伸
   float weight = 0.0f;
 
+  // 期望尺寸上限（96 DPI 设计值）；0 表示不限。
+  // 用在「内容想多宽就多宽、但不能把兄弟视图挤出去」的控件上：
+  // 标题按文字宽度自然排，超上限时由控件自己省略。
+  int maxWidth = 0;
+
   Gravity horizontal = Gravity::kStart;
   Gravity vertical = Gravity::kStart;
   static constexpr int kWrapContent = -1;

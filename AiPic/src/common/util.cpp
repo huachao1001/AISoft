@@ -103,6 +103,31 @@ std::wstring FormatZoom(float zoom) {
   return std::to_wstring(percent) + L"%";
 }
 
+std::wstring FormatBytes(uint64_t bytes) {
+  // 1024 进制：与资源管理器和系统属性里的数字一致，用户不会觉得对不上
+  if (bytes < 1024) return std::to_wstring(bytes) + L" B";
+  const double kb = static_cast<double>(bytes) / 1024.0;
+  if (kb < 1024.0) {
+    // 小于 10 时留一位小数，否则 1.9KB 与 2KB 分不出来
+    if (kb < 10.0) {
+      return std::to_wstring(static_cast<int>(kb * 10.0 + 0.5) / 10) + L"." +
+             std::to_wstring(static_cast<int>(kb * 10.0 + 0.5) % 10) + L" KB";
+    }
+    return std::to_wstring(static_cast<int>(kb + 0.5)) + L" KB";
+  }
+  const double mb = kb / 1024.0;
+  if (mb < 1024.0) {
+    if (mb < 10.0) {
+      return std::to_wstring(static_cast<int>(mb * 10.0 + 0.5) / 10) + L"." +
+             std::to_wstring(static_cast<int>(mb * 10.0 + 0.5) % 10) + L" MB";
+    }
+    return std::to_wstring(static_cast<int>(mb + 0.5)) + L" MB";
+  }
+  const double gb = mb / 1024.0;
+  return std::to_wstring(static_cast<int>(gb * 10.0 + 0.5) / 10) + L"." +
+         std::to_wstring(static_cast<int>(gb * 10.0 + 0.5) % 10) + L" GB";
+}
+
 Settings LoadSettings() {
   Settings s;
   const std::wstring path = ConfigPath();

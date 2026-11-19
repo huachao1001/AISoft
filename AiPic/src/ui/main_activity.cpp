@@ -10,9 +10,12 @@
 #include "AiUI/widgets/button.h"
 #include "AiUI/widgets/button_bar.h"
 #include "AiUI/widgets/image_view.h"
+#include "AiUI/layouts/linear_layout.h"
 #include "AiUI/widgets/photo_view.h"
 #include "AiUI/widgets/status_bar.h"
+#include "AiUI/widgets/tag_view.h"
 #include "AiUI/widgets/thumbnail_strip.h"
+#include "AiUI/widgets/title_bar.h"
 
 #include <algorithm>
 #include <utility>
@@ -130,6 +133,7 @@ void MainActivity::onCreate() {
   attachPhoto();
   attachStatusBar();
   attachThumbs();
+  attachTitleTags();
 
   // 拖放与单实例转发挂在 AiUI 建的顶层窗口上
   g_app.mainWnd = nativeWindow();
@@ -309,11 +313,70 @@ void MainActivity::refreshToolBar() {
 }
 
 void MainActivity::updateTitle() {
+  AiUI::Window* win = window();
+  AiUI::TitleBar* bar = win ? win->titleBar() : nullptr;
+
   if (!AppHasImage()) {
     setTitle(L"爱图");
+    // 无图时标题就是应用名，不该再被当成文件名截断
+    if (bar) bar->setTitleMiddleEllipsis(false);
+    refreshTitleTags();
     return;
   }
-  setTitle(util::BaseName(AppImagePath()) + L" — 爱图");
+  // 标题只放文件名：分辨率、大小、序号已经做成标签，重复写反而挤
+  setTitle(util::BaseName(AppImagePath()));
+  // 文件名必须中段省略：尾部省略会把扩展名裁掉，而那正是要认的信息
+  if (bar) bar->setTitleMiddleEllipsis(true);
+  refreshTitleTags();
+}
+
+void MainActivity::attachTitleTags() {
+  AiUI::Window* win = window();
+  AiUI::TitleBar* bar = win ? win->titleBar() : nullptr;
+  if (!bar || !bar->tagArea()) return;
+
+  // 标签全部按内容宽度排，不加权重：它们是信息，不参与撑开空间
+  const AiUI::LayoutParams tagParams =
+      AiUI::LayoutParams{}.withSize(AiUI::LayoutParams::kWrapContent,
+                                    AiUI::LayoutParams::kWrapContent);
+  auto addTag = [&]() {
+    auto* tag = new AiUI::TagView();
+    bar->tagArea()->addView(tag, tagParams);
+    return tag;
+  };
+  tagSize_ = addTag();
+  tagBytes_ = addTag();
+  tagIndex_ = addTag();
+
+  // 文件名要保住扩展名，尾部省略会把 .png 裁掉
+  bar->setTitleMiddleEllipsis(true);
+  // 上限由 TitleBar 在布局时按窗口宽度算出，这里不用管
+}
+
+void MainActivity::refreshTitleTags() {
+  if (!tagSize_ || !tagBytes_ || !tagIndex_) return;
+
+  const bool has = AppHasImage();
+  AiUI::TagView* tags[] = {tagSize_, tagBytes_, tagIndex_};
+  for (AiUI::TagView* tag : tags) tag->show(has);
+  if (!has) return;
+
+  const AiUI::Size size = AppImageSize();
+  tagSize_->setText(std::to_wstring(size.width) + L"×" + std::to_wstring(size.height));
+
+  // 文件大小：读不到就不显示这个标签，比显示 0 B 诚实
+  const uint64_t bytes = AiUI::platform()->fileSize(AppImagePath());
+  tagBytes_->setText(bytes > 0 ? util::FormatBytes(bytes) : std::wstring());
+  tagBytes_->show(bytes > 0);
+
+  // 第几张 / 共几张：只在同目录有多张时才有意义
+  const int count = static_cast<int>(AppSiblingImages().size());
+  const int index = AppSiblingIndex();
+  const bool showIndex = count > 1 && index >= 0;
+  tagIndex_->show(showIndex);
+  if (showIndex) {
+    tagIndex_->setText(std::to_wstring(index + 1) + L"/" + std::to_wstring(count));
+  }
 }
 
 // ───────────────────────── 动作 ─────────────────────────

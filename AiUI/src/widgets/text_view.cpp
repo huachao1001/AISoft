@@ -46,7 +46,8 @@ void TextView::onPaint(Painter& painter, const Rect& rect) {
   const Color color = style_.colorRole ? theme().*(style_.colorRole) : style_.color;
 
   if (style_.ellipsis && style_.align == TextAlign::kLeft) {
-    painter.drawTextEllipsis(inner, text_, color, font);
+    if (style_.middleEllipsis) painter.drawTextMiddleEllipsis(inner, text_, color, font);
+    else painter.drawTextEllipsis(inner, text_, color, font);
     return;
   }
   painter.drawText(inner, text_, color, font, style_.align);

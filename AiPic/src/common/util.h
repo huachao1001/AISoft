@@ -27,6 +27,8 @@ std::wstring FormatLabel(const std::wstring& path);
 // ── 格式化 ──
 // 缩放比例转百分比文案："100%"
 std::wstring FormatZoom(float zoom);
+// 字节数转可读文案："1.2 MB"。0 表示未知
+std::wstring FormatBytes(uint64_t bytes);
 
 // ── 设置持久化（%APPDATA%\AiPic\settings.ini）──
 struct Settings {
