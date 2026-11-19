@@ -28,11 +28,13 @@ struct ThumbnailStyle {
   int labelHeight = 18;
   int cardRadius = 8;
   // 卡片之间的竖直间隙；必须大于阴影两侧扩散之和，否则相邻卡片的阴影会连成一片
-  int itemGap = 22;
-  // 阴影：向外扩散多少像素、向下偏移多少、最深一层的 alpha
-  int shadowSpread = 8;
-  int shadowOffsetY = 3;
-  int shadowAlpha = 96;
+  int itemGap = 16;
+  // 阴影：向外扩散多少像素、向下偏移多少、最深一层的 alpha。
+  // 默认取值很保守——卡片本身已经有白底与间隙区分，阴影只是托一下，
+  // 重了会让整条列表显得发脏。
+  int shadowSpread = 4;
+  int shadowOffsetY = 1;
+  int shadowAlpha = 11;
   int thumbMaxSide = 256;  // 解码上限，按屏幕密度再放大
   // kNoColor 表示跟随主题
   Color background = kNoColor;
