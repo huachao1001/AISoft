@@ -697,6 +697,12 @@ Point PhotoView::centerPixel() const {
   return Point{static_cast<int>(std::floor(px)), static_cast<int>(std::floor(py))};
 }
 
+bool PhotoView::mousePixel(Point& outPixel) const {
+  // 光标没进过控件、或已经从控件里出去：没有「指着哪个像素」可言
+  if (!hasLastMouse_) return false;
+  return sourcePixelAt(lastMouse_, outPixel);
+}
+
 Rect PhotoView::visibleSourceRect(const Rect& view) const {
   return visibleSourceRectAt(view, static_cast<float>(rotation_ * 90));
 }
@@ -1263,10 +1269,14 @@ void PhotoView::onMouseUp(const MouseEvent& e) {
 
 void PhotoView::onMouseMove(const MouseEvent& e) {
   // 随时记鼠标位置：工具栏的放大按钮也以它为中心
+  // 状态栏显示的是「指针下的像素」，所以位置真的变了就要通知宿主刷新
+  const bool moved = !hasLastMouse_ || e.position.x != lastMouse_.x ||
+                     e.position.y != lastMouse_.y;
   lastMouse_ = e.position;
   hasLastMouse_ = true;
 
   if (!dragging_) {
+    if (moved) notifyChanged();
     return;
   }
   pan_ = PanF{dragStartPan_.x + static_cast<float>(e.position.x - dragOrigin_.x),
@@ -1279,6 +1289,7 @@ void PhotoView::onMouseMove(const MouseEvent& e) {
 }
 
 void PhotoView::onMouseLeave() {
+  const bool wasInside = hasLastMouse_;
   hasLastMouse_ = false;
   if (dragging_) {
     dragging_ = false;
@@ -1286,6 +1297,9 @@ void PhotoView::onMouseLeave() {
     clampPan();
     setCursor(cursorBeforeDrag_);
     invalidate();
+    notifyChanged();
+  } else if (wasInside) {
+    // 指针离开后状态栏不该继续显示最后那个像素：那是已经不再指着的位置
     notifyChanged();
   }
 }

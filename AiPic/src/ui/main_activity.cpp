@@ -252,8 +252,13 @@ void MainActivity::refreshStatusBar() {
   std::wstring right;
   if (photo_) {
     right = util::FormatZoom(photo_->zoom());
-    // 像素坐标放状态栏右侧：放大到像素级时用户要能报出「我看的是哪个点」
-    const AiUI::Point pixel = photo_->centerPixel();
+    // 像素坐标放状态栏右侧：放大到像素级时用户要能报出「我看的是哪个点」。
+    //
+    // 优先用指针下的像素——用户问的是「我指着的是哪个」，不是一个跟平移
+    // 自己跑的数字。指针移出图外（或还没进过控件）才退回视图中心，那时
+    // 中心那个数是唯一有意义的「当前看着哪儿」。
+    AiUI::Point pixel;
+    if (!photo_->mousePixel(pixel)) pixel = photo_->centerPixel();
     if (pixel.x >= 0 && pixel.y >= 0) {
       right += L"  ·  " + std::to_wstring(pixel.x) + L"," + std::to_wstring(pixel.y);
     }

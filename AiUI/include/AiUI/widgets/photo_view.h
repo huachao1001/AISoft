@@ -125,6 +125,11 @@ class PhotoView : public View {
 
   // 视图中心处的图像像素坐标：状态栏与取色都要用
   Point centerPixel() const;
+  // 鼠标光标处的图像像素坐标。光标不在图上（或还没进过控件）返回 false。
+  //
+  // 状态栏要的是这个，不是 centerPixel：用户想知道的是「我指着的是哪个
+  // 像素」，视图中心那个数在平移时会自己跑，看着像图片坐标而不是指针坐标。
+  bool mousePixel(Point& outPixel) const;
   // 图像尺寸按当前旋转后的宽高
   Size rotatedSize() const;
 

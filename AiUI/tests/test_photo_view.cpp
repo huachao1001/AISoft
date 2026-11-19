@@ -472,3 +472,92 @@ AIUI_TEST(photo_view_min_side_survives_rotation) {
   AIUI_CHECK(shown >= 29.5f);
   AIUI_CHECK(shown <= 30.5f);
 }
+
+// ─────────────────── 状态栏坐标：指针下的像素 ───────────────────
+
+// 状态栏要报「我指着的是哪个像素」。以前报的是视图中心，平移时那个数
+// 自己会跑，看着像图片坐标而不是指针坐标。
+AIUI_TEST(photo_view_mouse_pixel_follows_cursor) {
+  PhotoEnv env;
+  env.fake.platform().setImageSize(Size{400, 300});
+  TestPhotoView view;
+  view.layout(Rect{0, 0, 400, 400});
+  view.loadFile(L"a.png");
+  view.setAnimationDuration(0);
+
+  // 还没进过控件：没有「指着哪个像素」可言
+  Point pixel;
+  AIUI_CHECK(!view.mousePixel(pixel));
+
+  // 1:1 居中：视图中心对应图像中心 (200,150)
+  view.zoomToActual();
+  const Point center = view.clientRect().center();
+  view.onMouseMove(mouseAt(center.x, center.y));
+  AIUI_CHECK(view.mousePixel(pixel));
+  AIUI_CHECK_EQ(pixel.x, 200);
+  AIUI_CHECK_EQ(pixel.y, 150);
+
+  // 光标右移 10 像素、1:1 时图像坐标也右移 10
+  view.onMouseMove(mouseAt(center.x + 10, center.y + 5));
+  AIUI_CHECK(view.mousePixel(pixel));
+  AIUI_CHECK_EQ(pixel.x, 210);
+  AIUI_CHECK_EQ(pixel.y, 155);
+
+  // 平移不改「光标下是哪个像素」之外的东西：把图推走，同一处光标指向别处
+  view.setPan(Point{-40, 0});
+  view.onMouseMove(mouseAt(center.x + 10, center.y + 5));
+  AIUI_CHECK(view.mousePixel(pixel));
+  AIUI_CHECK_EQ(pixel.x, 250);
+  AIUI_CHECK_EQ(pixel.y, 155);
+}
+
+// 光标移出图外或离开控件时不该报坐标（上层退回视图中心）
+AIUI_TEST(photo_view_mouse_pixel_rejects_outside_image) {
+  PhotoEnv env;
+  env.fake.platform().setImageSize(Size{100, 100});
+  TestPhotoView view;
+  view.layout(Rect{0, 0, 400, 400});
+  view.loadFile(L"a.png");
+  view.setAnimationDuration(0);
+  view.zoomToActual();
+
+  const Point center = view.clientRect().center();
+  // 图只占中间 100x100，四角是画布空白
+  view.onMouseMove(mouseAt(10, 10));
+  Point pixel;
+  AIUI_CHECK(!view.mousePixel(pixel));
+
+  // 回到图上就有
+  view.onMouseMove(mouseAt(center.x, center.y));
+  AIUI_CHECK(view.mousePixel(pixel));
+
+  // 离开控件：立刻失效，否则状态栏停在最后那个像素上
+  view.onMouseLeave();
+  AIUI_CHECK(!view.mousePixel(pixel));
+}
+
+// 旋转后仍要报对：指针下的像素按旋转后的图像取
+AIUI_TEST(photo_view_mouse_pixel_after_rotation) {
+  PhotoEnv env;
+  env.fake.platform().setImageSize(Size{400, 300});
+  TestPhotoView view;
+  view.layout(Rect{0, 0, 400, 400});
+  view.loadFile(L"a.png");
+  view.setAnimationDuration(0);
+  view.zoomToActual();
+
+  const Point center = view.clientRect().center();
+  view.onMouseMove(mouseAt(center.x, center.y));
+  Point before;
+  AIUI_CHECK(view.mousePixel(before));
+  AIUI_CHECK_EQ(before.x, 200);
+  AIUI_CHECK_EQ(before.y, 150);
+
+  // 转 90° 后中心像素会变（宽高交换），但仍必须落在图内且可解析
+  view.rotate(1);
+  view.onMouseMove(mouseAt(center.x, center.y));
+  Point after;
+  AIUI_CHECK(view.mousePixel(after));
+  AIUI_CHECK(after.x >= 0 && after.x < 400);
+  AIUI_CHECK(after.y >= 0 && after.y < 300);
+}
