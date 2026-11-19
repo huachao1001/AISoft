@@ -428,6 +428,17 @@ class Platform {
     (void)format;
     return false;
   }
+  // ── 离屏绘制 ──
+  // 给一块 area 大小的位图让 paint 画完，再取回像素（0xAARRGGBB）。
+  // 不创建窗口、不参与合成，因此不会抢焦点、也不会碰真实鼠标键盘——
+  // 自动截图与导出走这里，而不是去抓屏幕。
+  virtual bool renderOffscreen(const Rect& area, const std::function<void(Painter&)>& paint,
+                               RgbaImage& out) {
+    (void)area;
+    (void)paint;
+    (void)out;
+    return false;
+  }
   // 从内存像素建一张可直接绘制的位图。
   // 旋转、裁剪这类变换在内存里做完后要靠它回到界面；生命周期与 loadImage
   // 一致，用 releaseImage 释放。后端不支持时返回无效 Image。

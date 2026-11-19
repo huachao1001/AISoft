@@ -12,6 +12,7 @@
 #include "AiUI/widgets/image_view.h"
 #include "AiUI/layouts/linear_layout.h"
 #include "AiUI/widgets/photo_view.h"
+#include "AiUI/widgets/side_panel.h"
 #include "AiUI/widgets/status_bar.h"
 #include "AiUI/widgets/tag_view.h"
 #include "AiUI/widgets/thumbnail_strip.h"
@@ -126,6 +127,7 @@ void MainActivity::onCreate() {
   photo_ = findView<AiUI::PhotoView>("photo");
   status_ = findView<AiUI::StatusBar>("status");
   thumbs_ = findView<AiUI::ThumbnailStrip>("thumbs");
+  sidePanel_ = findView<AiUI::SidePanel>("sidePanel");
   homePane_ = findView<AiUI::View>("homePane");
 
   attachToolBar();
@@ -133,6 +135,7 @@ void MainActivity::onCreate() {
   attachPhoto();
   attachStatusBar();
   attachThumbs();
+  attachSidePanel();
   attachTitleTags();
 
   // 拖放与单实例转发挂在 AiUI 建的顶层窗口上
@@ -233,6 +236,34 @@ void MainActivity::attachStatusBar() {
   refreshStatusBar();
 }
 
+void MainActivity::attachSidePanel() {
+  if (!sidePanel_) return;
+  // 展开宽度就用布局里给的那个值：侧栏宽度是布局决定的，不该在两个地方各写一份。
+  // 之后宽度只由收缩动画改。
+  //
+  // 不需要在收缩后手动 zoomToFit：PhotoView 处于「适应窗口」时会在每次
+  // 布局变化时自己重算，而用户手动调过的倍数不该因为收个侧栏就被重置。
+  const int width = sidePanel_->layoutParams().width;
+  if (width > 0) sidePanel_->setExpandedWidth(width);
+  refreshSidePanel();
+}
+
+void MainActivity::refreshSidePanel() {
+  if (!sidePanel_) return;
+  AiUI::PanelHeader* header = sidePanel_->header();
+  if (!header) return;
+
+  if (!AppHasImage()) {
+    header->setText(L"图片列表");
+    header->setHint(std::wstring());
+    return;
+  }
+  const std::wstring dir = util::DirName(AppImagePath());
+  // 目录名可能是个很长的末级名：顶栏只放名字，完整路径进悬停提示
+  header->setText(util::BaseName(dir));
+  header->setHint(dir);
+}
+
 void MainActivity::attachThumbs() {
   if (!thumbs_) return;
   // 点缩略图等同于翻到那一张：走同一条 openImage 路径，状态栏与标题才会一起更新
@@ -251,12 +282,13 @@ void MainActivity::refreshStage() {
   const bool has = AppHasImage();
   if (homePane_) homePane_->show(!has);
   if (photo_) photo_->show(has);
-  // 缩略图条只在有图、且不在演示态时有意义：空状态页与投影都要独占整块宽度
-  // （翻页会走这里，所以演示判断不能只放在 setPresenting 里）
-  if (thumbs_) thumbs_->show(has && !presenting_);
+  // 侧栏（含顶栏）只在有图、且不在演示态时有意义：空状态页与投影都要独占
+  // 整块宽度。翻页会走这里，所以演示判断不能只放在 setPresenting 里。
+  if (sidePanel_) sidePanel_->show(has && !presenting_);
 }
 
 void MainActivity::refreshThumbs() {
+  refreshSidePanel();
   if (!thumbs_) return;
   thumbs_->setItems(AppSiblingImages());
   thumbs_->setSelected(AppSiblingIndex());
@@ -509,7 +541,7 @@ void MainActivity::setPresenting(bool presenting) {
   // 投影出去只会占掉画面。退出时按各控件本身的状态恢复。
   if (toolBar_) toolBar_->show(!presenting);
   if (status_) status_->show(!presenting);
-  if (thumbs_) thumbs_->show(!presenting && AppHasImage());
+  if (sidePanel_) sidePanel_->show(!presenting && AppHasImage());
   if (homePane_) homePane_->show(!AppHasImage());
 
   // 标题栏与系统边框一起收起：留着标题栏就不是「全屏」了

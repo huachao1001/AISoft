@@ -2,26 +2,36 @@
 <!--
   主窗口整体布局。
 
-  纵向三段：工具栏、内容区、状态栏。
+  纵向两段：内容区（weight=1）、底部条。
 
-  内容区再横向分两块：左边是同目录的缩略图条，右边是看图区。
+  底部条是「工具栏 + 状态栏」叠在一起：按钮在上、路径与统计在下。合并
+  成一块是因为两者都是「关于当前这张图的操作与状态」，分散在窗口两头时
+  视线要来回跑；叠起来后常用动作都在视线下方，靠近内容。
+
+  内容区横向分两块：左侧缩略图侧栏，右侧看图区。
+  侧栏带顶栏（目录名 + 收缩按钮），可整体收缩成一条窄边。
   看图区用 FrameLayout：PhotoView 铺满整块，首页叠在它上面。
   这样切换「有图 / 没图」只是显示与否，不必重建视图树；PhotoView 也不会
   因为换页丢失已经算好的缩放与平移。
 
-  标签名直接就是控件类名。PhotoView、ThumbnailStrip 都是 AiUI 的通用控件，
-  已登记在 layoutgen 的头文件表里，可以直接写。
+  标签名直接就是控件类名。PhotoView、ThumbnailStrip、SidePanel 都是 AiUI
+  的通用控件，已登记在 layoutgen 的头文件表里，可以直接写。
 -->
 <LinearLayout orientation="vertical">
 
-  <!-- 工具栏：八个按钮由 main_activity.cpp 在创建后装配 -->
-  <ButtonBar id="toolBar" height="52"/>
-
-  <!-- 内容区：左侧缩略图条 + 右侧看图区 -->
+  <!-- 内容区：左侧缩略图侧栏 + 右侧看图区 -->
   <LinearLayout id="content" orientation="horizontal" weight="1">
 
-    <!-- 缩略图条宽度固定：它只是导航，不该和主图抢空间 -->
-    <ThumbnailStrip id="thumbs" width="208" height="match"/>
+    <!--
+      侧栏：顶栏（目录名 + 收缩按钮）+ 缩略图条。
+      宽度写在 SidePanel 上，收缩动画改的也是它；ThumbnailStrip 跟着填满。
+    -->
+    <SidePanel id="sidePanel" width="208" height="match">
+
+      <!-- 缩略图条：它只是导航，宽度跟着侧栏走 -->
+      <ThumbnailStrip id="thumbs" width="match" height="match"/>
+
+    </SidePanel>
 
     <FrameLayout id="stage" weight="1">
 
@@ -64,7 +74,18 @@
 
   </LinearLayout>
 
-  <!-- 状态栏 -->
-  <StatusBar id="status" height="36"/>
+  <!--
+    底部条：工具栏在上、状态栏在下，两块高度直接叠加。
+    不用 weight：它们是固定高度的条，内容区拿剩下的空间。
+  -->
+  <LinearLayout id="bottomBar" orientation="vertical">
+
+    <!-- 工具栏：八个按钮由 main_activity.cpp 在创建后装配 -->
+    <ButtonBar id="toolBar" height="52"/>
+
+    <!-- 状态栏 -->
+    <StatusBar id="status" height="36"/>
+
+  </LinearLayout>
 
 </LinearLayout>

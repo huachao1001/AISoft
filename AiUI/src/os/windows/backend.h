@@ -15,6 +15,7 @@
 #include <objidl.h>
 
 #include <gdiplus.h>
+#include <functional>
 #include <map>
 #include <memory>
 #include <set>
@@ -94,6 +95,9 @@ bool loadImageRegion(const std::wstring& path, const Rect& region, RgbaImage& ou
 Image loadImageThumbnail(const std::wstring& path, int maxSide);
 // 从 ARGB 内存建一张托管位图，交出去的 Image 由 releaseLoadedImage 释放
 Image imageFromPixels(const RgbaImage& image);
+// 离屏渲染：画到一块独立位图上再拷成 ARGB。全程不建窗口、不碰输入。
+bool renderOffscreen(const Rect& area, const std::function<void(Painter&)>& paint,
+                     RgbaImage& out);
 // HICON → ARGB 位图；句柄由调用方释放，返回值由 releaseLoadedImage 释放
 Image imageFromIcon(HICON icon);
 // 从可执行文件里取指定边长的原生图标；失败返回空句柄，调用方负责 DestroyIcon。

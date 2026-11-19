@@ -214,6 +214,10 @@ class View {
   // 否则按钮会被当成标题栏，点击直接变成拖窗口。
   void setClaimsPointer(bool claims) { claimsPointer_ = claims; }
   bool claimsPointer() const { return claimsPointer_; }
+  // 悬停提示：鼠标停在该视图上时由 ViewRoot 浮出。空串表示没有。
+  // 内容被省略时（文件名、路径）靠它补全信息，不要为提示另设控件。
+  void setTooltip(const std::wstring& text) { tooltip_ = text; }
+  const std::wstring& tooltip() const { return tooltip_; }
   virtual void setEnabled(bool enabled);
   bool isEnabled() const { return enabled_; }
   void setFocus();
@@ -369,6 +373,7 @@ class View {
   bool focusable_ = false;
   bool dragWindow_ = false;
   bool claimsPointer_ = false;
+  std::wstring tooltip_;
   CursorShape cursorShape_ = CursorShape::kArrow;
   // nullptr 表示跟随父链，不自己持有主题
   const Theme* theme_ = nullptr;

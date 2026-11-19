@@ -300,6 +300,26 @@ class FakePlatform : public AiUI::Platform {
     thumbSize_ = AiUI::Size{};
   }
   AiUI::Size thumbSize() const { return thumbSize_; }
+
+  // 离屏渲染：不画真实像素，只记录调用参数，让测试能验证
+  // 「谁来画、画多大」；出图格式由真实后端负责。
+  bool renderOffscreen(const Rect& area, const std::function<void(AiUI::Painter&)>& paint,
+                       AiUI::RgbaImage& out) override {
+    ++offscreenCalls_;
+    offscreenArea_ = area;
+    if (!paint) return false;
+    RecordingBackend backend;
+    AiUI::Painter painter(backend);
+    paint(painter);
+    offscreenFills_ = backend.fills();
+    out.width = area.width();
+    out.height = area.height();
+    out.pixels.assign(static_cast<size_t>(out.width) * static_cast<size_t>(out.height), 0xFF000000);
+    return true;
+  }
+  int offscreenCalls() const { return offscreenCalls_; }
+  const Rect& offscreenArea() const { return offscreenArea_; }
+  const std::vector<FillCall>& offscreenFills() const { return offscreenFills_; }
   AiUI::Image appIcon() override { return AiUI::Image(); }
   void startupDrawing() override { drawingReady_ = true; }
   void shutdownDrawing() override { drawingReady_ = false; }
@@ -329,6 +349,9 @@ class FakePlatform : public AiUI::Platform {
   int64_t monotonicMs_ = 0;
   AiUI::Size imageSize_{};
   AiUI::Size thumbSize_{};
+  int offscreenCalls_ = 0;
+  Rect offscreenArea_{};
+  std::vector<FillCall> offscreenFills_;
   // loadImage 返回的句柄必须一直非空；内容无关紧要，只当「有效位图」用
   int imageHandle_ = 0;
   int thumbHandle_ = 0;

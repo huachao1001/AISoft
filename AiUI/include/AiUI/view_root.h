@@ -11,6 +11,7 @@
 
 #include "AiUI/platform.h"
 #include "AiUI/toast.h"
+#include "AiUI/tooltip.h"
 #include "AiUI/view.h"
 
 #include <cstdint>
@@ -57,6 +58,18 @@ class ViewRoot : public WindowHost {
   void setContentView(View* view);
   View* contentView() const { return content_; }
 
+  // ── 离屏渲染 ──
+  // 用同一套绘制路径画到内存位图，不经过平台窗口：自动化截图、导出预览
+  // 走这里，不会建窗口、不抢焦点，也不会碰真实鼠标键盘。
+  // size 非空时按它重排并出图，忽略窗口客户区——快照要的是确定尺寸，
+  // 而客户区会受 DPI 缩放影响。窗口若正在显示，下一帧会按客户区自行重排。
+  bool renderToImage(RgbaImage& out, const Size& size = Size{});
+  // 派发窗口坐标下的合成鼠标事件（完全不经过系统）：
+  // 自动化验证要「点一下某个按钮」，但不该移动用户真实的光标。
+  void sendMouseMove(const Point& windowPoint);
+  void sendMouseDown(const Point& windowPoint, MouseButton button = MouseButton::kLeft);
+  void sendMouseUp(const Point& windowPoint, MouseButton button = MouseButton::kLeft);
+
   // ── 置顶浮层 ──
   // 浮层画在整棵树之上（下拉列表这类弹出层），并优先接收鼠标事件。
   // 不接管所有权：调用方通常就是拥有浮层的控件，关闭时传 nullptr 撤下。
@@ -98,6 +111,15 @@ class ViewRoot : public WindowHost {
   // 立刻收起提示条（不进淡出）；窗口销毁前调用，避免留下悬空状态
   void hideToast();
   Toast& toast() { return toast_; }
+  // 悬停提示：鼠标停住后才浮出，一移动就收起
+  Tooltip& tooltip() { return tooltip_; }
+  // 立刻为某个视图显示它的悬停提示，跳过 600ms 等待。
+  // 自动化截图要的是「稳态」，等定时器既慢又依赖消息循环。
+  void showTooltipFor(View* owner);
+  // 浮层与提示允许落笔的区域（窗口坐标）。默认整个客户区；带自绘标题栏
+  // 的窗口要把它划到标题栏下方，否则提示会盖到标题栏上。
+  void setOverlayArea(const Rect& area) { overlayArea_ = area; }
+  Rect overlayArea() const { return overlayArea_.isEmpty() ? clientRect() : overlayArea_; }
   // 输入法候选框跟随光标（窗口坐标）
   void setImeCaret(int x, int y);
 
@@ -130,6 +152,12 @@ class ViewRoot : public WindowHost {
  private:
   // 找到窗口坐标下最上层的可命中视图
   View* hitTest(Point windowPoint) const;
+  // 悬停提示的锚点：取视图顶部一条，避免整块矩形把提示推到远处
+  Rect tooltipAnchor(View* owner) const;
+  // 收起悬停提示并按旧位置标脏
+  void hideTooltip();
+  // 整棵树绘制到 painter：窗口重绘与离屏渲染共用
+  void paintTree(Painter& painter, const Rect& area, const Rect& target);
   // 把窗口坐标事件转成目标视图的局部坐标
   MouseEvent localEvent(View* target, const MouseEvent& e) const;
   // 按客户区重新测量与摆放根视图
@@ -161,8 +189,14 @@ class ViewRoot : public WindowHost {
   // 提示条下一次需要重绘的时刻；-1 表示不必再醒
   int64_t toastWakeMs_ = -1;
   Toast toast_;
+  // 悬停提示：哪个视图的提示正在等待/显示，以及它到点浮出的时刻
+  View* tooltipOwner_ = nullptr;
+  int64_t tooltipWakeMs_ = -1;
+  Tooltip tooltip_;
 
   Color background_ = kNoColor;
+  // 浮层允许的区域（窗口坐标）；空表示整个客户区
+  Rect overlayArea_;
   bool layoutPending_ = false;
   CloseHandler onClose_;
   KeyHandler onKey_;

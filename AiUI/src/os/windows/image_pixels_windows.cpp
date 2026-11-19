@@ -174,6 +174,62 @@ Image imageFromPixels(const RgbaImage& image) {
   return Image(bitmap);
 }
 
+// 离屏渲染：独立位图 + Graphics，画完直接读回像素。
+// 不走窗口、不参与合成，所以自动化截图不会抢焦点或干扰正在用电脑的人。
+bool renderOffscreen(const Rect& area, const std::function<void(Painter&)>& paint,
+                     RgbaImage& out) {
+  if (!paint || area.isEmpty() || !ensureGdiplus()) return false;
+
+  const int w = area.width();
+  const int h = area.height();
+  Gdiplus::Bitmap bitmap(w, h, PixelFormat32bppPARGB);
+  if (bitmap.GetLastStatus() != Ok) return false;
+
+  {
+    Graphics graphics(&bitmap);
+    if (graphics.GetLastStatus() != Ok) return false;
+    // 调用方按窗口坐标绘制，位图里只装 area 这一块
+    graphics.TranslateTransform(static_cast<REAL>(-area.left), static_cast<REAL>(-area.top));
+    auto backend = makePaintBackend(&graphics);
+    if (!backend) return false;
+    Painter painter(*backend);
+    paint(painter);
+  }
+
+  Gdiplus::Rect lockRect(0, 0, w, h);
+  BitmapData data{};
+  if (bitmap.LockBits(&lockRect, ImageLockModeRead, PixelFormat32bppPARGB, &data) != Ok) {
+    return false;
+  }
+
+  out.width = w;
+  out.height = h;
+  out.pixels.resize(static_cast<size_t>(w) * static_cast<size_t>(h));
+  const auto* src = static_cast<const uint8_t*>(data.Scan0);
+  const int srcStride = data.Stride;
+  const size_t rowBytes = static_cast<size_t>(w) * 4;
+  for (int y = 0; y < h; ++y) {
+    std::memcpy(out.pixels.data() + static_cast<size_t>(y) * w, src + static_cast<size_t>(y) * srcStride,
+                rowBytes);
+  }
+  bitmap.UnlockBits(&data);
+
+  // 预乘 alpha → 直通 alpha：另存为与像素比较都按 0xAARRGGBB 理解
+  for (uint32_t& px : out.pixels) {
+    const uint32_t a = px >> 24;
+    if (a == 0 || a == 255) {
+      if (a == 0) px = 0;
+      continue;
+    }
+    const uint32_t r = ((px >> 16) & 0xFF) * 255 / a;
+    const uint32_t g = ((px >> 8) & 0xFF) * 255 / a;
+    const uint32_t b = (px & 0xFF) * 255 / a;
+    px = (a << 24) | (((std::min)(r, 255u)) << 16) | (((std::min)(g, 255u)) << 8) |
+         (std::min)(b, 255u);
+  }
+  return true;
+}
+
 // 缩略代理：GDI+ 的 Bitmap 构造可以直接给目标边长，内部按 EXIF 方向与
 // 采样率缩放。比「整张解码再缩小」省掉一次全尺寸内存分配——巨图差的就是这块。
 Image loadImageThumbnail(const std::wstring& path, int maxSide) {

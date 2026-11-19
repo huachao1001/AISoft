@@ -10,6 +10,12 @@
 #include "AiUI/icon.h"
 #include "AiUI/platform.h"
 #include "AiUI/theme_registry.h"
+#include "AiUI/view_root.h"
+#include "AiUI/widgets/side_panel.h"
+#include "AiUI/window.h"
+
+#include <string>
+#include <vector>
 
 namespace {
 
@@ -26,6 +32,182 @@ std::wstring firstImageArg() {
   return {};
 }
 
+// ── 离屏快照 ──
+//
+// 开发时要把界面「拍」下来看效果，但不能建可见窗口、不能抢焦点，更不能
+// 移动用户正在用的鼠标键盘。做法是：照常建窗口（创建时即为不可见），
+// 不 show、不进事件循环，直接把视图树离屏渲染成 PNG 后退出。
+//
+// 用法：
+//   AiPic.exe --snapshot=<输出图> [图片] [--size=WxH]
+//             [--click=x,y ...] [--hover=x,y ...]
+//             [--collapse | --expand] [--tooltip=<视图id>]
+// --size 是 96 DPI 下的设计尺寸。--click/--hover 的坐标是窗口客户区坐标，
+// 按出现顺序依次施加，只走视图树的合成事件，完全不经过系统输入。
+// --collapse/--expand 直接调控件 API：按钮坐标随 DPI 与排版变化，
+// 写死坐标的脚本一改样式就失效。
+struct SnapshotAction {
+  enum class Kind { kClick, kHover, kCollapse, kTooltip } kind = Kind::kClick;
+  AiUI::Point at;
+  // kCollapse 用：true 表示收缩，false 表示展开
+  bool flag = true;
+  // kTooltip 用：目标视图 id（XML 里写的那个，窄字符用于 makeId）
+  std::string viewId;
+};
+
+struct SnapshotOptions {
+  bool enabled = false;
+  std::wstring outPath;
+  std::wstring imagePath;
+  int width = 0;
+  int height = 0;
+  std::vector<SnapshotAction> actions;
+};
+
+// 只认非负整数：命令行里的尺寸与坐标不会是负数，多一位就判失败
+bool isInt(const std::wstring& text, int& out) {
+  if (text.empty()) return false;
+  int value = 0;
+  for (wchar_t ch : text) {
+    if (ch < L'0' || ch > L'9') return false;
+    value = value * 10 + (ch - L'0');
+    if (value > 100000) return false;
+  }
+  out = value;
+  return true;
+}
+
+// 拆 "x,y"；解析失败返回 false
+bool parsePoint(const std::wstring& text, AiUI::Point& out) {
+  const size_t comma = text.find(L',');
+  if (comma == std::wstring::npos) return false;
+  int x = 0;
+  int y = 0;
+  if (!isInt(text.substr(0, comma), x)) return false;
+  if (!isInt(text.substr(comma + 1), y)) return false;
+  out = AiUI::Point{x, y};
+  return true;
+}
+
+// 拆 "--key=value"
+bool splitOption(const std::wstring& arg, const std::wstring& key, std::wstring& value) {
+  const std::wstring prefix = key + L"=";
+  if (arg.size() <= prefix.size()) return false;
+  if (arg.compare(0, prefix.size(), prefix) != 0) return false;
+  value = arg.substr(prefix.size());
+  return true;
+}
+
+SnapshotOptions parseSnapshot(const std::vector<std::wstring>& args) {
+  SnapshotOptions opts;
+  for (const std::wstring& arg : args) {
+    std::wstring value;
+
+    if (splitOption(arg, L"--snapshot", value)) {
+      opts.enabled = true;
+      opts.outPath = value;
+      continue;
+    }
+    if (splitOption(arg, L"--size", value)) {
+      const size_t x = value.find_first_of(L"xX*");
+      if (x != std::wstring::npos) {
+        int w = 0;
+        int h = 0;
+        if (isInt(value.substr(0, x), w) && isInt(value.substr(x + 1), h)) {
+          opts.width = w;
+          opts.height = h;
+        }
+      }
+      continue;
+    }
+    if (splitOption(arg, L"--click", value)) {
+      SnapshotAction action;
+      action.kind = SnapshotAction::Kind::kClick;
+      if (parsePoint(value, action.at)) opts.actions.push_back(action);
+      continue;
+    }
+    if (splitOption(arg, L"--hover", value)) {
+      SnapshotAction action;
+      action.kind = SnapshotAction::Kind::kHover;
+      if (parsePoint(value, action.at)) opts.actions.push_back(action);
+      continue;
+    }
+    // 收缩/展开侧栏：直接调控件 API，不去点那颗按钮——按钮坐标随 DPI 与
+    // 顶栏排版变化，写死坐标的脚本一改样式就失效。
+    if (arg == L"--collapse" || arg == L"--expand") {
+      SnapshotAction action;
+      action.kind = SnapshotAction::Kind::kCollapse;
+      action.flag = arg == L"--collapse";
+      opts.actions.push_back(action);
+      continue;
+    }
+    if (splitOption(arg, L"--tooltip", value)) {
+      SnapshotAction action;
+      action.kind = SnapshotAction::Kind::kTooltip;
+      // 选项值是宽字符，id 在代码里按窄字符算，这里转一次
+      action.viewId.assign(value.begin(), value.end());
+      opts.actions.push_back(action);
+      continue;
+    }
+    // 剩下的非选项参数里挑第一张能打开的图
+    if (!arg.empty() && arg[0] != L'-' && opts.imagePath.empty() &&
+        util::IsImageFile(arg) && util::PathExists(arg)) {
+      opts.imagePath = arg;
+    }
+  }
+  return opts;
+}
+
+// 快照模式：建窗口但不可见，合成事件只走视图树，渲染完立刻退出。
+// 返回退出码；opts.enabled 为 false 时返回 -1 表示「不是快照模式」。
+int runSnapshot(const SnapshotOptions& opts) {
+  if (!opts.enabled || opts.outPath.empty()) return -1;
+
+  ui::MainActivity activity;
+  if (!activity.create(nullptr)) return 1;
+
+  if (!opts.imagePath.empty() && !activity.openImage(opts.imagePath)) return 1;
+
+  AiUI::Window* window = activity.window();
+  AiUI::ViewRoot* root = window ? window->contentView()->root() : nullptr;
+  if (!root) return 1;
+
+  // --size 给的是 96 DPI 下的设计尺寸，与布局参数同一套单位；
+  // 出图按当前 DPI 放大，拍出来的比例才跟真实窗口一致。
+  const int d = root->dpi();
+  const int designW = opts.width > 0 ? opts.width : 1180;
+  const int designH = opts.height > 0 ? opts.height : 760;
+  const AiUI::Size shotSize{(designW * d + 48) / 96, (designH * d + 48) / 96};
+
+  AiUI::SidePanel* panel = activity.findView<AiUI::SidePanel>("sidePanel");
+
+  for (const SnapshotAction& action : opts.actions) {
+    switch (action.kind) {
+      case SnapshotAction::Kind::kHover:
+        root->sendMouseMove(action.at);
+        break;
+      case SnapshotAction::Kind::kCollapse:
+        // 不要动画：截的是一帧，走到中途就只是半收的样子
+        if (panel) panel->setCollapsed(action.flag, false);
+        break;
+      case SnapshotAction::Kind::kTooltip:
+        if (AiUI::View* view = activity.findView(action.viewId.c_str())) {
+          root->showTooltipFor(view);
+        }
+        break;
+      default:
+        root->sendMouseMove(action.at);
+        root->sendMouseDown(action.at);
+        root->sendMouseUp(action.at);
+        break;
+    }
+  }
+
+  AiUI::RgbaImage shot;
+  if (!root->renderToImage(shot, shotSize)) return 1;
+  return AiUI::platform()->saveImagePixels(opts.outPath, shot, AiUI::ImageFormat::kPng) ? 0 : 1;
+}
+
 }  // namespace
 
 int AiUI::runApp() {
@@ -40,6 +222,18 @@ int AiUI::runApp() {
   // 名字对应 themes.xml 里的 <Theme name="...">，找不到则用浅色。
   AiUI::Activity::setDefaultTheme(
       &AiUI::ThemeRegistry::getOr(g_app.settings.theme, AiUI::kLightTheme));
+
+  // 快照模式要在单实例与可见窗口之前分流：它既不该把路径转给已开的窗口，
+  // 也不该去抢前台
+  {
+    const SnapshotOptions shot = parseSnapshot(AiUI::platform()->commandLineArgs());
+    if (shot.enabled) {
+      const int code = runSnapshot(shot);
+      AiUI::fonts.destroy();
+      AiUI::shutdownPlatform();
+      return code;
+    }
+  }
 
   const std::wstring initial = firstImageArg();
 

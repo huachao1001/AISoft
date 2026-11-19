@@ -37,6 +37,18 @@ class Window::Root : public LinearLayout {
       }
     }
     LinearLayout::arrangeChildren(content);
+
+    // 提示与浮层只能落在标题栏下方：否则悬停顶栏时提示会盖到标题栏文字上
+    if (ViewRoot* vr = root()) {
+      Rect area = clientRect();
+      for (View* child : children()) {
+        if (child == titleBar_ || !child->isVisible()) continue;
+        const Rect childArea = child->absoluteBounds();
+        if (childArea.width() > 0) area = childArea;
+        break;
+      }
+      vr->setOverlayArea(area);
+    }
   }
 
  private:

@@ -1025,6 +1025,11 @@ class WindowsPlatform : public Platform {
     return os::windows::imageFromPixels(image);
   }
 
+  bool renderOffscreen(const Rect& area, const std::function<void(Painter&)>& paint,
+                       RgbaImage& out) override {
+    return os::windows::renderOffscreen(area, paint, out);
+  }
+
   Image loadImageThumbnail(const std::wstring& path, int maxSide) override {
     return os::windows::loadImageThumbnail(path, maxSide);
   }

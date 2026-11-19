@@ -7,6 +7,12 @@
 #include "AiUI/view_group.h"
 
 namespace AiUI {
+namespace {
+
+// 鼠标停住多久才浮出悬停提示。太短会跟着鼠标一路弹，太长则像没反应。
+constexpr int kTooltipDelayMs = 600;
+
+}  // namespace
 
 ViewRoot::ViewRoot() = default;
 
@@ -17,6 +23,7 @@ ViewRoot::~ViewRoot() {
   hovered_ = nullptr;
   capture_ = nullptr;
   pressed_ = nullptr;
+  tooltipOwner_ = nullptr;
   destroyWindow();
 }
 
@@ -127,13 +134,17 @@ void ViewRoot::onExpose(const Rect& update) {
   if (!canvas) return;
 
   // 画布内部已经把原点移到 target 左上角，这里开始一律用窗口坐标
-  Painter& painter = canvas->painter();
+  paintTree(canvas->painter(), area, target);
+  canvas->commit();
+}
+
+// 整棵树的绘制：窗口重绘与离屏渲染共用，两边才不会画出两种样子
+void ViewRoot::paintTree(Painter& painter, const Rect& area, const Rect& target) {
   painter.save();
   painter.clipRect(target);
 
   // 兜底铺底：内容留白或根视图未覆盖到的部分
-  const Color fallback =
-      content_ ? content_->theme().body : defaultTheme().body;
+  const Color fallback = content_ ? content_->theme().body : defaultTheme().body;
   painter.fillRect(target, background_ == kNoColor ? fallback : background_);
 
   // draw 的 dirty 用窗口坐标，各层自己换算到局部
@@ -162,8 +173,50 @@ void ViewRoot::onExpose(const Rect& update) {
     }
   }
 
+  // 悬停提示：压在内容之上、提示条之下——它随时会被鼠标带走，不该盖住回执
+  if (tooltip_.isVisible() && tooltipOwner_ && tooltipOwner_->root() == this) {
+    const Rect anchor = tooltipAnchor(tooltipOwner_);
+    const Rect tipArea = tooltip_.bounds(overlayArea(), anchor, dpi()).intersect(target);
+    if (!tipArea.isEmpty()) {
+      painter.save();
+      painter.clipRect(tipArea);
+      tooltip_.paint(painter, overlayArea(), anchor, dpi());
+      painter.restore();
+    }
+  }
+
   painter.restore();
-  canvas->commit();
+}
+
+bool ViewRoot::renderToImage(RgbaImage& out, const Size& size) {
+  if (!content_) return false;
+  // 没有窗口时以给定尺寸排版；有窗口也允许显式尺寸，快照才可复现
+  Rect area = size.width > 0 && size.height > 0 ? Rect{0, 0, size.width, size.height}
+                                                : (window_ ? window_->clientRect() : content_->clientRect());
+  if (area.isEmpty()) return false;
+  performLayout(area);
+  return platform()->renderOffscreen(
+      area, [this, area](Painter& painter) { paintTree(painter, area, area); }, out);
+}
+
+void ViewRoot::sendMouseMove(const Point& windowPoint) {
+  MouseEvent e;
+  e.position = windowPoint;
+  onMouseMove(e);
+}
+
+void ViewRoot::sendMouseDown(const Point& windowPoint, MouseButton button) {
+  MouseEvent e;
+  e.position = windowPoint;
+  e.button = button;
+  onMouseDown(e);
+}
+
+void ViewRoot::sendMouseUp(const Point& windowPoint, MouseButton button) {
+  MouseEvent e;
+  e.position = windowPoint;
+  e.button = button;
+  onMouseUp(e);
 }
 
 // ───────────────────────── 浮层 ─────────────────────────
@@ -305,6 +358,19 @@ void ViewRoot::onDelayTimer() {
     if (!after.isEmpty()) invalidateRect(after);
   }
 
+  // 悬停拖到这个时刻还没动，才把提示浮出来
+  if (tooltipOwner_ && tooltipWakeMs_ >= 0 && tooltipWakeMs_ <= now) {
+    View* owner = tooltipOwner_;
+    tooltipWakeMs_ = -1;
+    if (owner->root() == this && !owner->tooltip().empty()) {
+      tooltip_.show(owner->tooltip());
+      const Rect area = overlayArea();
+      invalidateRect(tooltip_.bounds(area, tooltipAnchor(owner), dpi()).inflated(1, 1));
+    } else {
+      tooltipOwner_ = nullptr;
+    }
+  }
+
   // 先重装定时器再回调：回调里可能又 postDelayed，那时会再次改写
   scheduleNextDelayed();
 
@@ -366,6 +432,9 @@ void ViewRoot::scheduleNextDelayed() {
   if (toastWakeMs_ >= 0 && (earliest < 0 || toastWakeMs_ < earliest)) {
     earliest = toastWakeMs_;
   }
+  if (tooltipWakeMs_ >= 0 && (earliest < 0 || tooltipWakeMs_ < earliest)) {
+    earliest = tooltipWakeMs_;
+  }
 
   if (!window_) return;
   if (earliest < 0) {
@@ -415,6 +484,13 @@ View* ViewRoot::hitTest(Point windowPoint) const {
   const Point local = content_->windowToLocal(windowPoint);
   if (auto* group = dynamic_cast<ViewGroup*>(content_)) return group->hitTest(local);
   return content_;
+}
+
+Rect ViewRoot::tooltipAnchor(View* owner) const {
+  const Rect box = owner->absoluteBounds();
+  // 只取顶部一条：顶栏这类高瘦视图占满整列，用整块当锚会把提示甩到远处
+  const int height = (std::min)(box.height(), dpi() * 36 / 96);
+  return Rect{box.left, box.top, box.right, box.top + height};
 }
 
 MouseEvent ViewRoot::localEvent(View* target, const MouseEvent& e) const {
@@ -503,21 +579,56 @@ void ViewRoot::onMouseMove(const MouseEvent& e) {
   }
 
   View* target = hitTest(e.position);
+  // 鼠标一动就把提示收掉：提示只在「停住」时出现，跟着鼠标跑会挡住内容
+  hideTooltip();
   setHovered(target, &e);
   if (target) {
     EventDispatcher dispatcher(pathFromRoot(target), e);
     dispatcher.dispatchMouseMove();
-    window_->setCursorShape(target->cursorShape());
+    if (window_) window_->setCursorShape(target->cursorShape());
+    // 停住才浮出：立刻弹会让人误以为是随鼠标飘的浮标
+    if (!target->tooltip().empty()) {
+      tooltipOwner_ = target;
+      tooltipWakeMs_ = platform()->monotonicMillis() + kTooltipDelayMs;
+      scheduleNextDelayed();
+    }
   } else if (window_) {
     window_->setCursorShape(CursorShape::kArrow);
   }
 }
 
 void ViewRoot::onMouseLeave() {
+  hideTooltip();
   if (!hovered_) return;
   hovered_->dispatchMouseLeave();
   hovered_ = nullptr;
   if (window_) window_->setCursorShape(CursorShape::kArrow);
+}
+
+void ViewRoot::showTooltipFor(View* owner) {
+  if (!owner || owner->root() != this || owner->tooltip().empty()) return;
+  tooltipWakeMs_ = -1;
+  tooltipOwner_ = owner;
+  tooltip_.show(owner->tooltip());
+}
+
+void ViewRoot::hideTooltip() {
+  tooltipWakeMs_ = -1;
+  if (!tooltip_.isVisible()) {
+    tooltipOwner_ = nullptr;
+    return;
+  }
+  // 位置要按 owner 当前的样子算：它可能刚被移走，那时用旧框刷不干净
+  if (tooltipOwner_ && tooltipOwner_->root() == this) {
+    const Rect area = overlayArea();
+    invalidateRect(
+        tooltip_.bounds(area, tooltipAnchor(tooltipOwner_), dpi()).inflated(1, 1));
+  } else {
+    invalidate();
+  }
+  tooltip_.hide();
+  tooltipOwner_ = nullptr;
+  scheduleNextDelayed();
 }
 
 void ViewRoot::onMouseWheel(const MouseEvent& e) {

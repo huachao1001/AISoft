@@ -408,6 +408,8 @@ std::string headerFor(const std::string& tag) {
       {"StatusBar", "AiUI/widgets/status_bar.h"},
       {"ButtonBar", "AiUI/widgets/button_bar.h"},
       {"ThumbnailStrip", "AiUI/widgets/thumbnail_strip.h"},
+      {"SidePanel", "AiUI/widgets/side_panel.h"},
+      {"PanelHeader", "AiUI/widgets/side_panel.h"},
       {"CheckBox", "AiUI/widgets/option_view.h"},
       {"RadioButton", "AiUI/widgets/option_view.h"},
       {"RadioGroup", "AiUI/widgets/form_controls.h"},
@@ -436,7 +438,7 @@ bool isKnown(const XmlNode& node) {
 
 bool isContainer(const std::string& tag) {
   return tag == "LinearLayout" || tag == "FrameLayout" || tag == "RadioGroup" ||
-         tag == "GroupBox" || tag == "ChoiceCardGroup";
+         tag == "GroupBox" || tag == "ChoiceCardGroup" || tag == "SidePanel";
 }
 
 // ── 代码生成 ──
@@ -637,8 +639,9 @@ class Generator {
     }
   }
 
-  // 生成一个节点及其子树
-  bool emitNode(const XmlNode& node, const std::string& parentVar) {
+  // 生成一个节点及其子树。parentType 用来判断父容器是否有特殊挂接方式
+  bool emitNode(const XmlNode& node, const std::string& parentVar,
+                const std::string& parentType = "") {
     if (!isKnown(node)) {
       error_ = "未知标签：" + node.tag + "（自定义控件需用 header 属性指明头文件）";
       return false;
@@ -657,7 +660,14 @@ class Generator {
     // id 要在挂树前设好：宿主可能在 onCreated 里就查它
     if (named) line(1, variable + "->setId(AiUI::makeId(\"" + id + "\"));");
     // 布局容器与普通容器都走 ViewGroup::addView，布局参数由它转交
-    line(1, parentVar + "->addView(" + variable + ", " + layoutParams(node) + ");");
+    //
+    // SidePanel 例外：它的子控件是「主体」，由 setContent 接管；顶栏是它自己
+    // 建的。走 addView 会让主体变成顶栏的兄弟、顺序也对不上。
+    if (parentType == "SidePanel") {
+      line(1, parentVar + "->setContent(" + variable + ");");
+    } else {
+      line(1, parentVar + "->addView(" + variable + ", " + layoutParams(node) + ");");
+    }
 
     // 任意节点都可以直接铺底色：对话框的底色就是这么给的。
     // 写 #rrggbb 是固定色；写主题字段名（如 dialogBg）则随主题切换。
@@ -668,7 +678,7 @@ class Generator {
 
     if (isContainer(node.tag)) {
       for (const XmlNode& child : node.children) {
-        if (!emitNode(child, variable)) return false;
+        if (!emitNode(child, variable, type)) return false;
       }
     }
 

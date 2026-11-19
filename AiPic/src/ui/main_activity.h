@@ -14,6 +14,7 @@
 namespace AiUI {
 class Button;
 class ButtonBar;
+class SidePanel;
 class StatusBar;
 class TagView;
 class ThumbnailStrip;
@@ -57,6 +58,8 @@ class MainActivity : public AiUI::Activity {
   void attachPhoto();
   void attachStatusBar();
   void attachThumbs();
+  // 侧栏顶栏：目录名 + 收缩按钮
+  void attachSidePanel();
 
   // ── 状态同步 ──
   // 有图/无图决定看图层与首页谁显示
@@ -66,6 +69,8 @@ class MainActivity : public AiUI::Activity {
   void refreshToolBar();
   // 缩略图条：跟随同目录列表与当前项
   void refreshThumbs();
+  // 侧栏顶栏的目录名：翻图换了目录时要跟着变
+  void refreshSidePanel();
   void updateTitle();
 
   // ── 标题栏标签 ──
@@ -87,6 +92,7 @@ class MainActivity : public AiUI::Activity {
   AiUI::PhotoView* photo_ = nullptr;
   AiUI::StatusBar* status_ = nullptr;
   AiUI::ThumbnailStrip* thumbs_ = nullptr;
+  AiUI::SidePanel* sidePanel_ = nullptr;
   AiUI::View* homePane_ = nullptr;
 
   // 标题栏上的三个信息标签；没有图时整组隐藏

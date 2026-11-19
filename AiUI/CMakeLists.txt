@@ -31,6 +31,7 @@ set(AIUI_SOURCES
   src/shell.cpp
   src/install.cpp
   src/toast.cpp
+  src/tooltip.cpp
 
   src/events/event_dispatcher.cpp
   # 布局
@@ -48,6 +49,7 @@ set(AIUI_SOURCES
   src/widgets/option_view.cpp
   src/widgets/password_box.cpp
   src/widgets/photo_view.cpp
+  src/widgets/side_panel.cpp
   src/widgets/status_bar.cpp
   src/widgets/tag_view.cpp
   src/widgets/text_view.cpp
@@ -123,6 +125,8 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     tests/test_photo_view_anim.cpp
     tests/test_thumbnail_strip.cpp
     tests/test_toast.cpp
+    tests/test_side_panel.cpp
+    tests/test_offscreen.cpp
   )
   target_include_directories(AiUI_tests PRIVATE tests)
   target_link_libraries(AiUI_tests PRIVATE AiUI)
