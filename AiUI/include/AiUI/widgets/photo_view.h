@@ -166,10 +166,17 @@ class PhotoView : public View {
     float deltaY = 0.0f;
     // 落位后是否重新按「适应窗口」算一次（旋转在适应状态下要重算）
     bool refit = false;
+    // 逐帧跟随模型（滚轮专用）：不做「固定时长、重新起步」的插值，而是每帧
+    // 按时间常数朝目标收敛。连续滚动时速度是连续的，不会每格归零再拉起。
+    bool follow = false;
+    // 上一帧的时间戳；跟随模型用它算真实帧间隔，帧率抖动不会扭曲轨迹
+    int64_t lastTickMs = 0;
   };
 
   // 缩放在动画中的目标倍数：连续滚轮要按目标累计，按中途值累计会丢格
   float targetZoom() const;
+  // 滚轮缩放：跟随模型——每帧按时间常数朝目标收敛，连续滚动时速度连续
+  void wheelZoomBy(float factor);
   // 把平移量夹到「图至少露出一点」的范围。夹的范围是连续的（见 panLimit），
   // 所以放大经过「刚好铺满」那一格时不会横跳。
   void clampPan();
@@ -186,10 +193,13 @@ class PhotoView : public View {
   void dropPixelCache();
 
   // 动画入口：缩放带锚点，适应窗口与旋转落位后还要再算一次
-  void beginZoomTo(float zoom, Point anchor, int durationMs, bool refit);
+  void beginZoomTo(float zoom, Point anchor, int durationMs, bool refit,
+                   bool follow = false);
   void beginRotate(int quarterTurns);
   void beginAnimation(const Animation& anim);
   void tickAnimation();
+  // 滚轮专用：逐帧朝目标收敛，速度在连续滚动时保持连续
+  void tickFollow();
   void finishAnimation();
 
   // 视图矩形覆盖到的原图像素范围；放大时只画这一块

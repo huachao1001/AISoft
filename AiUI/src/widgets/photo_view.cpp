@@ -32,15 +32,20 @@ constexpr int kFrameMs = 16;
 constexpr int kProxySide = 2048;
 // 网格线太密会糊成一片灰，低于这个格边长不画线
 constexpr float kGridLineMinCell = 5.0f;
-// 格子里 RGB 数字的 em 像素范围。字号按格子大小的三分之一取（三行各占
-// 一格的三分之一），再夹在这个区间里：低于下限小得没意义，高于上限就没必要
-// 再大了。注意下限不是「读不出来就不画」——那会造成一半格子有字一半没有，
-// 比字小更难读；这里只是防止字号退化成 0。
-constexpr int kCellTextMinPx = 3;
+// 格子里 RGB 数字的 em 像素上限。字号按格子大小的三分之一取（三行各占
+// 一格的三分之一），超过这个上限就没必要再大了。
 constexpr int kCellTextMaxPx = 30;
+// 显示数字的最小格边长（设备像素）：低于它三行数字挤成一团，读不出任何
+// 信息，不如不画。两个常量之间做淡入，避免放大跨过阈值时字突然冒出来。
+// 28 像素时 em 约 9，是数字仍可辨认的下界。
+constexpr float kCellValueMinCell = 28.0f;
+constexpr float kCellValueFullCell = 40.0f;
 // 网格/锐化的淡入淡出时长。短于缩放动画：它是缩放到位后顺带的一层，
 // 拖太久会显得黏。
 constexpr int kFadeMs = 140;
+// 滚轮跟随的时间常数（毫秒）：每过这么久，剩余距离衰减到约 37%。
+// 90ms 时 180ms 已走掉 87%，300ms 走掉 96%——既跟手又有可见收尾。
+constexpr float kFollowTauMs = 90.0f;
 
 // 缓动：两端都收住，中间才快。
 //
@@ -56,6 +61,16 @@ float easeInOut(float t) {
 }
 
 float lerp(float a, float b, float t) { return a + (b - a) * t; }
+
+// 格子里数字与逐格填充的可见程度。
+// 格子太小时三行数字会糊成一团，读不出任何信息；逐格填充在这个尺寸也没必要
+// （网格线本身就占了 1 px，线旁的 1 px 漂移看不出来）。两者共用同一条渐变，
+// 免得出现「有填充没数字」或反之的错位感。
+float cellValueFade(float cell) {
+  if (cell <= kCellValueMinCell) return 0.0f;
+  if (cell >= kCellValueFullCell) return 1.0f;
+  return (cell - kCellValueMinCell) / (kCellValueFullCell - kCellValueMinCell);
+}
 
 // 平移上限（返回「平移量绝对值最多多少」）。
 //
@@ -251,6 +266,31 @@ void PhotoView::zoomBy(float factor) {
   setZoomAt(targetZoom() * factor, zoomAnchor());
 }
 
+void PhotoView::wheelZoomBy(float factor) {
+  if (factor <= 0.0f || sourceSize_.width <= 0) return;
+  const float target = (std::min)(kMaxZoom, (std::max)(kMinZoom, targetZoom() * factor));
+  fitToWindow_ = false;
+  // 已经在这条跟随链上时不要重开：重开会把速度清零，正是「顿挫」的来源。
+  // 只把目标往前推，当前倍数与速度都留着，下一帧自然加速过去。
+  if (anim_.kind != AnimKind::kNone && anim_.follow) {
+    const Point anchor = zoomAnchor();
+    const Point center = clientRect().center();
+    const float anchorX = static_cast<float>(anchor.x - center.x);
+    const float anchorY = static_cast<float>(anchor.y - center.y);
+    // 目标和锚点一起更新：连续滚动时锚点可能移动（用户一边滚一边移鼠标）
+    anim_.toZoom = target;
+    anim_.anchorX = anchorX;
+    anim_.anchorY = anchorY;
+    anim_.deltaX = anchorX - pan_.x;
+    anim_.deltaY = anchorY - pan_.y;
+    anim_.fromZoom = zoom_;
+    anim_.startMs = platform()->monotonicMillis();
+    notifyChanged();
+    return;
+  }
+  beginZoomTo(target, zoomAnchor(), animMs_, false, true);
+}
+
 float PhotoView::targetZoom() const {
   // 动画中锚点不变式逐帧反解 pan，所以从当前状态与从目标状态算出的目标
   // 平移是同一个值；倍数却必须从目标续算，否则每格都会少一点。
@@ -384,7 +424,8 @@ void PhotoView::setPan(Point pan) {
 
 // ───────────────────────── 动画 ─────────────────────────
 
-void PhotoView::beginZoomTo(float zoom, Point anchor, int durationMs, bool refit) {
+void PhotoView::beginZoomTo(float zoom, Point anchor, int durationMs, bool refit,
+                            bool follow) {
   // 不调用 finishAnimation：那会把画面直接弹到上一段动画的目标位置，
   // 连续滚轮时每一格都弹一下，看起来就是「突变」。这里只清掉动画、
   // 保留当前这一帧的 zoom_/pan_ 当起点，位置因此是连续的。
@@ -431,6 +472,7 @@ void PhotoView::beginZoomTo(float zoom, Point anchor, int durationMs, bool refit
   anim.deltaX = dx;
   anim.deltaY = dy;
   anim.refit = refit;
+  anim.follow = follow;
   beginAnimation(anim);
 }
 
@@ -447,6 +489,11 @@ void PhotoView::beginAnimation(const Animation& anim) {
 
 void PhotoView::tickAnimation() {
   if (anim_.kind == AnimKind::kNone) return;
+
+  if (anim_.follow) {
+    tickFollow();
+    return;
+  }
 
   const int64_t elapsed = platform()->monotonicMillis() - anim_.startMs;
   const float raw = anim_.durationMs > 0
@@ -484,12 +531,68 @@ void PhotoView::tickAnimation() {
   postDelayed(kFrameMs);
 }
 
+// 滚轮的逐帧跟随：每帧把「剩余的距离」按指数衰减走掉一部分。
+//
+// 与固定时长动画的根本区别是「剩余距离」的定义：固定时长动画插值一条
+// 早就定好的 from→to 线段，连续滚动时每格都要丢弃旧线段、从当前点重新起一段，
+// 速度于是每格归零再拉起，形成一串加速—刹车的锯齿，这就是顿挫感的来源。
+//
+// 这里只认「当前倍数」与「目标倍数」两个值：目标随滚轮不断前移，
+// 每帧朝它收敛固定比例。连续滚动时剩余距离持续变大，速度自然跟着变大；
+// 手一停目标不再动，剩余距离按同一条指数曲线衰减，于是收尾自动出现。
+//
+// 用真实帧间隔而不是固定 16ms：定时器精度不足时帧间隔会抖动，按固定步长
+// 推进会让轨迹忽快忽慢，那也是「不丝滑」的来源之一。
+void PhotoView::tickFollow() {
+  const int64_t now = platform()->monotonicMillis();
+  const int64_t elapsed = anim_.lastTickMs > 0 ? now - anim_.lastTickMs : kFrameMs;
+  anim_.lastTickMs = now;
+
+  // 夹住 dt：窗口消息卡顿时一帧走完会跳；太小则几乎不动。
+  const float dt = static_cast<float>((std::max)(int64_t{1}, (std::min)(elapsed, int64_t{64})));
+  const float alpha = 1.0f - std::exp(-dt / kFollowTauMs);
+
+  // 在对数倍数上收敛：滚轮一格是乘法，对数空间里等距收敛让放大/缩小
+  // 的快慢观感一致（线性收敛时缩小那一侧会显得拖沓）。
+  const float fromLog = std::log(zoom_ > 0.0f ? zoom_ : kMinZoom);
+  const float toLog = std::log(anim_.toZoom);
+  const float nextLog = fromLog + (toLog - fromLog) * alpha;
+  zoom_ = std::exp(nextLog);
+
+  // 锚定不变式：当前倍数下锚点底下的像素必须钉住。每帧用「此刻的 pan」
+  // 反解，而不是累乘一个历史 delta——累乘会把每帧的浮点误差叠成可见漂移。
+  const float ratio = anim_.fromZoom > 0.0f ? zoom_ / anim_.fromZoom : 1.0f;
+  pan_.x = anim_.anchorX - anim_.deltaX * ratio;
+  pan_.y = anim_.anchorY - anim_.deltaY * ratio;
+
+  // 剩余量小到看不出来就落位：继续排帧只是空耗一次重绘
+  if (std::fabs(toLog - nextLog) < 0.0005f) {
+    finishAnimation();
+    return;
+  }
+
+  updateGridFade();
+  tickGridFade();
+  dropPixelCache();
+  invalidate();
+  postDelayed(kFrameMs);
+}
+
 void PhotoView::finishAnimation() {
   if (anim_.kind == AnimKind::kNone) return;
 
+  const bool follow = anim_.follow;
   zoom_ = anim_.toZoom;
   displayAngle_ = anim_.toAngle;
-  pan_ = anim_.toPan;
+  // 跟随模式的 toPan 只是「开这一格时的估算」，连续滚动后早已过时；
+  // 落位时用同一套锚定不变式重算，否则收尾这一帧画面会平移一下。
+  if (follow) {
+    const float ratio = anim_.fromZoom > 0.0f ? anim_.toZoom / anim_.fromZoom : 1.0f;
+    pan_.x = anim_.anchorX - anim_.deltaX * ratio;
+    pan_.y = anim_.anchorY - anim_.deltaY * ratio;
+  } else {
+    pan_ = anim_.toPan;
+  }
   const bool refit = anim_.refit;
   anim_ = Animation{};
 
@@ -765,6 +868,43 @@ void PhotoView::paintPixelGrid(Painter& painter, const Rect& view, float alpha) 
     outY = static_cast<int>(std::lround(cy + ry));
   };
 
+  // 格子底色：逐格填实。
+  //
+  // 不能指望上面那张缩放位图与网格线对齐：后端拿到的是整数 dst 矩形，非整数
+  // 倍时内部步长是 dstW/srcW，格内边界与 toView() 的 lround 最多差 1 像素——
+  // 网格线外侧就漏出邻居颜色的一条细边，看着像「填充跟格线偏了」。
+  // 逐格填色与网格线共用同一套 toView()，边界严丝合缝；填色又和格子里的
+  // RGB 数字取自同一像素，不会再出现「数字是 86、看到的却是别的色」。
+  //
+  // 格子还小的时候不填：此时格子只有十来个像素，逐格 fillRect 一屏上万次，
+  // 换来的只是「和缩放位图看不出的差别」，白花绘制时间。
+  const float valueFade = cellValueFade(cell);
+  if (valueFade > 0.0f) {
+    const std::uint8_t cellAlpha =
+        static_cast<std::uint8_t>(static_cast<float>(alpha) * valueFade * 255.0f + 0.5f);
+    for (int y = pixelCacheRect_.top; y < pixelCacheRect_.bottom; ++y) {
+      for (int x = pixelCacheRect_.left; x < pixelCacheRect_.right; ++x) {
+        int x0 = 0;
+        int y0 = 0;
+        int x1 = 0;
+        int y1 = 0;
+        toView(static_cast<float>(x), static_cast<float>(y), x0, y0);
+        toView(static_cast<float>(x + 1), static_cast<float>(y + 1), x1, y1);
+        const Rect rc{(std::min)(x0, x1), (std::min)(y0, y1), (std::max)(x0, x1),
+                      (std::max)(y0, y1)};
+        if (rc.isEmpty() || rc.intersect(view).isEmpty()) continue;
+
+        const size_t at =
+            static_cast<size_t>(y - pixelCacheRect_.top) *
+                static_cast<size_t>(pixelCache_.width) +
+            static_cast<size_t>(x - pixelCacheRect_.left);
+        if (at >= pixelCache_.pixels.size()) continue;
+        const Color px = pixelCache_.pixels[at];
+        painter.fillRect(rc, makeColor(colorRed(px), colorGreen(px), colorBlue(px), cellAlpha));
+      }
+    }
+  }
+
   // 网格线：只在格边长够大时画，太密会糊成一片灰。
   // 半透明黑压在任意像素上都看得见，不必按图片明暗换色。
   //
@@ -826,6 +966,12 @@ void PhotoView::paintCellValues(Painter& painter, const Rect& view, float alpha)
   if (!pixelProvider_ || pixelCache_.isEmpty() || alpha <= 0.0f) return;
 
   const float cell = zoom_;
+  // 格子不够大就不画数字：三行各占一格的三分之一，格子十来个像素时 em 只有
+  // 三四个像素，糊成一片灰点，读不出任何值——那还不如留干净的格子。
+  // 放大跨过阈值时按格子边长淡入，不会突然冒出一屏数字。
+  const float valueFade = cellValueFade(cell);
+  if (valueFade <= 0.0f) return;
+
   const Point center = view.center();
   const float cx = static_cast<float>(
       static_cast<int>(std::lround(static_cast<float>(center.x) + pan_.x)));
@@ -843,20 +989,24 @@ void PhotoView::paintCellValues(Painter& painter, const Rect& view, float alpha)
     outY = static_cast<int>(std::lround(cy + ry));
   };
 
-  // 字号：格子竖着放三行数字，三行各占格高的三分之一。
+  // 字号与行距：格子竖着放三行数字（R、G、B）。
   //
-  // 直接取 cell/3 当 em：三行行框由格高三等分，后端在自己的行框里居中，
-  // 数字不会越界。但字号被下限抬起时（小格子）三行会叠——所以下面按实际
-  // 行高把三行作为一整块在格内居中，行距不足时宁可三行略微叠一点，
-  // 也不让它们压到隔壁格子上。
-  //
-  // 关键是「进入格子模式就必须每格都有字」：字号随格子缩放，格子小就给
-  // 很小的字。过去是「放不下这一格就跳过」，结果是屏幕上一部分格子有字、
-  // 一部分没有——那比字小难看得多。
+  // 行距不能直接用 cell/3：数字的可见字高只有约 0.7em，按 1em 行距排下来，
+  // 行与行之间空出 0.3em，三行读不成一个三元组，看着就是「散」。
+  // 取 0.86em 让行间只留一条窄缝，同时不重叠。
   int textPx = static_cast<int>(cell / 3.0f);
-  textPx = (std::max)(kCellTextMinPx, (std::min)(kCellTextMaxPx, textPx));
+  textPx = (std::min)(kCellTextMaxPx, textPx);
   const Font& font = fonts.forPixelSize(textPx);
   if (!font.isValid()) return;
+
+  // 三行整体作为一块在格内居中：块高就是三行行框之和。
+  // 不能写成「两段行距 + 一行字高」：每行的行框都是 pitch 高，三行实际占
+  // pitch*3，用别的算式居中会让整块偏上或偏下几个像素。
+  const int pitch = (std::max)(1, static_cast<int>(std::lround(static_cast<float>(textPx) * 0.86f)));
+  const int blockHeight = pitch * 3;
+  // 行框内后端按「行高（含降部）」居中，而数字没有降部，字形整体偏上约
+  // 0.07em。三行叠起来视觉重心就偏离格心，这里按字号补回去。
+  const int visualShift = static_cast<int>(std::lround(static_cast<float>(textPx) * 0.07f));
 
   for (int y = pixelCacheRect_.top; y < pixelCacheRect_.bottom; ++y) {
     for (int x = pixelCacheRect_.left; x < pixelCacheRect_.right; ++x) {
@@ -880,22 +1030,23 @@ void PhotoView::paintCellValues(Painter& painter, const Rect& view, float alpha)
 
       // 亮像素用深字、暗像素用浅字：否则总有一半格子读不出来。
       // 文字跟着 alpha 淡入，与网格线同步，不会出现「线到了字没到」。
+      // valueFade 让文字随格子放大一起变实，小格子时几乎看不见。
       const int luma =
           (colorRed(px) * 299 + colorGreen(px) * 587 + colorBlue(px) * 114) / 1000;
       const Color base = luma > 140 ? makeColor(0x12, 0x12, 0x12) : makeColor(0xf6, 0xf6, 0xf6);
       const Color ink =
           makeColor(colorRed(base), colorGreen(base), colorBlue(base),
-                    static_cast<std::uint8_t>(static_cast<float>(colorAlpha(base)) * alpha +
-                                              0.5f));
+                    static_cast<std::uint8_t>(static_cast<float>(colorAlpha(base)) * alpha *
+                                                  valueFade + 0.5f));
 
-      // 三行等分格子：把格高按 1/3 切开，各自在自己的行框里垂直居中。
-      // 这样不论字号多大都不会越到隔壁格子上——行框就是格子的三等分。
-      const int h3 = cellRect.height() / 3;
+      // 三行按固定行距竖直排，整块在格内居中。行框高 = 行距，
+      // 后端在行框里垂直居中字形，所以每条数字都落在自己的行距格中央。
       const int rows[3] = {colorRed(px), colorGreen(px), colorBlue(px)};
+      const int blockTop =
+          cellRect.top + (cellRect.height() - blockHeight) / 2 + visualShift;
       for (int i = 0; i < 3; ++i) {
-        const int top = cellRect.top + h3 * i;
-        const int bottom = (i == 2) ? cellRect.bottom : top + h3;
-        const Rect line{cellRect.left, top, cellRect.right, bottom};
+        const int top = blockTop + pitch * i;
+        const Rect line{cellRect.left, top, cellRect.right, top + pitch};
         if (line.isEmpty()) continue;
         painter.drawText(line, std::to_wstring(rows[i]), ink, font, TextAlign::kCenter);
       }
@@ -1098,8 +1249,10 @@ bool PhotoView::onMouseWheel(const MouseEvent& e) {
   hasLastMouse_ = true;
   const float steps = static_cast<float>(e.wheelDelta) / 120.0f;
   const float factor = std::pow(kWheelStep, steps);
+  // 宿主没接管时走滚轮专用路径：更短、起步就快。宿主接管了（例如自己
+  // 记倍数）仍按它给的 factor 走 zoomBy，保持既有约定不变。
   if (onWheelZoom_) onWheelZoom_(factor);
-  else zoomBy(factor);
+  else wheelZoomBy(factor);
   return true;
 }
 

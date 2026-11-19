@@ -9,6 +9,7 @@
 #include <shellapi.h>
 #include <shlwapi.h>
 #include <windowsx.h>
+#include <mmsystem.h>
 
 #include <map>
 #include <memory>
@@ -132,6 +133,7 @@ class WindowsWindow : public PlatformWindow {
 
   ~WindowsWindow() override {
     if (blinkTimer_) ::KillTimer(hwnd_, kBlinkTimerId);
+    ensureTimerResolution(false);
     if (eraseBrush_) ::DeleteObject(eraseBrush_);
     if (hwnd_) {
       ::SetWindowLongPtrW(hwnd_, GWLP_USERDATA, 0);
@@ -292,7 +294,25 @@ class WindowsWindow : public PlatformWindow {
       ::KillTimer(hwnd_, kDelayTimerId);
       delayTimer_ = 0;
     }
-    if (ms > 0) delayTimer_ = ::SetTimer(hwnd_, kDelayTimerId, static_cast<UINT>(ms), nullptr);
+    if (ms > 0) {
+      // 动画排帧依赖定时器精度：默认时钟粒度约 15.6ms，16ms 的帧会被系统
+      // 拉成 31ms 一帧，画面看着一顿一顿。这里在有排帧任务时把时钟提到 1ms，
+      // 排空了立刻恢复，别让整机常年跑在高精度时钟上（那样更费电）。
+      ensureTimerResolution(true);
+      delayTimer_ = ::SetTimer(hwnd_, kDelayTimerId, static_cast<UINT>(ms), nullptr);
+    } else {
+      ensureTimerResolution(false);
+    }
+  }
+
+  void ensureTimerResolution(bool raise) {
+    if (raise == timerResRaised_) return;
+    timerResRaised_ = raise;
+    if (raise) {
+      ::timeBeginPeriod(1);
+    } else {
+      ::timeEndPeriod(1);
+    }
   }
 
   void setImeCaret(int x, int y) override {
@@ -777,6 +797,8 @@ class WindowsWindow : public PlatformWindow {
   Point hoverPos_{-1, -1};
   UINT_PTR blinkTimer_ = 0;
   UINT_PTR delayTimer_ = 0;
+  // 时钟精度是否已被本窗口抬起；成对调用，避免重复 timeBeginPeriod 后漏掉恢复
+  bool timerResRaised_ = false;
   CursorShape cursor_ = CursorShape::kArrow;
   WindowStyle style_;
   // 有 owner 的顶层窗口是对话框，销毁时不该结束消息循环

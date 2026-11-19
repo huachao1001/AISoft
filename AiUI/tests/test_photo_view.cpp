@@ -165,8 +165,11 @@ AIUI_TEST(photo_view_wheel_zoom_is_cumulative) {
   MouseEvent e = mouseAt(220, 200);
   e.wheelDelta = 0;
   view.onMouseWheel(e);
-  env.fake.platform().advanceMillis(500);
-  view.onDelayed();  // 逼一次落位
+  // 跟随模型靠连续排帧推进：按 16ms 一帧驱动，直到它自己落位
+  for (int f = 0; f < 60 && view.isAnimating(); ++f) {
+    env.fake.platform().advanceMillis(16);
+    view.onDelayed();
+  }
 
   AIUI_CHECK(std::fabs(view.zoom() - 1.3225f) < 0.02f);
 }

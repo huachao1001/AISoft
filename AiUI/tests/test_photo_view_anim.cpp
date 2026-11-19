@@ -106,6 +106,8 @@ std::vector<DecodedCell> decodeCells(const PhotoView& view, const RecordingBacke
     s.left = texts[i].rect.left;
     s.top = texts[i].rect.top;
     s.width = texts[i].rect.width();
+    // 行框宽度 = 格子宽；行框高 = 行距（0.86em），三行加起来才是文字块高度。
+    // 文字块比格子矮一点是刻意的，不能拿它当格子边长。
     s.height = texts[i + 2].rect.bottom - texts[i].rect.top;
     s.x = static_cast<int>(std::lround((static_cast<float>(s.left) - cx + halfW) / cell));
     s.y = static_cast<int>(std::lround((static_cast<float>(s.top) - cy + halfH) / cell));
@@ -374,7 +376,8 @@ AIUI_TEST(photo_view_hides_grid_while_rotating) {
 }
 
 // 动画首帧不能一口气走掉大半个行程：那正是「生硬」的来源。
-// smoothstep 起步平缓，第一帧（约 9% 时间）的进度应远小于一半。
+// 只针对一次性缩放（按钮 / 适应窗口 / 双击）；滚轮反过来要首帧就动，
+// 见 photo_view_wheel_zoom_responds_on_first_frame。
 AIUI_TEST(photo_view_zoom_animation_starts_gently) {
   AnimEnv env;
   env.fake.platform().setImageSize(Size{200, 100});
@@ -384,8 +387,7 @@ AIUI_TEST(photo_view_zoom_animation_starts_gently) {
   view.setAnimationDuration(180);
 
   const float before = view.zoom();
-  MouseEvent e = wheelAt(200, 200);
-  view.onMouseWheel(e);
+  view.zoomBy(1.15f);
 
   env.fake.platform().advanceMillis(16);
   view.onDelayed();
@@ -408,10 +410,79 @@ AIUI_TEST(photo_view_zoom_animation_starts_gently) {
   AIUI_CHECK(std::fabs(end - mid) > 0.0f);
 }
 
+// 滚轮要「立刻动、停下还有收尾」，且不能首帧就到位。
+// 跟随模型的这三个特征都由时间常数决定，这里逐条钉住。
+AIUI_TEST(photo_view_wheel_zoom_responds_on_first_frame) {
+  AnimEnv env;
+  env.fake.platform().setImageSize(Size{200, 100});
+  AnimProbe view;
+  view.layout(Rect{0, 0, 400, 400});
+  view.loadFile(L"a.png");
+  view.setAnimationDuration(180);
+
+  const float before = view.zoom();
+  view.onMouseWheel(wheelAt(250, 170));
+  // 一格的目标是 1.15 倍。首帧 16ms 应走掉一段可观行程（不再等缓坡），
+  // 但不能一帧基本到位——那看着就是「没有动画」。
+  env.fake.platform().advanceMillis(16);
+  view.onDelayed();
+  const float firstFrame = (view.zoom() - before) / (before * 0.15f);
+  AIUI_CHECK(firstFrame > 0.10f);
+  AIUI_CHECK(firstFrame < 0.55f);
+
+  // 手停之后必须有连续的收尾：目标不再前移，剩余量按指数衰减。
+  // 相邻两帧都应继续前进，且步长逐渐变小（减速），而不是某帧突然定住。
+  float prev = view.zoom();
+  float prevStep = 0.0f;
+  int movingFrames = 0;
+  for (int f = 0; f < 30 && view.isAnimating(); ++f) {
+    env.fake.platform().advanceMillis(16);
+    view.onDelayed();
+    const float step = view.zoom() - prev;
+    if (step > 0.0f) {
+      ++movingFrames;
+      if (prevStep > 0.0f) AIUI_CHECK(step <= prevStep + 1e-6f);
+      prevStep = step;
+    }
+    prev = view.zoom();
+  }
+  // 收尾至少持续若干帧（不是下一帧就定住），最终落位到 1.15 倍
+  AIUI_CHECK(movingFrames >= 4);
+  AIUI_CHECK(std::fabs(view.zoom() - before * 1.15f) < 0.005f);
+
+  // 连续滚两格：目标仍按 1.15^2 累计，不会因为接连打断而丢格
+  view.onMouseWheel(wheelAt(250, 170));
+  for (int f = 0; f < 60 && view.isAnimating(); ++f) {
+    env.fake.platform().advanceMillis(16);
+    view.onDelayed();
+  }
+  AIUI_CHECK(std::fabs(view.zoom() - before * 1.15f * 1.15f) < 0.02f);
+}
+
+// 按钮那类一次性缩放仍走平滑曲线：起步要缓，别猛跳一下。
+AIUI_TEST(photo_view_button_zoom_stays_smooth) {
+  AnimEnv env;
+  env.fake.platform().setImageSize(Size{200, 100});
+  AnimProbe view;
+  view.layout(Rect{0, 0, 400, 400});
+  view.loadFile(L"a.png");
+  view.setAnimationDuration(180);
+
+  const float before = view.zoom();
+  view.zoomBy(1.25f);
+  env.fake.platform().advanceMillis(16);
+  view.onDelayed();
+  const float firstFrame = (view.zoom() - before) / (before * 0.25f);
+  AIUI_CHECK(firstFrame < 0.10f);
+}
+
 // ───────────────────────── 像素格里的 RGB 文字 ─────────────────────────
 
 // 每个可见格子都必须有 R、G、B 三行数字：三行竖直排、自上而下。
 // 「有些格子有字、有些没有」是修过的缺陷，这里按格数精确核对条数。
+//
+// 32 倍（格子 32px）起步：低于 cellValueFade 的下限（28px）时数字是刻意
+// 不画的——那么小的三行字糊成一团，不如留干净格子。这不是「漏格」。
 AIUI_TEST(photo_view_cell_text_covers_every_cell) {
   AnimEnv env;
   env.fake.platform().setImageSize(Size{1600, 1000});
@@ -421,8 +492,8 @@ AIUI_TEST(photo_view_cell_text_covers_every_cell) {
   view.loadFile(L"a.png");
   view.setAnimationDuration(0);
 
-  // 20px 的格子：视口 600x400 正好摆 30x20 格
-  view.setZoomAt(20.0f, Point{300, 200});
+  // 32px 的格子：视口 600x400 摆得下约 18x12 格
+  view.setZoomAt(32.0f, Point{300, 200});
   env.fake.platform().advanceMillis(300);
   view.onDelayed();
 
@@ -472,16 +543,21 @@ AIUI_TEST(photo_view_cell_text_grows_with_cell_size) {
     return texts.empty() ? 0 : texts[0].rect.height();
   };
 
-  const int at20 = firstRowHeight(20.0f);
-  const int at40 = firstRowHeight(40.0f);
+  const int at32 = firstRowHeight(32.0f);
+  const int at48 = firstRowHeight(48.0f);
   const int at80 = firstRowHeight(80.0f);
-  AIUI_CHECK(at20 > 0);
-  // 格子放大一倍，每一行的行框该跟着长：这是「格子大字大」的直接体现
-  AIUI_CHECK(at40 > at20);
-  AIUI_CHECK(at80 > at40);
+  // 低于数字可见阈值（28px）时不画，所以起点取 32
+  AIUI_CHECK(at32 > 0);
+  // 格子放大，每一行的行框该跟着长：这是「格子大字大」的直接体现
+  AIUI_CHECK(at48 > at32);
+  AIUI_CHECK(at80 > at48);
 }
 
-// 三行必须正好铺满一格、不越界：这是「不叠字、不压到隔壁格」的几何保证。
+// 三行必须首尾相接、整体在格内居中，且不越界——这是「不叠字、不压到隔壁格」
+// 的几何保证。
+//
+// 注意断言的不是「三行铺满整格」：行距按 0.86em 取（1em 行距会让三行散开读不成
+// 三元组），所以整块比格子略矮，垂直居中后上下各留一点余量。
 AIUI_TEST(photo_view_cell_text_stays_inside_its_cell) {
   AnimEnv env;
   env.fake.platform().setImageSize(Size{1600, 1000});
@@ -490,7 +566,7 @@ AIUI_TEST(photo_view_cell_text_stays_inside_its_cell) {
   view.layout(Rect{0, 0, 600, 400});
   view.loadFile(L"a.png");
   view.setAnimationDuration(0);
-  view.setZoomAt(20.0f, Point{300, 200});
+  view.setZoomAt(32.0f, Point{300, 200});
   env.fake.platform().advanceMillis(300);
   view.onDelayed();
 
@@ -501,11 +577,16 @@ AIUI_TEST(photo_view_cell_text_stays_inside_its_cell) {
   const auto& texts = backend.texts();
   AIUI_CHECK(!texts.empty());
   for (size_t i = 0; i + 2 < texts.size(); i += 3) {
-    // 三行首尾相接，整体高度恰好一格：20px 的格子应当正好 20 高
+    // 三行首尾相接：上一行的底就是下一行的顶
+    AIUI_CHECK_EQ(texts[i].rect.bottom, texts[i + 1].rect.top);
+    AIUI_CHECK_EQ(texts[i + 1].rect.bottom, texts[i + 2].rect.top);
+
     const int span = texts[i + 2].rect.bottom - texts[i].rect.top;
-    AIUI_CHECK_EQ(span, 20);
-    // 行框宽度也就是一格宽
-    AIUI_CHECK_EQ(texts[i].rect.width(), 20);
+    // 整块不越出一格（32px 格子、pitch 9 时约 27~30 高）
+    AIUI_CHECK(span <= 32);
+    AIUI_CHECK(span > 0);
+    // 行框宽度就是一格宽
+    AIUI_CHECK_EQ(texts[i].rect.width(), 32);
   }
 }
 
@@ -525,7 +606,8 @@ AIUI_TEST(photo_view_one_pixel_per_cell) {  AnimEnv env;
 
   // 整数倍与非整数倍都要过：非整数倍时格边长会在 floor/ceil 之间交替，
   // 最容易出现「格子往左偏半格、数字取到隔壁像素」。
-  for (float zoom : {10.0f, 13.7f, 20.0f, 33.3f, 64.0f}) {
+  // 只取 28px 以上的档位：低于可见阈值时数字刻意不画，无法校验映射。
+  for (float zoom : {32.0f, 33.3f, 45.0f, 64.0f}) {
     view.setZoomAt(zoom, area.center());
     env.fake.platform().advanceMillis(400);
     view.onDelayed();
@@ -543,10 +625,12 @@ AIUI_TEST(photo_view_one_pixel_per_cell) {  AnimEnv env;
       AIUI_CHECK_EQ(s.g, (s.y * 3) % 256);
       AIUI_CHECK_EQ(s.b, (s.x + s.y) % 256);
 
-      // 格边长应当就是倍数（±1 给取整交替）
-      const int span = static_cast<int>(std::lround(zoom));
-      AIUI_CHECK(std::abs(s.width - span) <= 1);
-      AIUI_CHECK(std::abs(s.height - span) <= 1);
+      // 格宽应当就是倍数（±1 给取整交替）。宽度取自行框，行框就是整格宽。
+      const int cellSpan = static_cast<int>(std::lround(zoom));
+      AIUI_CHECK(std::abs(s.width - cellSpan) <= 1);
+      // 文字块必须放得进这一格：行距 0.86em 让三行加起来比格子略矮
+      AIUI_CHECK(s.height <= cellSpan);
+      AIUI_CHECK(s.height > 0);
 
       for (const auto& p : seen) {
         AIUI_CHECK(!(p.first == s.x && p.second == s.y));
@@ -584,7 +668,8 @@ AIUI_TEST(photo_view_one_pixel_per_cell_after_rotation) {
   view.layout(area);
   view.loadFile(L"a.png");
   view.setAnimationDuration(0);
-  view.setZoomAt(20.0f, area.center());
+  // 32 倍起步：低于数字可见阈值（28px）时不画字，无法校验三值自洽
+  view.setZoomAt(32.0f, area.center());
   view.rotate(1);
   env.fake.platform().advanceMillis(1000);
   view.onDelayed();

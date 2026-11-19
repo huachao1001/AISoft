@@ -99,7 +99,7 @@ target_compile_definitions(AiUI PUBLIC
 
 target_compile_options(AiUI PRIVATE /utf-8 /W4 /permissive- /Zc:__cplusplus)
 
-target_link_libraries(AiUI PUBLIC gdiplus imm32 shell32 shlwapi ole32 oleaut32 uuid dwmapi comctl32)
+target_link_libraries(AiUI PUBLIC gdiplus imm32 shell32 shlwapi ole32 oleaut32 uuid dwmapi comctl32 winmm)
 
 # XML 布局自动生成：aiui_add_layouts(<target> assets/layouts/main.xml ...)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/AiUiLayout.cmake)
