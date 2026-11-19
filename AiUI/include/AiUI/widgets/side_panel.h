@@ -1,8 +1,11 @@
 // SidePanel：带可收缩顶栏的侧栏容器
 //
 //   SidePanel (ViewGroup)
-//   ├── header : PanelHeader   目录名 + 收缩按钮；折叠后变竖排
-//   └── content                 调用方塞进来的主体（缩略图条等）
+//   ├── content                 调用方塞进来的主体（缩略图条等）
+//   └── header  : PanelHeader   贴在底部的收缩条，只有一个展开/收起按钮
+//
+// 顶栏不显示目录名：侧栏就那么宽，目录名放不下几个字，认目录靠悬停提示或
+// 状态栏更靠谱。留下的那条只承担一个动作——收起或展开。
 //
 // 折叠不是「一下子消失」：宽度逐帧收敛到只剩一条窄边，内容跟着被裁掉。
 // 动画只改宽度，不改可见性——中途隐藏内容会让画面空一阵，反而更跳。
@@ -15,17 +18,14 @@
 
 namespace AiUI {
 
-// 顶栏外观（96 DPI 设计值）
+// 收缩条外观（96 DPI 设计值）
 struct PanelHeaderStyle {
   int height = 34;
-  int padLeft = 12;
   int padRight = 8;
-  // 折叠后那条窄边的宽度：只放得下一个图标和竖排文字
+  // 折叠后那条窄边的宽度：只放得下一个图标
   int collapsedWidth = 30;
-  int titleGap = 8;
   // kNoColor 表示跟随主题
   Color background = kNoColor;
-  Color text = kNoColor;
   Color buttonHover = kNoColor;
 };
 
@@ -33,18 +33,13 @@ class PanelHeader : public View {
  public:
   PanelHeader() { setClaimsPointer(true); }
 
-  void setText(const std::wstring& text);
-  const std::wstring& text() const { return text_; }
-  // 完整路径：目录名会被省略，靠悬停提示补全
-  void setHint(const std::wstring& hint);
-
   void setStyle(const PanelHeaderStyle& style);
   const PanelHeaderStyle& style() const { return style_; }
 
-  // 折叠态下标题竖排，按钮改成「展开」方向
+  // 折叠态下按钮改成「展开」方向
   void setCollapsed(bool collapsed);
   bool isCollapsed() const { return collapsed_; }
-  // 当前宽度是否已窄到放不下横排标题
+  // 当前宽度是否已窄到只能放一个按钮
   bool isNarrow() const;
 
   // 收缩/展开按钮的点击
@@ -66,7 +61,6 @@ class PanelHeader : public View {
  private:
   Rect localToggleRect() const;
 
-  std::wstring text_;
   PanelHeaderStyle style_{};
   bool collapsed_ = false;
   bool hot_ = false;

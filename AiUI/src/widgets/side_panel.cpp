@@ -26,15 +26,6 @@ float easeInOut(float t) {
 
 // ───────────────────────── PanelHeader ─────────────────────────
 
-void PanelHeader::setText(const std::wstring& text) {
-  if (text_ == text) return;
-  text_ = text;
-  // 折叠时是逐字竖排，字变了高度就变，必须重画
-  invalidate();
-}
-
-void PanelHeader::setHint(const std::wstring& hint) { setTooltip(hint); }
-
 void PanelHeader::setStyle(const PanelHeaderStyle& style) {
   style_ = style;
   requestLayout();
@@ -44,13 +35,12 @@ void PanelHeader::setStyle(const PanelHeaderStyle& style) {
 void PanelHeader::setCollapsed(bool collapsed) {
   if (collapsed_ == collapsed) return;
   collapsed_ = collapsed;
-  // 按钮换位置与方向；标题排法不在这里定，交给宽度自己决定
-  requestLayout();
+  // 只换按钮方向：它是「下一步会怎样」的提示
   invalidate();
 }
 
 // 排法跟「实际宽度」走，而不是跟目标态走：动画过程中宽度一路收窄，
-// 横排放不下时自然转竖排，看着是被挤出去的，不会突然跳一下。
+// 横排放不下时自然切成居中摆放，看着是被挤出去的，不会突然跳一下。
 bool PanelHeader::isNarrow() const {
   const int d = dpi();
   return clientRect().width() < style_.collapsedWidth * d / 96 * 2;
@@ -62,8 +52,9 @@ Rect PanelHeader::localToggleRect() const {
   // 固定的小方块按钮；窄边上先保证不越界
   const int side = (std::max)(1, (std::min)(22 * d / 96, rc.width() - 4 * d / 96));
   if (isNarrow()) {
+    // 窄边就是个方块：按钮居中，四周留白对称
     const int x = (rc.width() - side) / 2;
-    const int y = 4 * d / 96;
+    const int y = (rc.height() - side) / 2;
     return Rect{x, y, x + side, y + side};
   }
   const int right = rc.right - style_.padRight * d / 96;
@@ -81,12 +72,11 @@ Size PanelHeader::onMeasure(const Size& available) {
 void PanelHeader::onPaint(Painter& painter, const Rect& rect) {
   const int d = dpi();
   const Theme& t = theme();
-  const Color textColor = style_.text != kNoColor ? style_.text : t.textHead;
   const Color iconColor = t.iconMuted;
 
-  // 还有横排空间时底边压一条分隔线，跟下面的缩略图区分开
+  // 分隔线压在朝内容那一侧：顶栏在底部，线就在它上面
   if (!isNarrow()) {
-    painter.drawHLine(rect.left, rect.right, rect.bottom - 1, t.line);
+    painter.drawHLine(rect.left, rect.right, rect.top, t.line);
   }
 
   const Rect button = localToggleRect();
@@ -111,28 +101,6 @@ void PanelHeader::onPaint(Painter& painter, const Rect& rect) {
     painter.drawIcon(IconId::kChevron, iconRect, iconColor);
   }
   painter.restore();
-
-  const Font& font = fonts.uiSmall;
-
-  if (isNarrow()) {
-    // 竖排：窄边上横着放不下目录名，逐字往下至少还能认出是哪个目录
-    int y = button.bottom + style_.titleGap * d / 96;
-    const int step = font.pixelHeight() + d * 2 / 96;
-    for (wchar_t ch : text_) {
-      if (y + step > rect.bottom) break;
-      const Rect line{rect.left, y, rect.right, y + step};
-      painter.drawText(line, std::wstring(1, ch), textColor, font, TextAlign::kCenter);
-      y += step;
-    }
-    return;
-  }
-
-  const Rect titleRect{rect.left + style_.padLeft * d / 96, rect.top,
-                       button.left - style_.titleGap * d / 96, rect.bottom};
-  if (titleRect.width() > 0) {
-    // 目录名可能很长：尾部省略，完整路径交给悬停提示
-    painter.drawTextEllipsis(titleRect, text_, textColor, font);
-  }
 }
 
 bool PanelHeader::onMouseDown(const MouseEvent& e) {
@@ -291,20 +259,21 @@ Size SidePanel::onMeasure(const Size& available) { return available; }
 
 void SidePanel::onLayout(const Rect& frame) {
   const int d = dpi();
-  const bool collapsedNow = collapsed_ && !animating_;
   if (header_) {
-    // 展开时只占顶上一条；折叠收尾后就是整条窄边，竖排文字要一直排到底
-    const int h = collapsedNow ? frame.height() : header_->style().height * d / 96;
-    header_->layout(Rect{0, 0, frame.width(), (std::min)(h, frame.height())});
+    // 顶栏贴在底部。高度不超过宽度：收成窄边后它就是底下一个方块，
+    // 宽度一路收窄时高度跟着收敛，不会在动画收尾那一刻突然变矮。
+    const int designH = header_->style().height * d / 96;
+    const int h = (std::min)({designH, frame.width(), frame.height()});
+    header_->layout(Rect{0, frame.height() - h, frame.width(), frame.height()});
   }
   if (!body_) return;
 
-  const int top = header_ ? header_->bounds().bottom : 0;
+  const int bottom = header_ ? header_->bounds().top : frame.height();
   // 动画期间内容保持展开宽度：窄下来的是「窗口」，不是里面的卡片，
   // 看起来才是被推出去，而不是被压扁。折叠完成后它本来就隐藏了。
   const int bodyWidth =
       animating_ ? (std::max)(frame.width(), expandedWidth_ * d / 96) : frame.width();
-  body_->layout(Rect{0, top, bodyWidth, frame.height()});
+  body_->layout(Rect{0, 0, bodyWidth, (std::max)(0, bottom)});
 }
 
 }  // namespace AiUI

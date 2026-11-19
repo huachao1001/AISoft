@@ -245,23 +245,6 @@ void MainActivity::attachSidePanel() {
   // 布局变化时自己重算，而用户手动调过的倍数不该因为收个侧栏就被重置。
   const int width = sidePanel_->layoutParams().width;
   if (width > 0) sidePanel_->setExpandedWidth(width);
-  refreshSidePanel();
-}
-
-void MainActivity::refreshSidePanel() {
-  if (!sidePanel_) return;
-  AiUI::PanelHeader* header = sidePanel_->header();
-  if (!header) return;
-
-  if (!AppHasImage()) {
-    header->setText(L"图片列表");
-    header->setHint(std::wstring());
-    return;
-  }
-  const std::wstring dir = util::DirName(AppImagePath());
-  // 目录名可能是个很长的末级名：顶栏只放名字，完整路径进悬停提示
-  header->setText(util::BaseName(dir));
-  header->setHint(dir);
 }
 
 void MainActivity::attachThumbs() {
@@ -288,7 +271,6 @@ void MainActivity::refreshStage() {
 }
 
 void MainActivity::refreshThumbs() {
-  refreshSidePanel();
   if (!thumbs_) return;
   thumbs_->setItems(AppSiblingImages());
   thumbs_->setSelected(AppSiblingIndex());

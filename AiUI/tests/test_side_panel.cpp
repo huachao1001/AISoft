@@ -4,6 +4,7 @@
 
 #include "AiUI/font.h"
 #include "AiUI/tooltip.h"
+#include "AiUI/view_root.h"
 #include "AiUI/widgets/side_panel.h"
 
 #include <string>
@@ -45,15 +46,56 @@ AIUI_TEST(side_panel_collapses_immediately_without_window) {
   AIUI_CHECK(panel.layoutParams().width == 208);
 }
 
-// 顶栏只放目录名，完整路径走悬停提示
-AIUI_TEST(side_panel_header_carries_name_and_full_path) {
+// 收缩条不承担文字：侧栏就这么窄，目录名放不下几个字，认目录交给状态栏。
+// 这里只留一个动作，别再把标题塞回来。
+AIUI_TEST(side_panel_header_carries_no_title) {
   PanelEnv env;
   SidePanel panel;
-  panel.header()->setText(L"项目");
-  panel.header()->setHint(L"D:\\work\\项目");
+  AIUI_CHECK(panel.create(nullptr, Rect{0, 0, 208, 500}));
 
-  AIUI_CHECK(panel.header()->text() == L"项目");
-  AIUI_CHECK(panel.header()->tooltip() == L"D:\\work\\项目");
+  RecordingBackend backend;
+  Painter painter(backend);
+  panel.header()->draw(painter, panel.header()->clientRect());
+
+  for (const TextCall& call : backend.texts()) {
+    AIUI_CHECK(call.text.empty());
+  }
+}
+
+// 顶栏落在底部，内容占它上方
+AIUI_TEST(side_panel_header_sits_at_the_bottom) {
+  PanelEnv env;
+  SidePanel panel;
+  panel.setExpandedWidth(208);
+  auto* body = new View();
+  panel.setContent(body);
+  AIUI_CHECK(panel.create(nullptr, Rect{0, 0, 208, 500}));
+
+  const int headerH = PanelHeaderStyle{}.height;
+  AIUI_CHECK(panel.header()->bounds().bottom == 500);
+  AIUI_CHECK(panel.header()->bounds().top == 500 - headerH);
+  AIUI_CHECK(body->bounds().top == 0);
+  AIUI_CHECK(body->bounds().bottom == panel.header()->bounds().top);
+}
+
+// 收成窄边后顶栏只剩一块：高度不超过宽度，按钮才落得进去
+AIUI_TEST(side_panel_collapsed_header_stays_square) {
+  PanelEnv env;
+  SidePanel panel;
+  panel.setExpandedWidth(208);
+  AIUI_CHECK(panel.create(nullptr, Rect{0, 0, 208, 500}));
+
+  panel.setCollapsed(true, false);
+  // 宽度改的是布局参数，父容器下一轮排版才生效；这里手动跑一轮
+  panel.layout(Rect{0, 0, panel.layoutParams().width, 500});
+  const Rect header = panel.header()->bounds();
+  AIUI_CHECK(header.width() == PanelHeaderStyle{}.collapsedWidth);
+  AIUI_CHECK(header.height() <= header.width());
+  AIUI_CHECK(header.bottom == 500);
+  // 按钮要整个落在这一块里，否则收起来就点不到展开
+  const Rect button = panel.header()->toggleRect();
+  AIUI_CHECK(button.left >= 0 && button.right <= header.width());
+  AIUI_CHECK(button.top >= 0 && button.bottom <= header.height());
 }
 
 // 提示框优先贴在锚点上方，且两端都要留在客户区内

@@ -58,7 +58,7 @@ class MainActivity : public AiUI::Activity {
   void attachPhoto();
   void attachStatusBar();
   void attachThumbs();
-  // 侧栏顶栏：目录名 + 收缩按钮
+  // 侧栏：宽度以布局为准，收缩后只留底部一条
   void attachSidePanel();
 
   // ── 状态同步 ──
@@ -69,8 +69,6 @@ class MainActivity : public AiUI::Activity {
   void refreshToolBar();
   // 缩略图条：跟随同目录列表与当前项
   void refreshThumbs();
-  // 侧栏顶栏的目录名：翻图换了目录时要跟着变
-  void refreshSidePanel();
   void updateTitle();
 
   // ── 标题栏标签 ──
