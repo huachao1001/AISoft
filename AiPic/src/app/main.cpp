@@ -49,8 +49,16 @@ std::wstring firstImageArg() {
 // 写死坐标的脚本一改样式就失效。
 // --present 进全屏演示；--wheel/--dclick 用来验证演示态是否真的锁住了画面。
 struct SnapshotAction {
-  enum class Kind { kClick, kHover, kCollapse, kTooltip, kPresent, kWheel, kDoubleClick } kind =
-      Kind::kClick;
+  enum class Kind {
+    kClick,
+    kHover,
+    kCollapse,
+    kTooltip,
+    kPresent,
+    kWheel,
+    kDoubleClick,
+    kRotateMidway
+  } kind = Kind::kClick;
   AiUI::Point at;
   // kCollapse 用：true 表示收缩，false 表示展开
   bool flag = true;
@@ -186,6 +194,14 @@ SnapshotOptions parseSnapshot(const std::vector<std::wstring>& args) {
       if (parsePoint(value, action.at)) opts.actions.push_back(action);
       continue;
     }
+    // 旋转到一半停住再截：棋盘格溢出这类问题只在动画中途出现，
+    // 截落位后的那一帧永远看不出来
+    if (arg == L"--rotate-midway") {
+      SnapshotAction action;
+      action.kind = SnapshotAction::Kind::kRotateMidway;
+      opts.actions.push_back(action);
+      continue;
+    }
     // 剩下的非选项参数里挑第一张能打开的图
     if (!arg.empty() && arg[0] != L'-' && opts.imagePath.empty() &&
         util::IsImageFile(arg) && util::PathExists(arg)) {
@@ -250,6 +266,18 @@ int runSnapshot(const SnapshotOptions& opts) {
         AiUI::MouseEvent e;
         e.position = action.at;
         root->onDoubleClick(e);
+        break;
+      }
+      case SnapshotAction::Kind::kRotateMidway: {
+        // 转 90° 只推到一半：进度按设计时长的一半算，落在这里截到的
+        // 大约就是 45°，棋盘格溢出最明显的那一刻。
+        // 单次定时器还没有排到，这里直接把时钟推过去再触发一次。
+        if (AiUI::PhotoView* photo = activity.findView<AiUI::PhotoView>("photo")) {
+          photo->setAnimationDuration(200);
+          photo->rotate(1);
+          AiUI::platform()->sleepMillis(100);
+          root->onDelayTimer();
+        }
         break;
       }
       default:

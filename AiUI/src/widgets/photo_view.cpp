@@ -1245,17 +1245,23 @@ void PhotoView::onPaint(Painter& painter, const Rect& rect) {
   //
   // 底纹锚在视图坐标系（拖动时格子不动），但只覆盖图片占的那块。
   // 图片框在视图里的位置由 pan/zoom/旋转决定，和绘制位图用同一套取整，
-  // 否则底纹会比图片多出或少掉一条边。矩形是轴对齐的：这里用旋转后的
-  // 外接框，旋转 90° 倍数时它就是图片本身的框，非整倍数动画期间略大一点
-  // 也不影响观感（此时底纹随图片一起转，本身就是个矩形）。
+  // 否则底纹会比图片多出或少掉一条边。
+  //
+  // 旋转动画中途不铺：那一刻图片朝向是斜的，按轴对齐框铺会在四角露出底纹；
+  // 让底纹跟着图片转，格子又会随图片跑掉（它该像桌垫一样固定在纸面上）。
+  // 整张图正转着，少这一层看不出来，落位回到 90° 倍数后自然回来。
   if (hasAlpha_) {
-    const Size rotated = rotatedSizeOf(sourceSize_, rotation_);
-    const int boxW = static_cast<int>(std::lround(static_cast<double>(rotated.width) * zoom_));
-    const int boxH = static_cast<int>(std::lround(static_cast<double>(rotated.height) * zoom_));
-    const Rect imageBox{tx - boxW / 2, ty - boxH / 2, tx - boxW / 2 + boxW,
-                        ty - boxH / 2 + boxH};
-    const Rect clipped = imageBox.intersect(rect);
-    if (!clipped.isEmpty()) paintAlphaBackdrop(painter, clipped);
+    const float quarter = displayAngle_ / 90.0f;
+    if (std::fabs(quarter - std::round(quarter)) < 0.01f) {
+      const Size rotated =
+          rotatedSizeOf(sourceSize_, static_cast<int>(std::lround(quarter)));
+      const int boxW = static_cast<int>(std::lround(static_cast<double>(rotated.width) * zoom_));
+      const int boxH = static_cast<int>(std::lround(static_cast<double>(rotated.height) * zoom_));
+      const Rect imageBox{tx - boxW / 2, ty - boxH / 2, tx - boxW / 2 + boxW,
+                          ty - boxH / 2 + boxH};
+      const Rect clipped = imageBox.intersect(rect);
+      if (!clipped.isEmpty()) paintAlphaBackdrop(painter, clipped);
+    }
   }
 
   painter.save();

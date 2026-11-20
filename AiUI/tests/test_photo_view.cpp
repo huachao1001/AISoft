@@ -273,6 +273,68 @@ AIUI_TEST(photo_view_rotate_is_modulo_four) {
   AIUI_CHECK_EQ(view.rotation(), 0);
 }
 
+// 旋转动画中途不许铺棋盘格底纹。
+//
+// 底纹的框是按轴对齐算的，而图片正按动画角度转着，两者对不上时四角会露出
+// 底纹。底纹又不能跟着图片转——它得像桌垫一样固定在纸面上。所以正转着的那
+// 几十毫秒里干脆不铺；图整张都在转，少这一层看不出来。
+AIUI_TEST(photo_view_skips_checkerboard_mid_rotation) {
+  PhotoEnv env;
+  env.fake.platform().setImageSize(Size{200, 100});
+  TestPhotoView view;
+  view.layout(Rect{0, 0, 400, 400});
+  view.loadFile(L"a.png");
+  view.setImageHasAlpha(true);
+  view.setAnimationDuration(200);
+
+  // 静止在 90° 倍数：底纹要画
+  int counted = 0;
+  {
+    RecordingBackend backend;
+    Painter painter(backend);
+    view.draw(painter, view.clientRect());
+    for (const FillCall& fill : backend.fills()) {
+      if (fill.color == 0xffffffffu || fill.color == 0xffccccccu) ++counted;
+    }
+  }
+  AIUI_CHECK(counted > 0);
+
+  // 转到中途：一格都不许有
+  view.rotate(1);
+  env.fake.platform().advanceMillis(100);  // 一半，角度约 45°
+  view.onDelayed();
+  AIUI_CHECK(view.isAnimating());
+
+  int mid = 0;
+  {
+    RecordingBackend backend;
+    Painter painter(backend);
+    view.draw(painter, view.clientRect());
+    for (const FillCall& fill : backend.fills()) {
+      if (fill.color == 0xffffffffu || fill.color == 0xffccccccu) ++mid;
+    }
+  }
+  AIUI_CHECK_EQ(mid, 0);
+
+  // 落位后回来
+  for (int f = 0; f < 40 && view.isAnimating(); ++f) {
+    env.fake.platform().advanceMillis(16);
+    view.onDelayed();
+  }
+  AIUI_CHECK(!view.isAnimating());
+
+  int done = 0;
+  {
+    RecordingBackend backend;
+    Painter painter(backend);
+    view.draw(painter, view.clientRect());
+    for (const FillCall& fill : backend.fills()) {
+      if (fill.color == 0xffffffffu || fill.color == 0xffccccccu) ++done;
+    }
+  }
+  AIUI_CHECK(done > 0);
+}
+
 // ───────────────────────── 拖动 ─────────────────────────
 
 AIUI_TEST(photo_view_drag_works_without_zooming_first) {
