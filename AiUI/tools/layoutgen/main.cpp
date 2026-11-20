@@ -412,6 +412,7 @@ std::string headerFor(const std::string& tag) {
       {"PanelToggle", "AiUI/widgets/side_panel.h"},
       {"CheckBox", "AiUI/widgets/option_view.h"},
       {"RadioButton", "AiUI/widgets/option_view.h"},
+      {"Slider", "AiUI/widgets/slider.h"},
       {"RadioGroup", "AiUI/widgets/form_controls.h"},
       {"ProgressBar", "AiUI/widgets/form_controls.h"},
       {"GroupBox", "AiUI/widgets/form_controls.h"},

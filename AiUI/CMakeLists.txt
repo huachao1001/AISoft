@@ -51,6 +51,7 @@ set(AIUI_SOURCES
   src/widgets/password_box.cpp
   src/widgets/photo_view.cpp
   src/widgets/side_panel.cpp
+  src/widgets/slider.cpp
   src/widgets/status_bar.cpp
   src/widgets/tag_view.cpp
   src/widgets/text_view.cpp
@@ -130,6 +131,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     tests/test_offscreen.cpp
     tests/test_button_bar.cpp
     tests/test_status_bar.cpp
+    tests/test_slider.cpp
     tests/test_vector_icons.cpp
   )
   target_include_directories(AiUI_tests PRIVATE tests)

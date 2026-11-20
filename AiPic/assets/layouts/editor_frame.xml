@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  编辑器主窗口。
+
+  横向两段：
+
+  - 左：图片预览（PhotoView），占满剩余空间
+  - 右：参数面板，固定宽度
+
+  参数面板内部纵向分三段：
+    - 标题行：当前工具的说明
+    - 参数区：按当前工具切换（裁剪 / 缩放 / 压缩 …）
+    - 动作行：取消、应用
+
+  为什么把参数放右侧而不是弹对话框：调裁剪比例、缩放倍数时眼睛得盯着图，
+  弹窗会把图挡住，用户只能瞎调。右侧固定面板让「拖参数 → 看图」成一条视线。
+-->
+<LinearLayout id="root" orientation="horizontal">
+
+  <!-- 左侧预览区：占满剩余宽度 -->
+  <FrameLayout id="stage" weight="1" height="match">
+
+    <PhotoView id="photo" width="match" height="match"/>
+
+    <!-- 空状态：没有打开图片时盖住预览区 -->
+    <LinearLayout id="homePane" orientation="vertical" width="match" height="match"
+                  background="body" gravity="center">
+
+      <View weight="1"/>
+
+      <LinearLayout orientation="vertical" width="match" height="wrap" gravity="center">
+        <ImageView id="homeIcon" icon="image" width="88" height="88"
+                   scale="fit" align="center"/>
+
+        <TextView id="homeTitle" text="拖拽图片到这里开始编辑" height="32" marginTop="20"
+                  textColor="text" align="center" large="true" bold="true"/>
+
+        <TextView id="homeHint" text="支持 PNG / JPEG / BMP，也可以点下面选一张"
+                  height="24" marginTop="6" textColor="textMuted" align="center"/>
+
+        <Button id="btnHomeOpen" text="打开图片..." style="primary" width="148" height="36"
+                marginTop="20"/>
+      </LinearLayout>
+
+      <View weight="1"/>
+    </LinearLayout>
+
+  </FrameLayout>
+
+  <!-- 右侧参数面板 -->
+  <LinearLayout id="panel" orientation="vertical" width="288" height="match" background="tool">
+
+    <!-- 工具标签页：一行平铺，选中项高亮 -->
+    <LinearLayout id="toolTabs" orientation="horizontal" height="42" marginLeft="16"
+                  marginRight="16" marginTop="14"/>
+
+    <LinearLayout id="panelDivider" height="1" marginTop="10" background="line"/>
+
+    <!-- 参数区：内容由 Activity 按当前工具重建。
+         参数项不多（每类 2-4 行），不需要滚动容器 -->
+    <LinearLayout id="panelScroll" weight="1" height="match" marginLeft="16"
+                  marginRight="16" marginTop="12">
+
+      <LinearLayout id="panelBody" orientation="vertical" width="match" height="wrap"/>
+
+    </LinearLayout>
+
+    <!-- 动作行 -->
+    <LinearLayout id="panelActions" orientation="horizontal" height="52"
+                  marginLeft="12" marginRight="12" marginBottom="12">
+
+      <Button id="btnReset" text="重置" width="84" height="34"/>
+      <View weight="1"/>
+      <Button id="btnApply" text="应用" style="primary" width="96" height="34"/>
+    </LinearLayout>
+
+  </LinearLayout>
+
+</LinearLayout>
