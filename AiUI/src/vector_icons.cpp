@@ -111,26 +111,30 @@ void paintMagnifier(Painter& painter, const Grid& g, Color color, bool plus) {
   if (plus) Stroke(g).line(cu, cv - 4.4f, cu, cv + 4.4f).paint(painter, color);
 }
 
-// 旋转：下方圆角画框 + 上方弧形箭头。
+// 旋转：圆角画框 + 左上角一小段带弧度的箭头。
 //
-// 几何照参考图量：画框偏在右侧（约占 4.8..22），弧的半径比画框还宽、圆心
-// 在画框上沿，于是弧的尾端从画框左侧外面垂下去，两者不相交。画框一旦拉满
-// 整宽，弧就只能压在框上，糊成一块，认不出在转。左旋是同一份几何的镜像。
+// 弧不绕整圈：绕圈会把画框整个罩住，两者抢同一块地方，缩到 19px 就糊成
+// 一团。只在框的左上角留一小段弧和箭头，指向转向即可——主流图片编辑器的
+// 「旋转」符号就是这套画法。
+//
+// 弧要离开框边一点：紧贴着画会像框上长出一只钩子，那个缺口是「转」的暗示。
+// 左旋是同一份几何的镜像。
 void paintRotate(Painter& painter, const Grid& g, Color color) {
-  Stroke(g).roundRect(4.8f, 10.6f, 22.1f, 23.3f, 2.6f).paint(painter, color);
+  Stroke(g).roundRect(3.2f, 5.4f, 20.8f, 21.6f, 3.2f).paint(painter, color);
 
-  // 弧：圆心在画框上沿，半径略大于画框半宽，弧顶贴着图标上沿
-  constexpr float cu = 11.0f, cv = 11.1f, r = 11.0f;
-  constexpr float aStart = kPi * 0.887f;  // 左下方，垂到画框左外侧
-  constexpr float aEnd = kPi * 1.885f;    // 越过顶部后收在右上方
+  // 弧：圆心靠近画框左上角，取约 110° 的一段。整段落在框外，与框线留缝；
+  // 再短就退化成一条斜杠，认不出是弧
+  constexpr float cu = 6.2f, cv = 8.2f, r = 4.6f;
+  constexpr float aStart = kPi * 1.00f;   // 左侧，与圆心齐平
+  constexpr float aEnd = kPi * 1.58f;     // 越过顶点，略偏右
   Stroke(g).arc(cu, cv, r, aStart, aEnd).paint(painter, color);
 
-  // 箭头落在弧终点，两翼沿弧的切线张开
+  // 箭头落在弧终点，两翼沿切线张开，朝右指（顺时针＝右旋）
   const float tangent = aEnd + kPi * 0.5f;
   const float tu = cu + std::cos(aEnd) * r;
   const float tv = cv + std::sin(aEnd) * r;
   constexpr float kBarb = 3.0f;
-  constexpr float kSpread = 0.82f;
+  constexpr float kSpread = 0.62f;
   const float b1u = tu - std::cos(tangent - kSpread) * kBarb;
   const float b1v = tv - std::sin(tangent - kSpread) * kBarb;
   const float b2u = tu - std::cos(tangent + kSpread) * kBarb;
