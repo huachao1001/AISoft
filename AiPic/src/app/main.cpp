@@ -208,6 +208,52 @@ int runSnapshot(const SnapshotOptions& opts) {
   return AiUI::platform()->saveImagePixels(opts.outPath, shot, AiUI::ImageFormat::kPng) ? 0 : 1;
 }
 
+// 图标预览：把全部手绘矢量图标放大画成一张对照图。
+// 调图标时用它一眼看完所有造型，不必每次从整窗截图里裁。
+// 与快照一样走离屏渲染，不建可见窗口、不碰真实鼠标键盘。
+int runIconPreview(const std::wstring& outPath, int cell) {
+  if (outPath.empty() || cell <= 0) return 1;
+
+  struct Item {
+    AiUI::IconId id;
+    const wchar_t* name;
+  };
+  const Item items[] = {
+      {AiUI::IconId::kZoomIn, L"zoomIn"},
+      {AiUI::IconId::kZoomOut, L"zoomOut"},
+      {AiUI::IconId::kFitWindow, L"fit"},
+      {AiUI::IconId::kZoomActual, L"actual"},
+      {AiUI::IconId::kRotateLeft, L"rotateLeft"},
+      {AiUI::IconId::kRotateRight, L"rotateRight"},
+      {AiUI::IconId::kFullscreen, L"present"},
+      {AiUI::IconId::kSaveAs, L"saveAs"},
+  };
+  const int count = static_cast<int>(sizeof(items) / sizeof(items[0]));
+
+  // 每格上方画图标，下方留一条写名字
+  const int labelH = cell / 5;
+  const AiUI::Size area{cell * count, cell + labelH};
+  AiUI::RgbaImage shot;
+  const bool ok = AiUI::platform()->renderOffscreen(
+      AiUI::Rect{0, 0, area.width, area.height},
+      [&](AiUI::Painter& painter) {
+        painter.fillRect(AiUI::Rect{0, 0, area.width, area.height},
+                         AiUI::makeColor(255, 255, 255, 255));
+        // makeColor 的参数顺序是 (r, g, b, a)
+        const AiUI::Color ink = AiUI::makeColor(0x20, 0x24, 0x2A, 255);
+        for (int i = 0; i < count; ++i) {
+          const AiUI::Rect box{i * cell + cell / 8, cell / 8, (i + 1) * cell - cell / 8,
+                               cell - cell / 8};
+          painter.drawIcon(items[i].id, box, ink);
+          painter.drawText(AiUI::Rect{i * cell, cell, (i + 1) * cell, cell + labelH},
+                           items[i].name, AiUI::makeColor(0, 0, 0, 255), AiUI::fonts.uiSmall);
+        }
+      },
+      shot);
+  if (!ok) return 1;
+  return AiUI::platform()->saveImagePixels(outPath, shot, AiUI::ImageFormat::kPng) ? 0 : 1;
+}
+
 }  // namespace
 
 int AiUI::runApp() {
@@ -229,6 +275,23 @@ int AiUI::runApp() {
     const SnapshotOptions shot = parseSnapshot(AiUI::platform()->commandLineArgs());
     if (shot.enabled) {
       const int code = runSnapshot(shot);
+      AiUI::fonts.destroy();
+      AiUI::shutdownPlatform();
+      return code;
+    }
+  }
+
+  // 图标预览同样要在单实例之前分流
+  {
+    std::wstring iconOut;
+    int cell = 0;
+    for (const std::wstring& arg : AiUI::platform()->commandLineArgs()) {
+      std::wstring value;
+      if (splitOption(arg, L"--icons", value)) iconOut = value;
+      else if (splitOption(arg, L"--cell", value)) isInt(value, cell);
+    }
+    if (!iconOut.empty()) {
+      const int code = runIconPreview(iconOut, cell > 0 ? cell : 160);
       AiUI::fonts.destroy();
       AiUI::shutdownPlatform();
       return code;

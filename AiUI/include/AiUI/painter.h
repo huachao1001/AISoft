@@ -10,6 +10,7 @@
 
 #include "AiUI/icon.h"
 #include "AiUI/types.h"
+#include "AiUI/vector_icons.h"
 
 #include <string>
 #include <algorithm>
@@ -96,6 +97,23 @@ class PaintBackend {
           Point{static_cast<int>(std::lround(points[i].x)), static_cast<int>(std::lround(points[i].y))};
     }
     fillPolygon(ints.data(), count, color);
+  }
+  // 浮点折线描边：手绘图标靠它画细线。整数坐标的线落在像素格上，1px 描边
+  // 会被劈到相邻两行、各占一半覆盖率，直边就淡成浅灰；浮点坐标才有均匀的
+  // 抗锯齿，圆头端点也才不会被切成方角。
+  // 默认实现逐段退化成分块矩形，只保证"有线"，不保证圆头。
+  virtual void strokePolylineF(const PointF* points, int count, Color color, float width) {
+    if (!points || count < 2) return;
+    const float half = width * 0.5f;
+    for (int i = 0; i + 1 < count; ++i) {
+      const float x0 = (std::min)(points[i].x, points[i + 1].x) - half;
+      const float x1 = (std::max)(points[i].x, points[i + 1].x) + half;
+      const float y0 = (std::min)(points[i].y, points[i + 1].y) - half;
+      const float y1 = (std::max)(points[i].y, points[i + 1].y) + half;
+      fillRect(Rect{static_cast<int>(std::lround(x0)), static_cast<int>(std::lround(y0)),
+                    static_cast<int>(std::lround(x1)), static_cast<int>(std::lround(y1))},
+               color);
+    }
   }
   virtual void drawGradientRect(const Rect& rc, Color top, Color bottom) = 0;
   virtual void drawGradientRoundRect(const Rect& rc, Color top, Color bottom, int radius) = 0;
@@ -196,6 +214,11 @@ class Painter {
   void fillPolygonF(const PointF* points, int count, Color color) {
     if (!points || count < 3) return;
     backend_.fillPolygonF(points, count, color);
+  }
+  // 浮点折线：手绘图标的线条走它，圆头端点 + 均匀抗锯齿
+  void strokePolylineF(const PointF* points, int count, Color color, float width) {
+    if (!points || count < 2) return;
+    backend_.strokePolylineF(points, count, color, width);
   }
 
   // ── 文本 ──
@@ -303,7 +326,12 @@ class Painter {
   }
 
   // ── 图标与图片 ──
-  void drawIcon(IconId id, const Rect& rc, Color color) { backend_.drawIcon(id, rc, color); }
+  void drawIcon(IconId id, const Rect& rc, Color color) {
+    // 有手绘版本的先走手绘：同一排里观感统一，术语也对得上。
+    // 其余退回字体字形，免得每个符号都手写一遍。
+    if (paintVectorIcon(*this, id, rc, color)) return;
+    backend_.drawIcon(id, rc, color);
+  }
   void drawImage(const Image& image, const Rect& rc) { backend_.drawImage(image, rc); }
   // 只画源图的某一块（原图像素坐标），放大查看时用
   void drawImage(const Image& image, const Rect& rc, const Rect& source) {

@@ -28,6 +28,7 @@ set(AIUI_SOURCES
   src/layout_inflater.cpp
   src/theme_registry.cpp
   src/font.cpp
+  src/vector_icons.cpp
   src/shell.cpp
   src/install.cpp
   src/toast.cpp
@@ -129,6 +130,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     tests/test_offscreen.cpp
     tests/test_button_bar.cpp
     tests/test_status_bar.cpp
+    tests/test_vector_icons.cpp
   )
   target_include_directories(AiUI_tests PRIVATE tests)
   target_link_libraries(AiUI_tests PRIVATE AiUI)

@@ -142,6 +142,23 @@ class GdiplusBackend : public PaintBackend {
     g_->FillPolygon(&brush, pts.data(), count);
   }
 
+  // 手绘图标用圆头 + 圆角接头：参考图那套图标全是这个观感，
+  // 换成平头或尖角，线与线相接处会冒出小毛刺。
+  void strokePolylineF(const AiUI::PointF* points, int count, Color color,
+                       float width) override {
+    if (!g_ || !points || count < 2 || width <= 0.0f) return;
+    std::vector<Gdiplus::PointF> pts;
+    pts.reserve(static_cast<size_t>(count));
+    for (int i = 0; i < count; ++i) {
+      pts.emplace_back(static_cast<REAL>(points[i].x), static_cast<REAL>(points[i].y));
+    }
+    SolidBrush brush(toGdiplus(color));
+    Pen pen(&brush, static_cast<REAL>(width));
+    pen.SetLineCap(LineCapRound, LineCapRound, DashCapRound);
+    pen.SetLineJoin(LineJoinRound);
+    g_->DrawLines(&pen, pts.data(), count);
+  }
+
   void strokeRoundRect(const Rect& rc, Color color, int radius, int lineWidth) override {
     if (!g_ || rc.isEmpty()) return;
     // 描边以路径为中心线向两侧各展开半个线宽。路径压在整数边界上时，
