@@ -80,6 +80,10 @@ class PhotoView : public View {
   // 旋转：每调用一次转 90°，顺时针为正。带动画
   void rotate(int quarterTurns);
   int rotation() const { return rotation_; }
+  // 当前绘制朝向（度）。动画中途不等于 rotation()*90：旋转是一次连续插值，
+  // 落位后才钉回 90° 的整数倍。给出它主要是为了让「左旋到底转了多少」
+  // 这类问题可被观测，网格与命中仍按 rotation() 算。
+  float displayAngle() const { return displayAngle_; }
 
   // 平移量（视图像素）；0 表示图像中心对齐视图中心。
   // 内部用浮点存：动画逐帧反解出来的平移是小数，先取整再画会让整幅图在

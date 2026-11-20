@@ -259,8 +259,7 @@ AIUI_TEST(photo_view_rotate_preserves_center_pixel) {
   AIUI_CHECK(std::abs(pixel.y - 50) <= 2);
 }
 
-AIUI_TEST(photo_view_rotate_is_modulo_four) {
-  PhotoEnv env;
+AIUI_TEST(photo_view_rotate_is_modulo_four) {  PhotoEnv env;
   env.fake.platform().setImageSize(Size{200, 100});
   TestPhotoView view;
   view.layout(Rect{0, 0, 400, 400});
@@ -271,6 +270,38 @@ AIUI_TEST(photo_view_rotate_is_modulo_four) {
 
   view.rotate(-1);
   AIUI_CHECK_EQ(view.rotation(), 0);
+}
+
+// 左旋就该逆时针转 90°，不能绕 270°。
+//
+// rotate(-1) 归一化后是 3 格，用它驱动动画等于顺时针转三格——终态一样，
+// 但用户按的是「左旋」，看到整张图绕远路就很不自然。
+AIUI_TEST(photo_view_rotate_left_turns_negative_quarter) {
+  PhotoEnv env;
+  env.fake.platform().setImageSize(Size{200, 100});
+  TestPhotoView view;
+  view.layout(Rect{0, 0, 400, 400});
+  view.loadFile(L"a.png");
+  view.setAnimationDuration(200);
+
+  view.rotate(-1);
+  // 动画刚起步时角度就该往负方向走
+  env.fake.platform().advanceMillis(20);
+  view.onDelayed();
+  const float early = view.displayAngle();
+  AIUI_CHECK(early < 0.0f);
+  AIUI_CHECK(early > -90.0f);
+
+  // 落位终态仍是逆时针一格（等价于 270°），但走的是最短那段
+  for (int f = 0; f < 40 && view.isAnimating(); ++f) {
+    env.fake.platform().advanceMillis(16);
+    view.onDelayed();
+  }
+  AIUI_CHECK(!view.isAnimating());
+  AIUI_CHECK_EQ(view.rotation(), 3);
+  // 落位后 displayAngle_ 会被钉回 rotation_*90 = 270°，这是对的：
+  // 命中与像素格都按那个值算。看的是动画过程中的方向。
+  AIUI_CHECK(std::fabs(view.displayAngle() - 270.0f) < 0.01f);
 }
 
 // 旋转动画中途不许铺棋盘格底纹。

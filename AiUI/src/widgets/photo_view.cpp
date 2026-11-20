@@ -110,6 +110,13 @@ Size rotatedSizeOf(Size size, int turns) {
 
 int normalizeTurns(int turns) { return ((turns % 4) + 4) % 4; }
 
+// 有向格数取近路：转 270° 与倒转 90° 结果相同，但用户按的是「左旋」，
+// 就该看到那 90°，不是往反方向绕三格。range 落在 -1..2。
+int shortestTurns(int turns) {
+  const int t = normalizeTurns(turns);
+  return t > 2 ? t - 4 : t;
+}
+
 // 90° 倍数旋转在「y 轴向下」的屏幕坐标里就是整数换序，直接用查表，
 // 不用三角函数——三角函数带浮点误差，网格线与像素边界会差一个像素。
 void rotateOffset90(float x, float y, int turns, float& outX, float& outY) {
@@ -418,7 +425,9 @@ void PhotoView::zoomToActual() { setZoomAt(1.0f, zoomAnchor()); }
 
 void PhotoView::rotate(int quarterTurns) {
   if (sourceSize_.width <= 0 || quarterTurns == 0) return;
-  const int turns = normalizeTurns(quarterTurns);
+  // 用有向格数而不是 normalizeTurns 的结果：左旋是 -1，归一化后成了 3，
+  // 动画就会顺时针绕 270° 而不是逆时针转 90°
+  const int turns = shortestTurns(quarterTurns);
   if (turns == 0) return;
 
   beginRotate(turns);

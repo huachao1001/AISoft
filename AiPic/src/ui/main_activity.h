@@ -93,7 +93,6 @@ class MainActivity : public AiUI::Activity {
   AiUI::Button* btnZoomOut_ = nullptr;
   AiUI::Button* btnFit_ = nullptr;
   AiUI::Button* btnActual_ = nullptr;
-  AiUI::Button* btnRotateLeft_ = nullptr;
   AiUI::Button* btnRotateRight_ = nullptr;
   AiUI::Button* btnPresent_ = nullptr;
   AiUI::Button* btnSaveAs_ = nullptr;

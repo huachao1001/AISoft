@@ -184,12 +184,8 @@ void MainActivity::attachToolBar() {
     btnActual_->setOnClick([this] { zoomToActual(); });
   }
 
-  btnRotateLeft_ = toolBar_->addButton(makeIconSpec(L"向左旋转", AiUI::IconId::kRotateLeft), 2);
-  if (btnRotateLeft_) {
-    btnRotateLeft_->setTooltip(L"向左旋转");
-    btnRotateLeft_->setOnClick([this] { rotate(-1); });
-  }
-
+  // 旋转只留向右一格：两个方向按钮并排时，用户要先想「哪边是左」，
+  // 而看图时「转过来」几乎总是同一个方向，连按两下比认两个图标快
   btnRotateRight_ = toolBar_->addButton(makeIconSpec(L"向右旋转", AiUI::IconId::kRotateRight), 2);
   if (btnRotateRight_) {
     btnRotateRight_->setTooltip(L"向右旋转");
@@ -375,8 +371,8 @@ void MainActivity::refreshStatusBar() {
 void MainActivity::refreshToolBar() {
   const bool has = AppHasImage();
   for (AiUI::Button* button :
-       {btnZoomIn_, btnZoomOut_, btnFit_, btnActual_, btnRotateLeft_, btnRotateRight_,
-        btnPresent_, btnSaveAs_}) {
+       {btnZoomIn_, btnZoomOut_, btnFit_, btnActual_, btnRotateRight_, btnPresent_,
+        btnSaveAs_}) {
     if (button) button->setEnabled(has);
   }
 }
