@@ -142,6 +142,12 @@ class PhotoView : public View {
   void setZoomBadgeVisible(bool visible);
   bool isZoomBadgeVisible() const { return zoomBadgeVisible_; }
 
+  // 是否响应用户输入（滚轮、拖动、双击）。投影演示要锁定画面时关掉它：
+  // 观众看到的那一帧不该因为一次误滚而变。程序化调用（zoomToFit 等）不受影响，
+  // 演示进出本身仍要能改倍数与位置。
+  void setInteractive(bool interactive);
+  bool isInteractive() const { return interactive_; }
+
   // 双击与滚轮的行为在宿主里决定，这里只报事件
   using ZoomHandler = std::function<void(float factor)>;
   void setWheelZoomHandler(ZoomHandler fn) { onWheelZoom_ = std::move(fn); }
@@ -338,6 +344,10 @@ class PhotoView : public View {
   int64_t badgeFadeStartMs_ = 0;
   bool badgeFading_ = false;
   // 上一次画出来的倍数文本：值没变就不重画，也方便判断浮层是否真的在显示
-  std::wstring badgeText_;};
+  std::wstring badgeText_;
+
+  // 是否响应用户输入；投影演示锁定画面时为 false
+  bool interactive_ = true;
+};
 
 }  // namespace AiUI

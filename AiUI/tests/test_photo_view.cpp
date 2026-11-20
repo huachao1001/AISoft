@@ -46,6 +46,8 @@ class TestPhotoView : public PhotoView {
   using PhotoView::onMouseMove;
   using PhotoView::onMouseUp;
   using PhotoView::onMouseWheel;
+  using PhotoView::onDoubleClick;
+  using View::cursorShape;
 };
 
 // 视图坐标 → 图像坐标（只对 90° 倍数旋转成立，测试用）
@@ -623,4 +625,59 @@ AIUI_TEST(photo_view_mouse_pixel_after_rotation) {
   AIUI_CHECK(view.mousePixel(after));
   AIUI_CHECK(after.x >= 0 && after.x < 400);
   AIUI_CHECK(after.y >= 0 && after.y < 300);
+}
+
+// ───────────────────────── 演示锁定 ─────────────────────────
+
+// 投影演示时画面必须钉住：滚轮、双击、拖动都不该改动倍数或位置。
+// 程序化调用不受影响——进出演示本身就要靠它改倍数。
+AIUI_TEST(photo_view_ignores_input_when_not_interactive) {
+  PhotoEnv env;
+  env.fake.platform().setImageSize(Size{200, 100});
+  TestPhotoView view;
+  view.layout(Rect{0, 0, 400, 400});
+  view.loadFile(L"a.png");
+  view.setAnimationDuration(0);
+
+  view.setZoomAt(2.0f, Point{200, 200});
+  const float zoomBefore = view.zoom();
+  const Point panBefore = view.pan();
+
+  view.setInteractive(false);
+  AIUI_CHECK(!view.isInteractive());
+
+  MouseEvent wheel = mouseAt(200, 200);
+  wheel.wheelDelta = 120;
+  AIUI_CHECK(!view.onMouseWheel(wheel));
+
+  view.onDoubleClick(mouseAt(200, 200));
+  // 拖动同样不接：按下不成立，后续移动也就不会改平移
+  AIUI_CHECK(!view.onMouseDown(mouseAt(200, 200, MouseButton::kLeft)));
+  view.onMouseMove(mouseAt(260, 240));
+  view.onMouseUp(mouseAt(260, 240));
+
+  AIUI_CHECK(std::fabs(view.zoom() - zoomBefore) < 0.001f);
+  AIUI_CHECK_EQ(view.pan().x, panBefore.x);
+  AIUI_CHECK_EQ(view.pan().y, panBefore.y);
+
+  // 恢复交互后一切照旧：这个开关不能把控件弄坏
+  view.setInteractive(true);
+  AIUI_CHECK(view.onMouseWheel(wheel));
+  AIUI_CHECK(view.zoom() != zoomBefore);
+}
+
+// 拖动中途被锁定：必须立刻收尾，否则光标停在「握起的手」、鼠标捕获也不释放
+AIUI_TEST(photo_view_locking_mid_drag_releases_pointer) {
+  PhotoEnv env;
+  env.fake.platform().setImageSize(Size{200, 100});
+  TestPhotoView view;
+  view.layout(Rect{0, 0, 400, 400});
+  view.loadFile(L"a.png");
+  view.setAnimationDuration(0);
+  view.setZoomAt(2.0f, Point{200, 200});
+
+  AIUI_CHECK(view.onMouseDown(mouseAt(200, 200, MouseButton::kLeft)));
+  view.setInteractive(false);
+
+  AIUI_CHECK(view.cursorShape() != CursorShape::kGrabbing);
 }

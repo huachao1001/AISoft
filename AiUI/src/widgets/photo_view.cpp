@@ -398,7 +398,9 @@ void PhotoView::zoomToFit() {
       std::fabs(target - zoom_) < 0.0005f && std::fabs(pan_.x) < 0.01f &&
       std::fabs(pan_.y) < 0.01f &&
       std::fabs(displayAngle_ - static_cast<float>(rotation_ * 90)) < 0.001f;
-  if (animMs_ <= 0 || alreadyThere) {
+  // 锁定（投影演示）时不走动画：翻页后画面要从一张直接换到下一张，中间那段
+  // 缩放滑动在投影上就是明显的抖一下
+  if (animMs_ <= 0 || alreadyThere || !interactive_) {
     applyFitNow();
     invalidate();
     notifyChanged();
@@ -1308,7 +1310,7 @@ void PhotoView::onLayout(const Rect& frame) {
 // ───────────────────────── 鼠标 ─────────────────────────
 
 bool PhotoView::onMouseDown(const MouseEvent& e) {
-  if (!image_.isValid() || e.button != MouseButton::kLeft) return false;
+  if (!interactive_ || !image_.isValid() || e.button != MouseButton::kLeft) return false;
   // 拖动与动画抢同一份状态：按下就先把动画落位，否则拖到一半会被动画拉回去
   finishAnimation();
 
@@ -1377,7 +1379,7 @@ void PhotoView::onMouseLeave() {
 }
 
 bool PhotoView::onMouseWheel(const MouseEvent& e) {
-  if (!image_.isValid() || e.wheelDelta == 0) return false;
+  if (!interactive_ || !image_.isValid() || e.wheelDelta == 0) return false;
   // 光标在画布空白处时不动：锚点在图上才有「放大哪一点」可言，拿空白处当锚点
   // 只会把图整块推出视野，看起来就像位置突变。
   if (!isOnImage(e.position)) return false;
@@ -1394,7 +1396,7 @@ bool PhotoView::onMouseWheel(const MouseEvent& e) {
 }
 
 void PhotoView::onDoubleClick(const MouseEvent& e) {
-  if (!image_.isValid()) return;
+  if (!interactive_ || !image_.isValid()) return;
   // 同上：双击空白处不该缩放
   if (!isOnImage(e.position)) return;
   lastMouse_ = e.position;
@@ -1420,6 +1422,34 @@ void PhotoView::onContextMenu(const MouseEvent& e) {
   // 提示交给窗口级的 Toast：它画在整棵树之上，也由 ViewRoot 自己驱动淡出，
   // 不必让图片控件替它排帧
   if (ViewRoot* r = root()) r->showToast(message);
+}
+
+// ───────────────────────── 交互开关 ─────────────────────────
+
+void PhotoView::setInteractive(bool interactive) {
+  if (interactive_ == interactive) return;
+  interactive_ = interactive;
+  // 锁定后不能再有动画在跑：进场时那次「适应窗口」若还没落位，投影出去的
+  // 就是一个走到一半的倍数。锁的是画面，那就得是终态。
+  if (!interactive_) {
+    finishAnimation();
+    // 缩放浮层同理：它是「正在缩放」的临时提示，锁定期间不该留在投影上。
+    // 立刻收掉而不是走淡出——投影要的是终态那一帧
+    badgeFade_ = 0.0f;
+    badgeAlphaFrom_ = 0.0f;
+    badgeAlphaTo_ = 0.0f;
+    badgeFading_ = false;
+    // 正在拖动时被关掉：不主动收尾的话，光标会一直停在「握起的手」，
+    // 而且下一次移出控件才会松开捕获
+    if (dragging_) {
+      dragging_ = false;
+      releaseMouse();
+      clampPan();
+      setCursor(cursorBeforeDrag_);
+      notifyChanged();
+    }
+  }
+  invalidate();
 }
 
 // ───────────────────────── 缩放比浮层 ─────────────────────────
@@ -1449,8 +1479,9 @@ float PhotoView::zoomBadgeFade() const {
 }
 
 void PhotoView::updateZoomBadge() {
-  // 缩放进行中才显示：静止时的倍数状态栏已经有了，屏幕上再挂一块只是噪音
-  const bool want = zoomBadgeVisible_ && sourceSize_.width > 0 &&
+  // 缩放进行中才显示：静止时的倍数状态栏已经有了，屏幕上再挂一块只是噪音。
+  // 锁定（投影演示）时也不显示：翻页会重新适应一次，浮层就会在投影上闪一下。
+  const bool want = interactive_ && zoomBadgeVisible_ && sourceSize_.width > 0 &&
                     anim_.kind == AnimKind::kZoom;
   const float target = want ? 1.0f : 0.0f;
   if (std::fabs(target - badgeAlphaTo_) < 0.0001f) return;

@@ -42,17 +42,22 @@ std::wstring firstImageArg() {
 //   AiPic.exe --snapshot=<输出图> [图片] [--size=WxH]
 //             [--click=x,y ...] [--hover=x,y ...]
 //             [--collapse | --expand] [--tooltip=<视图id>]
+//             [--present] [--wheel=x,y,delta] [--dclick=x,y]
 // --size 是 96 DPI 下的设计尺寸。--click/--hover 的坐标是窗口客户区坐标，
 // 按出现顺序依次施加，只走视图树的合成事件，完全不经过系统输入。
 // --collapse/--expand 直接调控件 API：按钮坐标随 DPI 与排版变化，
 // 写死坐标的脚本一改样式就失效。
+// --present 进全屏演示；--wheel/--dclick 用来验证演示态是否真的锁住了画面。
 struct SnapshotAction {
-  enum class Kind { kClick, kHover, kCollapse, kTooltip } kind = Kind::kClick;
+  enum class Kind { kClick, kHover, kCollapse, kTooltip, kPresent, kWheel, kDoubleClick } kind =
+      Kind::kClick;
   AiUI::Point at;
   // kCollapse 用：true 表示收缩，false 表示展开
   bool flag = true;
   // kTooltip 用：目标视图 id（XML 里写的那个，窄字符用于 makeId）
   std::string viewId;
+  // kWheel 用：滚轮增量，正数为放大
+  int wheelDelta = 0;
 };
 
 struct SnapshotOptions {
@@ -149,6 +154,38 @@ SnapshotOptions parseSnapshot(const std::vector<std::wstring>& args) {
       opts.actions.push_back(action);
       continue;
     }
+    // 进演示态：验证「投影时画面钉住」必须能真的进入全屏，只点 F5 不行——
+    // 快照里没有键盘，走 API 才可控
+    if (arg == L"--present") {
+      SnapshotAction action;
+      action.kind = SnapshotAction::Kind::kPresent;
+      opts.actions.push_back(action);
+      continue;
+    }
+    // "x,y,delta"：故意多一段反方向滚轮，用来看锁定是否真的生效
+    if (splitOption(arg, L"--wheel", value)) {
+      SnapshotAction action;
+      action.kind = SnapshotAction::Kind::kWheel;
+      const size_t first = value.find(L',');
+      const size_t second = first == std::wstring::npos ? first : value.find(L',', first + 1);
+      if (second != std::wstring::npos && parsePoint(value.substr(0, second), action.at)) {
+        // 缩小的增量是负数，不能走只认非负的 isInt
+        const std::wstring delta = value.substr(second + 1);
+        int magnitude = 0;
+        const bool negative = !delta.empty() && delta[0] == L'-';
+        if (isInt(negative ? delta.substr(1) : delta, magnitude)) {
+          action.wheelDelta = negative ? -magnitude : magnitude;
+          opts.actions.push_back(action);
+        }
+      }
+      continue;
+    }
+    if (splitOption(arg, L"--dclick", value)) {
+      SnapshotAction action;
+      action.kind = SnapshotAction::Kind::kDoubleClick;
+      if (parsePoint(value, action.at)) opts.actions.push_back(action);
+      continue;
+    }
     // 剩下的非选项参数里挑第一张能打开的图
     if (!arg.empty() && arg[0] != L'-' && opts.imagePath.empty() &&
         util::IsImageFile(arg) && util::PathExists(arg)) {
@@ -181,6 +218,10 @@ int runSnapshot(const SnapshotOptions& opts) {
 
   AiUI::SidePanel* panel = activity.findView<AiUI::SidePanel>("sidePanel");
 
+  // 动作要命中控件，必须先按最终尺寸排版：否则视图还是建窗时的（可能为 0）
+  // 尺寸，点击与滚轮都落在空白处，测出来的「没反应」是假的
+  root->layout(AiUI::Rect{0, 0, shotSize.width, shotSize.height});
+
   for (const SnapshotAction& action : opts.actions) {
     switch (action.kind) {
       case SnapshotAction::Kind::kHover:
@@ -195,6 +236,22 @@ int runSnapshot(const SnapshotOptions& opts) {
           root->showTooltipFor(view);
         }
         break;
+      case SnapshotAction::Kind::kPresent:
+        activity.setPresenting(true);
+        break;
+      case SnapshotAction::Kind::kWheel: {
+        AiUI::MouseEvent e;
+        e.position = action.at;
+        e.wheelDelta = action.wheelDelta;
+        root->onMouseWheel(e);
+        break;
+      }
+      case SnapshotAction::Kind::kDoubleClick: {
+        AiUI::MouseEvent e;
+        e.position = action.at;
+        root->onDoubleClick(e);
+        break;
+      }
       default:
         root->sendMouseMove(action.at);
         root->sendMouseDown(action.at);

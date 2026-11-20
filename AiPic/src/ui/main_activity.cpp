@@ -467,19 +467,23 @@ void MainActivity::pickAndOpen() {
 }
 
 void MainActivity::zoomBy(float factor) {
+  // 演示态锁定画面：倍数一变，投影出去的那一帧就跟用户讲的对不上了
+  if (presenting_) return;
   if (photo_ && AppHasImage()) photo_->zoomBy(factor);
 }
 
 void MainActivity::zoomToFit() {
+  if (presenting_) return;
   if (photo_ && AppHasImage()) photo_->zoomToFit();
 }
 
 void MainActivity::zoomToActual() {
+  if (presenting_) return;
   if (photo_ && AppHasImage()) photo_->zoomToActual();
 }
 
 void MainActivity::rotate(int quarterTurns) {
-  if (!AppHasImage()) return;
+  if (presenting_ || !AppHasImage()) return;
   // 旋转要记在 App 上：它会改变另存出去的内容。PhotoView 的那份只管绘制，
   // 两边必须同步转，否则用户看到的方向和存下来的不一致。
   AppSetRotation(AppRotation() + quarterTurns);
@@ -488,7 +492,8 @@ void MainActivity::rotate(int quarterTurns) {
 }
 
 void MainActivity::saveAs() {
-  if (!AppHasImage()) return;
+  // 演示态不该弹保存框：投影出去的画面里出现文件对话框是明显的失误
+  if (presenting_ || !AppHasImage()) return;
 
   const std::wstring source = AppImagePath();
   const std::wstring dir =
@@ -551,7 +556,11 @@ void MainActivity::setPresenting(bool presenting) {
       savedView_ = photo_->saveViewState();
       // 换过可用区域就重新适应一次：演示时整屏都是画布，用户要看最大的图
       photo_->zoomToFit();
+      // 适应之后再锁：顺序反了的话这次适应会开始一段动画，
+      // 锁定会把它直接落位，投影上就闪一下中途的倍数
+      photo_->setInteractive(false);
     } else {
+      photo_->setInteractive(true);
       photo_->restoreViewState(savedView_);
     }
   }
@@ -563,9 +572,12 @@ bool MainActivity::onKeyDown(const AiUI::Key& key, const AiUI::Modifiers& mods) 
   if (mods.ctrl) {
     switch (key) {
       case AiUI::Key::kO:
+        // 演示态下打开新图等于换掉投影内容，还会在画面上弹文件对话框
+        if (presenting_) return false;
         pickAndOpen();
         return true;
       case AiUI::Key::kS:
+        if (presenting_) return false;
         saveAs();
         return true;
       default:
