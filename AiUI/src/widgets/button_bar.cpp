@@ -40,6 +40,16 @@ void ButtonBar::setGap(int gap) {
   relayout();
 }
 
+void ButtonBar::setCentered(bool centered) {
+  centered_ = centered;
+  relayout();
+}
+
+void ButtonBar::setGroupDividers(bool show) {
+  showGroupDividers_ = show;
+  relayout();
+}
+
 Size ButtonBar::onMeasure(const Size& available) {
   (void)available;
   return Size{0, kSizeToolH};
@@ -98,6 +108,12 @@ void ButtonBar::arrangeChildren(const Rect& content) {
   }
 
   int x = content.left + edgePadNow;
+  // 居中时按「按钮组净宽」对半分：totalWidth 含左侧留白，直接用它算会整体右偏
+  if (centered_) {
+    const int groupWidth = totalWidth(compact, 0, gapNow, groupGapNow);
+    const int slack = content.width() - groupWidth;
+    if (slack > 0) x = content.left + slack / 2;
+  }
   int previousGroup = items_.empty() ? 0 : items_.front().group;
 
   for (size_t i = 0; i < items_.size(); ++i) {
@@ -106,8 +122,10 @@ void ButtonBar::arrangeChildren(const Rect& content) {
       if (item.group != previousGroup) {
         // 组间留出更宽间距，分隔线插在正中
         x += groupGapNow;
-        const int lineX = x - groupGapNow / 2;
-        groupLines_.push_back(Rect{lineX, top, lineX + 1, top + barHeight});
+        if (showGroupDividers_) {
+          const int lineX = x - groupGapNow / 2;
+          groupLines_.push_back(Rect{lineX, top, lineX + 1, top + barHeight});
+        }
       } else {
         x += gapNow;
       }

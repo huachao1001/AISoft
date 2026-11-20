@@ -1,4 +1,4 @@
-﻿// 图标与位图后端
+// 图标与位图后端
 //
 // 矢量图标取自 Segoe Fluent Icons / Segoe MDL2 Assets，用 GDI+ 绘制并按
 // 墨迹框贴合目标矩形，任意尺寸都居中且不越界。
@@ -78,6 +78,7 @@ constexpr wchar_t glyphFor(IconId id) {
     case IconId::kAdd: return 0xE710;
     case IconId::kTrash: return 0xE74D;
     case IconId::kSave: return 0xE74E;
+    case IconId::kSaveAs: return 0xE792;
     case IconId::kArrowBack: return 0xE72B;
     case IconId::kChevron: return 0xE76C;
     case IconId::kChevronDown: return 0xE70D;
@@ -93,6 +94,8 @@ constexpr wchar_t glyphFor(IconId id) {
     // 缩放与旋转：ZoomIn / ZoomOut / FitPage / Rotate / Redo 的对应字形
     case IconId::kZoomIn: return 0xE8A3;
     case IconId::kZoomOut: return 0xE71F;
+    // 实际大小：MDL2 的 AspectRatio（方框里两条竖线），与放大镜区分开
+    case IconId::kZoomActual: return 0xE799;
     case IconId::kFitWindow: return 0xE9A6;
     case IconId::kRotateLeft: return 0xE7AD;
     case IconId::kRotateRight: return 0xE1CD;
@@ -133,7 +136,7 @@ InkBox measureInk(wchar_t glyph) {
     font->GetFamily(&family);
     GraphicsPath path;
     if (path.AddString(&glyph, 1, &family, FontStyleRegular, static_cast<REAL>(kRef),
-                       PointF(0.0f, 0.0f), nullptr) == Ok) {
+                       Gdiplus::PointF(0.0f, 0.0f), nullptr) == Ok) {
       RectF bounds;
       if (path.GetBounds(&bounds) == Ok && bounds.Width > 0.0f && bounds.Height > 0.0f) {
         box.ratioW = bounds.Width / kRef;
@@ -266,7 +269,7 @@ void drawIconGlyph(Gdiplus::Graphics* g, IconId id, const Rect& rc, Color color)
   SolidBrush brush(
       Gdiplus::Color(colorAlpha(color), colorRed(color), colorGreen(color), colorBlue(color)));
   g->SetTextRenderingHint(TextRenderingHintAntiAlias);
-  g->DrawString(&glyph, 1, font, PointF(x, y), &brush);
+  g->DrawString(&glyph, 1, font, Gdiplus::PointF(x, y), &brush);
 }
 
 void releaseIconCaches() {

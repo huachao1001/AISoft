@@ -13,6 +13,18 @@ void RecordingBackend::fillRoundRect(const Rect& rc, Color color, int radius) {
   fills_.push_back(FillCall{map(rc), color, radius});
 }
 
+void RecordingBackend::fillPolygon(const Point* points, int count, Color color) {
+  if (!points || count < 3) return;
+  Rect box{points[0].x, points[0].y, points[0].x, points[0].y};
+  for (int i = 1; i < count; ++i) {
+    box.left = (std::min)(box.left, points[i].x);
+    box.top = (std::min)(box.top, points[i].y);
+    box.right = (std::max)(box.right, points[i].x);
+    box.bottom = (std::max)(box.bottom, points[i].y);
+  }
+  fills_.push_back(FillCall{map(box), color});
+}
+
 void RecordingBackend::strokeRoundRect(const Rect& rc, Color color, int radius, int lineWidth) {
   (void)lineWidth;
   // 与填充记在同一序列：调用顺序才是「谁盖住谁」的判据

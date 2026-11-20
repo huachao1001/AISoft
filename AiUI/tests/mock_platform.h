@@ -14,6 +14,7 @@
 namespace aiui_test {
 
 using AiUI::Color;
+using AiUI::Point;
 using AiUI::Rect;
 using AiUI::Size;
 
@@ -50,6 +51,8 @@ class RecordingBackend : public AiUI::PaintBackend {
  public:
   void fillRect(const Rect& rc, Color color) override;
   void fillRoundRect(const Rect& rc, Color color, int radius) override;
+  // 多边形：记成 fills_ 里的一条，rect 取顶点包围盒（测试只关心「画了几块」）
+  void fillPolygon(const Point* points, int count, Color color) override;
   void strokeRoundRect(const Rect& rc, Color color, int radius, int lineWidth) override;
   void drawGradientRect(const Rect& rc, Color top, Color bottom) override;
   void drawGradientRoundRect(const Rect& rc, Color top, Color bottom, int radius) override;

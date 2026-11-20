@@ -1,4 +1,4 @@
-﻿// GDI+ 绘制后端：PaintBackend / Canvas / 字体
+// GDI+ 绘制后端：PaintBackend / Canvas / 字体
 #include "backend.h"
 
 #include <algorithm>
@@ -120,6 +120,28 @@ class GdiplusBackend : public PaintBackend {
     g_->FillRectangle(&brush, toGdiplus(rc));
   }
 
+  void fillPolygon(const Point* points, int count, Color color) override {
+    if (!g_ || !points || count < 3) return;
+    std::vector<Gdiplus::PointF> pts;
+    pts.reserve(static_cast<size_t>(count));
+    for (int i = 0; i < count; ++i) {
+      pts.emplace_back(static_cast<REAL>(points[i].x), static_cast<REAL>(points[i].y));
+    }
+    SolidBrush brush(toGdiplus(color));
+    g_->FillPolygon(&brush, pts.data(), count);
+  }
+
+  void fillPolygonF(const AiUI::PointF* points, int count, Color color) override {
+    if (!g_ || !points || count < 3) return;
+    std::vector<Gdiplus::PointF> pts;
+    pts.reserve(static_cast<size_t>(count));
+    for (int i = 0; i < count; ++i) {
+      pts.emplace_back(static_cast<REAL>(points[i].x), static_cast<REAL>(points[i].y));
+    }
+    SolidBrush brush(toGdiplus(color));
+    g_->FillPolygon(&brush, pts.data(), count);
+  }
+
   void strokeRoundRect(const Rect& rc, Color color, int radius, int lineWidth) override {
     if (!g_ || rc.isEmpty()) return;
     // 描边以路径为中心线向两侧各展开半个线宽。路径压在整数边界上时，
@@ -207,7 +229,7 @@ class GdiplusBackend : public PaintBackend {
     if (length <= 0) return 0;
 
     RectF bounds;
-    g_->MeasureString(text.c_str() + from, length, f, PointF(0, 0), &bounds);
+    g_->MeasureString(text.c_str() + from, length, f, Gdiplus::PointF(0, 0), &bounds);
     // MeasureString 偏小，整数化后尾部字符会被 DrawString 裁掉，留 4px 余量
     return static_cast<int>(bounds.Width + 0.5f) + 4;
   }

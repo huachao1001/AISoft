@@ -25,6 +25,7 @@ enum class IconId {
   kAdd,          // 添加文件
   kTrash,        // 删除
   kSave,         // 保存 / 导出
+  kSaveAs,       // 另存为（带编辑笔的保存）
   kArrowBack,
   kChevron,      // 面包屑分隔
   kChevronUp,    // 表头升序
@@ -39,6 +40,7 @@ enum class IconId {
   // 图片查看与编辑
   kZoomIn,      // 放大
   kZoomOut,     // 缩小
+  kZoomActual,  // 实际大小 100%
   kFitWindow,   // 适应窗口
   kRotateLeft,  // 逆时针旋转
   kRotateRight, // 顺时针旋转

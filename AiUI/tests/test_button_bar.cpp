@@ -84,6 +84,34 @@ AIUI_TEST(button_without_icon_keeps_its_label) {
   AIUI_CHECK(textOnly->bounds().right <= 620);
 }
 
+// 居中时整组左右留白相等，而不是靠左摆
+AIUI_TEST(button_bar_centers_the_whole_group) {
+  BarEnv env;
+  ButtonBar bar;
+  for (int i = 0; i < 4; ++i) bar.addButton(makeSpec(L"按钮", IconId::kZoomIn), i);
+  bar.setCentered(true);
+
+  const int barWidth = 1000;
+  bar.layout(Rect{0, 0, barWidth, 52});
+
+  const int leftSlack = bar.buttonAt(0)->bounds().left;
+  const int rightSlack = barWidth - bar.buttonAt(3)->bounds().right;
+  // 允许 1px 的取整差
+  AIUI_CHECK(leftSlack - rightSlack <= 1 && rightSlack - leftSlack <= 1);
+  AIUI_CHECK(leftSlack > 16);  // 明显不再是靠左时的 16px 边距
+}
+
+// 靠左是默认行为，不能被居中逻辑顺手改掉
+AIUI_TEST(button_bar_starts_at_the_left_by_default) {
+  BarEnv env;
+  ButtonBar bar;
+  for (int i = 0; i < 4; ++i) bar.addButton(makeSpec(L"按钮", IconId::kZoomIn), i);
+  bar.layout(Rect{0, 0, 1000, 52});
+
+  // 默认左侧留白就是 edgePad（16 设计值）
+  AIUI_CHECK(bar.buttonAt(0)->bounds().left == 16);
+}
+
 // 极窄时宁可收紧间距也不能把按钮推出右边界
 AIUI_TEST(button_bar_never_overflows_even_when_extremely_narrow) {
   BarEnv env;

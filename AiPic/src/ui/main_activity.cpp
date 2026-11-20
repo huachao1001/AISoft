@@ -34,18 +34,19 @@ void warn(const std::wstring& text, AiUI::NativeHandle owner) {
   AiUI::platform()->showMessageBox(owner, params);
 }
 
-AiUI::ButtonSpec makeButtonSpec(const wchar_t* label, AiUI::IconId icon) {
+// 工具栏按钮：纯图标、无边框。图标按钮靠悬停提示补回文字含义，
+// 没有提示的话一排图标就成了猜谜。
+AiUI::ButtonSpec makeIconSpec(const wchar_t* label, AiUI::IconId icon) {
   AiUI::ButtonSpec spec;
-  spec.label = label;
+  spec.label = label;  // 只用于提示，不画出来
   spec.icon = icon;
-  spec.hasIcon = true;
-  spec.placement = AiUI::IconPlacement::kLeft;
-  spec.style = AiUI::ButtonStyle::kOutline;
+  spec.hasIcon = icon != AiUI::IconId::kNone;
+  spec.placement = AiUI::IconPlacement::kOnly;
+  spec.style = AiUI::ButtonStyle::kSubtle;
   spec.height = 32;
-  spec.iconSize = 18;
-  spec.padX = 12;
-  spec.iconGap = 6;
-  spec.radius = 7;
+  spec.iconSize = 19;
+  spec.padX = 8;
+  spec.radius = 6;
   return spec;
 }
 
@@ -152,33 +153,61 @@ AiUI::NativeHandle MainActivity::nativeWindow() const {
 void MainActivity::attachToolBar() {
   if (!toolBar_) return;
 
+  // 八个按钮整组居中：它们只对当前图片动手，横向铺满时靠左会显得偏沉
+  toolBar_->setCentered(true);
+  // 纯图标工具栏不画分组竖线：一排放下来已经够清楚，多几道线只是噪音
+  toolBar_->setGroupDividers(false);
+
   // 分组按「一组同类的动作」摆：缩放、倍数、旋转各占一组，
-  // 另存为单独一组并靠右的视觉重量收尾。
-  btnZoomIn_ = toolBar_->addButton(makeButtonSpec(L"放大", AiUI::IconId::kZoomIn), 0);
-  if (btnZoomIn_) btnZoomIn_->setOnClick([this] { zoomBy(1.25f); });
+  // 另存为单独一组压阵。
+  btnZoomIn_ = toolBar_->addButton(makeIconSpec(L"放大", AiUI::IconId::kZoomIn), 0);
+  if (btnZoomIn_) {
+    btnZoomIn_->setTooltip(L"放大");
+    btnZoomIn_->setOnClick([this] { zoomBy(1.25f); });
+  }
 
-  btnZoomOut_ = toolBar_->addButton(makeButtonSpec(L"缩小", AiUI::IconId::kZoomOut), 0);
-  if (btnZoomOut_) btnZoomOut_->setOnClick([this] { zoomBy(1.0f / 1.25f); });
+  btnZoomOut_ = toolBar_->addButton(makeIconSpec(L"缩小", AiUI::IconId::kZoomOut), 0);
+  if (btnZoomOut_) {
+    btnZoomOut_->setTooltip(L"缩小");
+    btnZoomOut_->setOnClick([this] { zoomBy(1.0f / 1.25f); });
+  }
 
-  btnFit_ = toolBar_->addButton(makeButtonSpec(L"适应窗口", AiUI::IconId::kFitWindow), 1);
-  if (btnFit_) btnFit_->setOnClick([this] { zoomToFit(); });
+  btnFit_ = toolBar_->addButton(makeIconSpec(L"适应窗口", AiUI::IconId::kFitWindow), 1);
+  if (btnFit_) {
+    btnFit_->setTooltip(L"适应窗口");
+    btnFit_->setOnClick([this] { zoomToFit(); });
+  }
 
-  btnActual_ = toolBar_->addButton(makeButtonSpec(L"100%", AiUI::IconId::kNone), 1);
-  if (btnActual_) btnActual_->setOnClick([this] { zoomToActual(); });
+  btnActual_ = toolBar_->addButton(makeIconSpec(L"实际大小", AiUI::IconId::kZoomActual), 1);
+  if (btnActual_) {
+    btnActual_->setTooltip(L"实际大小 100%");
+    btnActual_->setOnClick([this] { zoomToActual(); });
+  }
 
-  btnRotateLeft_ = toolBar_->addButton(makeButtonSpec(L"左转", AiUI::IconId::kRotateLeft), 2);
-  if (btnRotateLeft_) btnRotateLeft_->setOnClick([this] { rotate(-1); });
+  btnRotateLeft_ = toolBar_->addButton(makeIconSpec(L"向左旋转", AiUI::IconId::kRotateLeft), 2);
+  if (btnRotateLeft_) {
+    btnRotateLeft_->setTooltip(L"向左旋转");
+    btnRotateLeft_->setOnClick([this] { rotate(-1); });
+  }
 
-  btnRotateRight_ = toolBar_->addButton(makeButtonSpec(L"右转", AiUI::IconId::kRotateRight), 2);
-  if (btnRotateRight_) btnRotateRight_->setOnClick([this] { rotate(1); });
+  btnRotateRight_ = toolBar_->addButton(makeIconSpec(L"向右旋转", AiUI::IconId::kRotateRight), 2);
+  if (btnRotateRight_) {
+    btnRotateRight_->setTooltip(L"向右旋转");
+    btnRotateRight_->setOnClick([this] { rotate(1); });
+  }
 
-  btnPresent_ = toolBar_->addButton(makeButtonSpec(L"演示", AiUI::IconId::kFullscreen), 3);
-  if (btnPresent_) btnPresent_->setOnClick([this] { setPresenting(true); });
+  btnPresent_ = toolBar_->addButton(makeIconSpec(L"演示", AiUI::IconId::kFullscreen), 3);
+  if (btnPresent_) {
+    btnPresent_->setTooltip(L"全屏演示");
+    btnPresent_->setOnClick([this] { setPresenting(true); });
+  }
 
-  AiUI::ButtonSpec saveSpec = makeButtonSpec(L"另存为", AiUI::IconId::kSave);
-  saveSpec.style = AiUI::ButtonStyle::kPrimary;
+  AiUI::ButtonSpec saveSpec = makeIconSpec(L"另存为", AiUI::IconId::kSaveAs);
   btnSaveAs_ = toolBar_->addButton(saveSpec, 4);
-  if (btnSaveAs_) btnSaveAs_->setOnClick([this] { saveAs(); });
+  if (btnSaveAs_) {
+    btnSaveAs_->setTooltip(L"另存为");
+    btnSaveAs_->setOnClick([this] { saveAs(); });
+  }
 
   refreshToolBar();
 }

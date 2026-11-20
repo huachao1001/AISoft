@@ -128,7 +128,7 @@ AIUI_TEST(panel_toggle_reports_click) {
   AIUI_CHECK(clicks == 1);
 }
 
-// 按钮是个小方块：图标居中，四边留白对称，放进状态栏不会比文字高太多
+// 按钮是方形的：四条杠 + 三角同在一块正方形里，放进状态栏不比文字高
 AIUI_TEST(panel_toggle_measures_as_a_square) {
   PanelEnv env;
   PanelToggle toggle;
@@ -144,6 +144,44 @@ AIUI_TEST(panel_toggle_measures_as_a_square) {
   AIUI_CHECK(icon.top >= 0 && icon.bottom <= size.height);
   // 水平方向要居中
   AIUI_CHECK(icon.left == size.width - icon.right);
+}
+
+// 展开与收起共用同一块图标区：换的是内部排布，不是整个按钮跳动
+AIUI_TEST(panel_toggle_keeps_the_same_icon_box) {
+  PanelEnv env;
+  PanelToggle toggle;
+  AIUI_CHECK(toggle.create(nullptr, Rect{0, 0, 32, 36}));
+
+  const Rect expanded = toggle.iconRect();
+  AIUI_CHECK(!toggle.isCollapsed());
+
+  toggle.setCollapsed(true);
+  AIUI_CHECK(toggle.isCollapsed());
+  const Rect collapsed = toggle.iconRect();
+  AIUI_CHECK(expanded.left == collapsed.left);
+  AIUI_CHECK(expanded.right == collapsed.right);
+  AIUI_CHECK(expanded.top == collapsed.top);
+  AIUI_CHECK(expanded.bottom == collapsed.bottom);
+}
+
+// 图标靠浮点多边形绘制：整数矩形对齐像素格，抗锯齿无从发挥，
+// 端头会成直角、斜边会出台阶
+AIUI_TEST(panel_toggle_paints_with_float_polygons) {
+  PanelEnv env;
+  PanelToggle toggle;
+  AIUI_CHECK(toggle.create(nullptr, Rect{0, 0, 32, 32}));
+
+  RecordingBackend backend;
+  Painter painter(backend);
+  toggle.draw(painter, Rect{0, 0, 32, 32});
+
+  // 四条横杠（各自拆成胶囊形多边形）+ 一个三角
+  const auto& fills = backend.fills();
+  AIUI_CHECK(fills.size() >= 5);
+  for (const auto& call : fills) {
+    AIUI_CHECK(!call.stroke);
+    AIUI_CHECK(!call.rect.isEmpty());
+  }
 }
 
 // 设了状态源就以它为准：别的路径改了侧栏，箭头也跟着掉头，

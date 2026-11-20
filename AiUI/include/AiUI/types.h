@@ -51,6 +51,14 @@ struct Point {
   int y = 0;
 };
 
+// 浮点坐标点：手绘图形（图标）用它。
+// 整数坐标的边正好压在像素格上时，抗锯齿没有小数部分可算，端头就成了硬角；
+// 浮点轮廓才有灰度过渡，看起来才和字形图标一个质感。
+struct PointF {
+  float x = 0.0f;
+  float y = 0.0f;
+};
+
 struct Size {
   int width = 0;
   int height = 0;

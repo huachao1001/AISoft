@@ -32,6 +32,11 @@ class ButtonBar : public ViewGroup {
   // 左侧起始留白与按钮间距（96 DPI 设计值）
   void setEdgePad(int pad);
   void setGap(int gap);
+  // 整组按钮水平居中。默认 false = 靠左。放不下时仍按靠左摆，
+  // 否则会挤到右边界外，右边的按钮点不到
+  void setCentered(bool centered);
+  // 分组之间的竖分隔线。默认 true；纯图标工具栏上不需要
+  void setGroupDividers(bool show);
 
  protected:
   void onPaint(Painter& painter, const Rect& rect) override;
@@ -46,6 +51,8 @@ class ButtonBar : public ViewGroup {
   int gap_ = 8;
   int groupGap_ = 10;
   int edgePad_ = 16;
+  bool centered_ = false;
+  bool showGroupDividers_ = true;
 };
 
 }  // namespace AiUI

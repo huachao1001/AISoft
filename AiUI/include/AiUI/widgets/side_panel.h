@@ -18,12 +18,19 @@
 
 namespace AiUI {
 
-// 侧栏收起/展开的开关按钮：只有一个箭头，方向表示「下一步会怎样」
+// 侧栏收起/展开的开关按钮：四条杠 + 一个箭头
+//
+// 展开时读作「≡◀」——按下去把侧栏收到左边；收起时读作「▶≡」——按下去
+// 再把它放出来。「≡」是侧栏/菜单的通用记号，光有个箭头的话，旁边紧挨着
+// 路径文字，容易被读成「上一条 / 下一条」。箭头换边而不是原地翻转：收起来
+// 后它指向外侧，视觉上就是「推到这儿去了」。
 //
 // 单独成控件而不是塞进 SidePanel：它在状态栏里，生命周期与布局归属都跟
 // 侧栏不同，硬绑在一起会让两边都别扭。
 struct PanelToggleStyle {
-  int iconSize = 16;
+  // 图标偏小时四条杠会糊成一片灰块：这块要画 4 条线 + 1 个三角，
+  // 比单线图标需要更大的面积
+  int iconSize = 22;
   // kNoColor 表示跟随主题
   Color icon = kNoColor;
   Color iconDisabled = kNoColor;
@@ -52,7 +59,7 @@ class PanelToggle : public View {
   using ToggleHandler = std::function<void()>;
   void setOnToggle(ToggleHandler fn) { onToggle_ = std::move(fn); }
 
-  // 图标矩形（局部坐标），供测试与命中判断复用
+  // 四条杠与箭头的合并区域（局部坐标），供测试与命中判断复用
   Rect iconRect() const;
 
  protected:

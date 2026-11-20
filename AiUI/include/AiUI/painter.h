@@ -13,6 +13,8 @@
 
 #include <string>
 #include <algorithm>
+#include <cmath>
+#include <vector>
 
 namespace AiUI {
 
@@ -78,6 +80,23 @@ class PaintBackend {
     }
   }
   virtual void strokeRoundRect(const Rect& rc, Color color, int radius, int lineWidth) = 0;
+  // 实心多边形：侧栏折叠这类图标是手绘几何，不能靠字体字形拼
+  virtual void fillPolygon(const Point* points, int count, Color color) {
+    (void)points;
+    (void)count;
+    (void)color;
+  }
+  // 浮点多边形：抗锯齿要靠非整数边界才算得出来。
+  // 整数版本的边压在像素格上，斜边会切出台阶、圆头端点退化成方形。
+  virtual void fillPolygonF(const PointF* points, int count, Color color) {
+    if (!points || count < 3) return;
+    std::vector<Point> ints(static_cast<size_t>(count));
+    for (int i = 0; i < count; ++i) {
+      ints[static_cast<size_t>(i)] =
+          Point{static_cast<int>(std::lround(points[i].x)), static_cast<int>(std::lround(points[i].y))};
+    }
+    fillPolygon(ints.data(), count, color);
+  }
   virtual void drawGradientRect(const Rect& rc, Color top, Color bottom) = 0;
   virtual void drawGradientRoundRect(const Rect& rc, Color top, Color bottom, int radius) = 0;
 
@@ -167,6 +186,16 @@ class Painter {
   }
   void drawVLine(int top, int bottom, int x, Color color) {
     backend_.fillRect(Rect{x, top, x + 1, bottom}, color);
+  }
+  // 实心多边形（顶点按顺时针或逆时针给都行）
+  void fillPolygon(const Point* points, int count, Color color) {
+    if (!points || count < 3) return;
+    backend_.fillPolygon(points, count, color);
+  }
+  // 浮点多边形：手绘图标用它才有抗锯齿的灰度边
+  void fillPolygonF(const PointF* points, int count, Color color) {
+    if (!points || count < 3) return;
+    backend_.fillPolygonF(points, count, color);
   }
 
   // ── 文本 ──

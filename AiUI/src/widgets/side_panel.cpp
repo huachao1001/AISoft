@@ -25,6 +25,101 @@ float easeInOut(float t) {
 
 // ───────────────────────── PanelToggle ─────────────────────────
 
+namespace {
+
+// 侧栏折叠图标：四条圆头横杠 + 一个实心三角。
+//
+// 造型照「缩进」来：三角形那一侧是侧栏将要占的位置，中间两条杠让开它。
+// 展开时三角在左、两条短杠缩到右边，读作「把这栏收进左边」；收起时整体
+// 左右镜像，读作「再放出来」。
+//
+// 不用字体字形拼：字形受字体版本与墨迹框影响，笔画粗细和间距都不可控，
+// 小尺寸下很容易糊成一堆。这里按固定比例画，任何尺寸都长一样。
+//
+// 全程用浮点坐标：抗锯齿只在边界不落在像素格上时才发生。整数坐标画出来
+// 的横杠正好对齐像素行，端头是剃刀般的直角，斜边还会切出台阶——和旁边
+// 那批浮点轮廓的字形图标摆一起就明显不是一路货。
+void drawSidebarGlyph(Painter& painter, const Rect& box, bool collapsed, Color ink) {
+  const float w = static_cast<float>(box.width());
+  const float h = static_cast<float>(box.height());
+  if (w <= 0.0f || h <= 0.0f) return;
+
+  // 笔画粗细：状态栏里图标约 30 设备像素，字形图标实测约 2px。
+  // 浮点多边形自带抗锯齿，实心宽度略收一点（2px + 半透明边）就够，
+  // 再粗就会比旁边的单线图标更重。
+  const float thick = (std::max)(1.5f, w * 0.052f);
+  const float halfT = thick * 0.5f;
+
+  // 千分比坐标；收起态整体左右镜像
+  auto px = [&](float ratio) {
+    const float x0 = box.left + w * ratio * 0.001f;
+    return collapsed ? box.left + w - (x0 - box.left) : x0;
+  };
+  auto py = [&](float ratio) { return box.top + h * ratio * 0.001f; };
+
+  struct Bar {
+    float centerY;
+    float from;
+    float to;
+  };
+  // 四条横杠等距：先定间距，再以图标中线为轴往前推第一条。
+  // 以前是手写四个数，结果第一档间距比另两档窄一截，整组还整体偏下。
+  // 现在只改 barGap 一个数，疏密就整体跟着变，不会再歪。
+  const float barGap = 178.0f;                          // 千分比
+  const float firstBarY = 500.0f - barGap * 1.5f;       // 中点在 500
+  Bar bars[4];
+  for (int i = 0; i < 4; ++i) {
+    const bool outer = (i == 0 || i == 3);
+    bars[i].centerY = firstBarY + barGap * static_cast<float>(i);
+    // 上下两条通长，中间两条从三角右侧起，让出侧栏的位置
+    bars[i].from = outer ? 168.0f : 432.0f;
+    bars[i].to = outer ? 856.0f : 872.0f;
+  }
+
+  // 胶囊形横杠：两端各半圆。直接拼多边形而不是 fillRoundRect——
+  // 后者的圆角半径被夹紧到短边一半，2px 高的条子上就是 1px，
+  // 抗锯齿几乎没覆盖率可用，端头看着仍是方的。
+  for (const Bar& bar : bars) {
+    const float x0 = px(bar.from);
+    const float x1 = px(bar.to);
+    const float left = (std::min)(x0, x1);
+    const float right = (std::max)(x0, x1);
+    const float cy = py(bar.centerY);
+
+    constexpr int kArc = 6;  // 半圆分段数
+    PointF pts[2 * (kArc + 1)];
+    int n = 0;
+    const float pi = 3.14159265f;
+    // 左半圆：90° → 270°，从下经左绕到上
+    for (int i = 0; i <= kArc; ++i) {
+      const float a = pi * 0.5f + pi * static_cast<float>(i) / static_cast<float>(kArc);
+      pts[n++] = PointF{left + halfT + std::cos(a) * halfT, cy + std::sin(a) * halfT};
+    }
+    // 右半圆：-90° → 90°，从上经右绕到下；收口时多边形自动接回起点
+    for (int i = 0; i <= kArc; ++i) {
+      const float a = -pi * 0.5f + pi * static_cast<float>(i) / static_cast<float>(kArc);
+      pts[n++] = PointF{right - halfT + std::cos(a) * halfT, cy + std::sin(a) * halfT};
+    }
+    painter.fillPolygonF(pts, n, ink);
+  }
+
+  // 三角按参考图的比例：比中间两条杠更高更宽，实心块小了不起眼
+  const float triTop = py(378.0f);
+  const float triBottom = py(622.0f);
+  const float triMid = (triTop + triBottom) * 0.5f;
+  const float triBase = px(322.0f);
+  const float triApex = px(150.0f);
+
+  const PointF tri[3] = {
+      PointF{triBase, triTop},
+      PointF{triApex, triMid},
+      PointF{triBase, triBottom},
+  };
+  painter.fillPolygonF(tri, 3, ink);
+}
+
+}  // namespace
+
 void PanelToggle::setStyle(const PanelToggleStyle& style) {
   style_ = style;
   requestLayout();
@@ -47,6 +142,7 @@ bool PanelToggle::isCollapsed() const {
 Rect PanelToggle::iconRect() const {
   const int d = dpi();
   const Rect rc = clientRect();
+  // 图标是正方形的一块：四条杠与三角都在这块里按比例排布
   const int side = (std::max)(1, (std::min)(style_.iconSize * d / 96, (std::min)(rc.width(), rc.height())));
   return Rect{(rc.width() - side) / 2, (rc.height() - side) / 2, (rc.width() + side) / 2,
               (rc.height() + side) / 2};
@@ -79,20 +175,10 @@ void PanelToggle::onPaint(Painter& painter, const Rect& rect) {
   Color ink = style_.icon != kNoColor ? style_.icon : t.iconMuted;
   if (!isEnabled()) ink = style_.iconDisabled != kNoColor ? style_.iconDisabled : t.textFaint;
 
-  // 展开态指左（收起），收起态指右（展开）：kChevron 本身是「右」，
-  // 所以展开时转 180°。绕图标中心转，否则它会跑到原点那一侧去。
-  const Rect icon = iconRect();
-  painter.save();
-  if (!isCollapsed()) {
-    painter.translate(icon.center().x, icon.center().y);
-    painter.rotate(180.0f);
-    painter.drawIcon(IconId::kChevron,
-                     Rect{-icon.width() / 2, -icon.height() / 2, icon.width() / 2, icon.height() / 2},
-                     ink);
-  } else {
-    painter.drawIcon(IconId::kChevron, icon, ink);
-  }
-  painter.restore();
+  // 图标本身是方形：四条杠 + 三角在一块正方形里排布，任何尺寸比例都不变
+  const bool collapsed = isCollapsed();
+  const Rect box = iconRect();
+  drawSidebarGlyph(painter, box, collapsed, ink);
 }
 
 bool PanelToggle::onMouseDown(const MouseEvent& e) {
