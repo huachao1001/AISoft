@@ -100,35 +100,37 @@ void dot(Painter& painter, const Grid& g, float u, float v, float r, Color color
 
 // 放大镜：圆 + 手柄；plus 决定镜内是加号还是减号
 void paintMagnifier(Painter& painter, const Grid& g, Color color, bool plus) {
-  constexpr float cu = 10.3f, cv = 10.3f, r = 6.5f;
+  // 圆与手柄一起撑满网格：字形图标、参考图里这个符号都是满格的，
+  // 画小了整排看过去会一块一块地瘪下去
+  constexpr float cu = 9.9f, cv = 9.9f, r = 8.3f;
   Stroke(g).arc(cu, cv, r, 0.0f, 2.0f * kPi).paint(painter, color);
-  // 手柄从圆周右下切点向外，不压进圆内
+  // 手柄从圆周右下切点向外
   const float k = r * 0.7071f;
-  Stroke(g).line(cu + k, cv + k, 20.4f, 20.4f).paint(painter, color);
-  Stroke(g).line(cu - 3.5f, cv, cu + 3.5f, cv).paint(painter, color);
-  if (plus) Stroke(g).line(cu, cv - 3.5f, cu, cv + 3.5f).paint(painter, color);
+  Stroke(g).line(cu + k, cv + k, 22.2f, 22.2f).paint(painter, color);
+  Stroke(g).line(cu - 4.4f, cv, cu + 4.4f, cv).paint(painter, color);
+  if (plus) Stroke(g).line(cu, cv - 4.4f, cu, cv + 4.4f).paint(painter, color);
 }
 
 // 旋转：下方圆角画框 + 上方弧形箭头。
 //
-// 比例照参考图量：画框占下半，弧的半径几乎顶到图标上沿，从画框左外侧
-// 起弧、越过顶部、在右上方收成箭头。弧画小了会像一道拱门贴着框顶，
-// 认不出在转。左旋是同一份几何的左右镜像。
+// 几何照参考图量：画框偏在右侧（约占 4.8..22），弧的半径比画框还宽、圆心
+// 在画框上沿，于是弧的尾端从画框左侧外面垂下去，两者不相交。画框一旦拉满
+// 整宽，弧就只能压在框上，糊成一块，认不出在转。左旋是同一份几何的镜像。
 void paintRotate(Painter& painter, const Grid& g, Color color) {
-  Stroke(g).roundRect(5.2f, 12.4f, 20.2f, 21.4f, 2.6f).paint(painter, color);
+  Stroke(g).roundRect(4.8f, 10.6f, 22.1f, 23.3f, 2.6f).paint(painter, color);
 
-  // 弧：圆心略偏左，半径撑满图标宽度，弧顶贴着上沿
-  constexpr float cu = 11.5f, cv = 13.5f, r = 9.5f;
-  constexpr float aStart = kPi * 0.955f;  // 左外侧，略低于圆心
-  constexpr float aEnd = kPi * 1.695f;    // 越过顶部后落在右上方
+  // 弧：圆心在画框上沿，半径略大于画框半宽，弧顶贴着图标上沿
+  constexpr float cu = 11.0f, cv = 11.1f, r = 11.0f;
+  constexpr float aStart = kPi * 0.887f;  // 左下方，垂到画框左外侧
+  constexpr float aEnd = kPi * 1.885f;    // 越过顶部后收在右上方
   Stroke(g).arc(cu, cv, r, aStart, aEnd).paint(painter, color);
 
-  // 箭头：落地在弧终点，两翼沿弧的切线张开
+  // 箭头落在弧终点，两翼沿弧的切线张开
   const float tangent = aEnd + kPi * 0.5f;
   const float tu = cu + std::cos(aEnd) * r;
   const float tv = cv + std::sin(aEnd) * r;
-  constexpr float kBarb = 2.6f;
-  constexpr float kSpread = 0.78f;
+  constexpr float kBarb = 3.0f;
+  constexpr float kSpread = 0.82f;
   const float b1u = tu - std::cos(tangent - kSpread) * kBarb;
   const float b1v = tv - std::sin(tangent - kSpread) * kBarb;
   const float b2u = tu - std::cos(tangent + kSpread) * kBarb;
@@ -138,10 +140,10 @@ void paintRotate(Painter& painter, const Grid& g, Color color) {
 
 // 适应窗口：四角各一个朝外的 L 形箭头 + 一段斜杆
 void paintFitWindow(Painter& painter, const Grid& g, Color color) {
-  constexpr float kArm = 4.0f;    // 两翼长度
-  constexpr float kShaft = 5.4f;  // 斜杆末端
-  const float cu[4] = {4.0f, 20.0f, 4.0f, 20.0f};
-  const float cv[4] = {4.0f, 4.0f, 20.0f, 20.0f};
+  constexpr float kArm = 4.6f;    // 两翼长度
+  constexpr float kShaft = 6.2f;  // 斜杆末端
+  const float cu[4] = {3.0f, 21.0f, 3.0f, 21.0f};
+  const float cv[4] = {3.0f, 3.0f, 21.0f, 21.0f};
   const float dx[4] = {1.0f, -1.0f, 1.0f, -1.0f};
   const float dy[4] = {1.0f, 1.0f, -1.0f, -1.0f};
   for (int i = 0; i < 4; ++i) {
@@ -149,58 +151,62 @@ void paintFitWindow(Painter& painter, const Grid& g, Color color) {
     // L 形翅膀贴着角的两条边
     Stroke(g).line(x, y, x + sx * kArm, y).line(x, y, x, y + sy * kArm).paint(painter, color);
     // 斜杆从角内侧指向外
-    Stroke(g).line(x + sx * 1.0f, y + sy * 1.0f, x + sx * kShaft, y + sy * kShaft)
+    Stroke(g).line(x + sx * 1.1f, y + sy * 1.1f, x + sx * kShaft, y + sy * kShaft)
         .paint(painter, color);
   }
 }
 
-// 实际大小：方框 + 两条竖线夹着比例点，读作 1:1
+// 实际大小：方框 + 两条竖线夹着比例点，读作 1:1。
+//
+// 外框要占满作图网格：它本身就是"画面"的轮廓，比同排其它图标小一圈会显得
+// 缩小了半档。参考图里这个框和其它图标的外接矩形一样大。
 void paintZoomActual(Painter& painter, const Grid& g, Color color) {
-  Stroke(g).roundRect(4.2f, 4.2f, 19.8f, 19.8f, 3.8f).paint(painter, color);
-  Stroke(g).line(9.6f, 8.4f, 9.6f, 15.6f).paint(painter, color);
-  Stroke(g).line(14.4f, 8.4f, 14.4f, 15.6f).paint(painter, color);
-  // 比例点要够大才看得见：线宽收细后 0.6 的半径只剩两三个像素
-  dot(painter, g, 12.0f, 10.1f, 0.85f, color);
-  dot(painter, g, 12.0f, 13.9f, 0.85f, color);
+  Stroke(g).roundRect(1.4f, 1.4f, 22.6f, 22.6f, 4.2f).paint(painter, color);
+  // 两条竖线按参考图的相对位置：分别落在框宽的 28% 与 72% 处
+  Stroke(g).line(7.3f, 7.1f, 7.3f, 16.0f).paint(painter, color);
+  Stroke(g).line(16.7f, 7.1f, 16.7f, 16.0f).paint(painter, color);
+  // 比例点要够大才看得见：线宽收细后小圆点只剩两三个像素
+  dot(painter, g, 12.0f, 9.2f, 1.05f, color);
+  dot(painter, g, 12.0f, 13.9f, 1.05f, color);
 }
 
 // 演示：屏幕 + 播放三角 + 支脚
 void paintPresent(Painter& painter, const Grid& g, Color color) {
-  Stroke(g).roundRect(3.2f, 4.4f, 20.8f, 17.0f, 2.4f).paint(painter, color);
+  Stroke(g).roundRect(2.0f, 2.8f, 22.0f, 18.2f, 2.8f).paint(painter, color);
   // 播放三角也用描边：整排都是细线，一块实心会很扎眼。
-  // 三角在屏幕里要居中，且得够大——小了就是一坨尖角，认不出是播放
+  // 三角要够大——小了就是一坨尖角，认不出是播放
   Stroke(g)
-      .line(9.6f, 7.6f, 15.4f, 10.7f)
-      .line(15.4f, 10.7f, 9.6f, 13.8f)
-      .line(9.6f, 13.8f, 9.6f, 7.6f)
+      .line(9.6f, 6.6f, 15.6f, 10.5f)
+      .line(15.6f, 10.5f, 9.6f, 14.4f)
+      .line(9.6f, 14.4f, 9.6f, 6.6f)
       .paint(painter, color);
   // 支脚
-  Stroke(g).line(9.2f, 17.0f, 7.4f, 20.6f).paint(painter, color);
-  Stroke(g).line(14.8f, 17.0f, 16.6f, 20.6f).paint(painter, color);
+  Stroke(g).line(8.6f, 18.2f, 6.8f, 22.4f).paint(painter, color);
+  Stroke(g).line(15.4f, 18.2f, 17.2f, 22.4f).paint(painter, color);
 }
 
 // 另存为：软盘轮廓。参考图没有这个符号，按同一套线宽画最通用的那个
 void paintSaveAs(Painter& painter, const Grid& g, Color color) {
   // 外壳：右上角切一刀是软盘的辨识特征
   Stroke(g)
-      .line(4.8f, 19.4f, 4.8f, 5.4f)
-      .line(4.8f, 5.4f, 5.4f, 4.6f)
-      .line(5.4f, 4.6f, 16.8f, 4.6f)
-      .line(16.8f, 4.6f, 19.4f, 6.0f)
-      .line(19.4f, 6.0f, 19.4f, 19.4f)
-      .line(19.4f, 19.4f, 4.8f, 19.4f)
+      .line(2.6f, 21.4f, 2.6f, 2.6f)
+      .line(2.6f, 2.6f, 3.4f, 1.8f)
+      .line(3.4f, 1.8f, 18.6f, 1.8f)
+      .line(18.6f, 1.8f, 22.2f, 4.2f)
+      .line(22.2f, 4.2f, 22.2f, 21.4f)
+      .line(22.2f, 21.4f, 2.6f, 21.4f)
       .paint(painter, color);
   // 上部滑盖
   Stroke(g)
-      .line(8.8f, 4.6f, 8.8f, 9.2f)
-      .line(8.8f, 9.2f, 15.4f, 9.2f)
-      .line(15.4f, 9.2f, 15.4f, 4.6f)
+      .line(7.6f, 1.8f, 7.6f, 7.6f)
+      .line(7.6f, 7.6f, 16.6f, 7.6f)
+      .line(16.6f, 7.6f, 16.6f, 1.8f)
       .paint(painter, color);
   // 下部标签
   Stroke(g)
-      .line(7.6f, 13.2f, 7.6f, 19.4f)
-      .line(7.6f, 19.4f, 16.6f, 19.4f)
-      .line(16.6f, 19.4f, 16.6f, 13.2f)
+      .line(6.2f, 12.4f, 6.2f, 21.4f)
+      .line(6.2f, 21.4f, 18.6f, 21.4f)
+      .line(18.6f, 21.4f, 18.6f, 12.4f)
       .paint(painter, color);
 }
 
