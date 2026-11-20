@@ -65,6 +65,12 @@ TitleBar::TitleBar() : defaults_(titleBarDefaults()) {
     buttons_->setGravity(Gravity::kCenter);
     return buttons_;
   };
+  auto makeActions = [this] {
+    actions_ = new LinearLayout(Orientation::kHorizontal);
+    actions_->setId(kTitleBarIdActions);
+    actions_->setGravity(Gravity::kCenter);
+    return actions_;
+  };
   auto makeButton = [this](int id, IconId icon, bool close, Handler TitleBar::*handler) {
     auto* button = new Button();
     button->setId(id);
@@ -79,6 +85,7 @@ TitleBar::TitleBar() : defaults_(titleBarDefaults()) {
 
   auto* icon = makeIcon();
   auto* title = makeTitle();
+  auto* actions = makeActions();
   auto* buttons = makeButtons();
   minimizeButton_ =
       makeButton(kTitleBarIdMinimize, IconId::kMinimize, false, &TitleBar::onMinimize_);
@@ -96,10 +103,15 @@ TitleBar::TitleBar() : defaults_(titleBarDefaults()) {
       LayoutParams{}.withSize(LayoutParams::kWrapContent, LayoutParams::kMatchParent);
   const LayoutParams buttonsParams =
       LayoutParams{}.withSize(LayoutParams::kWrapContent, LayoutParams::kMatchParent);
+  // 宿主动作区：默认与系统按钮之间留一点空隙，否则两类按钮贴死会看成同一组。
+  // 需要贴边时宿主自己清掉 marginRight。
+  LayoutParams actionsParams =
+      LayoutParams{}.withSize(LayoutParams::kWrapContent, LayoutParams::kMatchParent);
 
-  // 顺序：图标、标题、弹簧、按钮。
+  // 顺序：图标、标题、弹簧、宿主动作、系统按钮。
   if (defaults_.buttonsOnLeft) {
     band_->addView(buttons, buttonsParams);
+    band_->addView(actions, actionsParams);
     band_->addView(spacer, spacerParams);
     band_->addView(icon, iconParams);
     band_->addView(title, titleParams);
@@ -107,6 +119,7 @@ TitleBar::TitleBar() : defaults_(titleBarDefaults()) {
     band_->addView(icon, iconParams);
     band_->addView(title, titleParams);
     band_->addView(spacer, spacerParams);
+    band_->addView(actions, actionsParams);
     band_->addView(buttons, buttonsParams);
   }
   band_->setPadding(defaults_.padLeft, 0, defaults_.padRight, 0);
@@ -302,6 +315,9 @@ Size TitleBar::onMeasure(const Size& available) {
     if (buttons_ && buttons_->isVisible()) {
       reserved += buttons_->measure(Size{available.width, available.height}).width;
     }
+    if (actions_ && actions_->isVisible()) {
+      reserved += actions_->measure(Size{available.width, available.height}).width;
+    }
     // 至少留一格能显示几个字的宽度，否则标题会退化成只剩省略号
     const int limit = (std::max)(40 * d / 96, available.width - reserved);
     // maxWidth 存的是设计值，比较前要换算：拿物理像素直接比，144 DPI 下
@@ -343,6 +359,10 @@ HitTarget TitleBar::onHitTest(const Point& windowPoint) {
     if (button && button->isVisible() && button->absoluteBounds().contains(windowPoint)) {
       return HitTarget::kClient;
     }
+  }
+  // 宿主动作区整块交给客户区：里面可能有任意控件，逐个判定不如整块放行
+  if (actions_ && actions_->isVisible() && actions_->absoluteBounds().contains(windowPoint)) {
+    return HitTarget::kClient;
   }
   // 逻辑带内可拖动窗口；带外只有显式开了 dragWindow 的视图才算
   if (band_ && band_->absoluteBounds().contains(windowPoint)) return HitTarget::kCaption;

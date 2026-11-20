@@ -60,6 +60,8 @@ class MainActivity : public AiUI::Activity {
   void attachThumbs();
   // 侧栏：宽度以布局为准，开关按钮在状态栏最左边
   void attachSidePanel();
+  // 编辑入口：右上角的按钮，把当前图交给编辑器 exe
+  void attachEdit();
 
   // ── 状态同步 ──
   // 有图/无图决定看图层与首页谁显示
@@ -77,6 +79,8 @@ class MainActivity : public AiUI::Activity {
   void zoomToActual();
   void rotate(int quarterTurns);
   void pickAndOpen();
+  // 把当前图交给 AiPicEditor（同目录的另一个 exe）
+  void openInEditor();
   AiUI::NativeHandle nativeWindow() const;
 
   // 控件由布局创建，这里只借用
@@ -96,6 +100,8 @@ class MainActivity : public AiUI::Activity {
   AiUI::Button* btnRotateRight_ = nullptr;
   AiUI::Button* btnPresent_ = nullptr;
   AiUI::Button* btnSaveAs_ = nullptr;
+  // 编辑入口：建在标题栏的行动区里，与工具栏按钮不同组
+  AiUI::Button* btnEdit_ = nullptr;
 
   bool presenting_ = false;
   // 演示态会临时隐藏标题栏，退出时按原值恢复

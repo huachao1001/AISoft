@@ -136,6 +136,7 @@ void MainActivity::onCreate() {
   attachStatusBar();
   attachSidePanel();
   attachThumbs();
+  attachEdit();
 
   // 拖放与单实例转发挂在 AiUI 建的顶层窗口上
   g_app.mainWnd = nativeWindow();
@@ -222,6 +223,40 @@ void MainActivity::attachHome() {
     icon->setIcon(AiUI::IconId::kImage);
     if (t) icon->setPlaceholderColor(AiUI::blendColor(t->accent, t->body, 0.28f));
   }
+}
+
+void MainActivity::attachEdit() {
+  // 编辑入口放在标题栏的行动区：它不属于「对当前图片的查看操作」，
+  // 与缩放、旋转那些工具按钮不是一组；放标题栏右侧还紧邻系统按钮，
+  // 一眼能看出这是「把图带到别处去」的出口。
+  AiUI::Window* win = window();
+  AiUI::TitleBar* bar = win ? win->titleBar() : nullptr;
+  if (!bar || !bar->actions()) return;
+
+  AiUI::ButtonSpec spec;
+  spec.style = AiUI::ButtonStyle::kPrimary;
+  spec.label = L"编辑";
+  spec.icon = AiUI::IconId::kEdit;
+  spec.hasIcon = true;
+  spec.iconSize = 14;
+  spec.iconGap = 5;
+  spec.width = 86;
+  spec.height = 26;
+  spec.padX = 10;
+  spec.radius = 6;
+
+  btnEdit_ = new AiUI::Button();
+  btnEdit_->setSpec(spec);
+  btnEdit_->setTooltip(L"用编辑器打开这张图片");
+  btnEdit_->setOnClick([this] { openInEditor(); });
+
+  // 右边留一点空隙，别贴死系统按钮
+  AiUI::LayoutParams params;
+  params.width = AiUI::LayoutParams::kWrapContent;
+  params.height = AiUI::LayoutParams::kWrapContent;
+  params.marginRight = 10;
+  params.align(AiUI::Gravity::kCenter, AiUI::Gravity::kCenter);
+  bar->actions()->addView(btnEdit_, params);
 }
 
 void MainActivity::attachPhoto() {
@@ -372,7 +407,7 @@ void MainActivity::refreshToolBar() {
   const bool has = AppHasImage();
   for (AiUI::Button* button :
        {btnZoomIn_, btnZoomOut_, btnFit_, btnActual_, btnRotateRight_, btnPresent_,
-        btnSaveAs_}) {
+        btnSaveAs_, btnEdit_}) {
     if (button) button->setEnabled(has);
   }
 }
@@ -462,6 +497,32 @@ void MainActivity::pickAndOpen() {
   if (!openImage(picked)) warn(L"打不开这张图片：\n" + picked, nativeWindow());
 }
 
+// 编辑器是同一目录下的另一个 exe。把当前图的路径传过去，
+// 用户在编辑器里改的是「这张图」，不用再选一次文件。
+void MainActivity::openInEditor() {
+  if (!AppHasImage() || AppImagePath().empty()) return;
+
+  const std::wstring self = AiUI::platform()->executablePath();
+  if (self.empty()) return;
+
+  // 同目录：把文件名换掉即可，不猜安装位置
+  std::wstring dir = util::DirName(self);
+  if (dir.empty()) return;
+  const std::wstring editorPath = util::JoinPath(dir, L"AiPicEditor.exe");
+
+  if (!util::PathExists(editorPath)) {
+    warn(L"找不到编辑器：\n" + editorPath + L"\n\n请确认 AiPicEditor.exe 与看图程序在同一目录。",
+         nativeWindow());
+    return;
+  }
+
+  // 参数要加引号：路径里带空格时不然会被拆成两段
+  const std::wstring args = L"\"" + AppImagePath() + L"\"";
+  if (!AiUI::platform()->launchDetached(editorPath, args, dir)) {
+    warn(L"启动编辑器失败：\n" + editorPath, nativeWindow());
+  }
+}
+
 void MainActivity::zoomBy(float factor) {
   // 演示态锁定画面：倍数一变，投影出去的那一帧就跟用户讲的对不上了
   if (presenting_) return;
@@ -528,6 +589,9 @@ void MainActivity::setPresenting(bool presenting) {
   // 投影出去只会占掉画面。退出时按各控件本身的状态恢复。
   if (toolBar_) toolBar_->show(!presenting);
   if (status_) status_->show(!presenting);
+  // 编辑按钮在标题栏里，演示态虽然会收起标题栏，但按钮自身状态也要复位，
+  // 否则退出演示后可能与预期不一致
+  if (btnEdit_) btnEdit_->show(!presenting);
   if (sidePanel_) sidePanel_->show(!presenting && AppHasImage());
   if (panelToggle_) panelToggle_->show(!presenting && AppHasImage());
   if (homePane_) homePane_->show(!AppHasImage());

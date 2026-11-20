@@ -216,10 +216,47 @@ void paintSaveAs(Painter& painter, const Grid& g, Color color) {
       .paint(painter, color);
 }
 
+// 编辑：铅笔。斜置 45°，笔杆与笔尖共线，笔头留一道斜切口区分「削尖」。
+//
+// 直接用四边形而不是用旋转后的矩形：图标引擎只提供描边折线，旋转要靠
+// 自己算坐标；沿 45° 手算四个点反而更短，也不会随线宽偏移。
+void paintEdit(Painter& painter, const Grid& g, Color color) {
+  // 笔杆中心线：从左下笔尖 (3.4, 20.6) 指向右上 (20.6, 3.4)
+  constexpr float kTipU = 3.4f, kTipV = 20.6f;
+  constexpr float kEndU = 20.6f, kEndV = 3.4f;
+  // 笔身半宽（沿法线方向）
+  constexpr float kW = 2.6f;
+  // 笔尖到笔身的过渡点：这一段是锥形收窄区
+  constexpr float kNeck = 0.34f;
+
+  const float nu = -(kEndV - kTipV);
+  const float nv = (kEndU - kTipU);
+  const float len = std::sqrt(nu * nu + nv * nv);
+  const float ux = nu / len * kW, uy = nv / len * kW;
+
+  const float bodyU = kTipU + (kEndU - kTipU) * kNeck;
+  const float bodyV = kTipV + (kEndV - kTipV) * kNeck;
+
+  // 笔身：两条平行边 + 顶部斜切
+  Stroke(g)
+      .line(bodyU + ux, bodyV + uy, kEndU + ux, kEndV + uy)
+      .line(kEndU + ux, kEndV + uy, kEndU - ux, kEndV - uy)
+      .line(kEndU - ux, kEndV - uy, bodyU - ux, bodyV - uy)
+      .paint(painter, color);
+
+  // 笔尖：从收窄点到尖端，两条边收成一个尖
+  Stroke(g)
+      .line(bodyU + ux, bodyV + uy, kTipU, kTipV)
+      .line(kTipU, kTipV, bodyU - ux, bodyV - uy)
+      .paint(painter, color);
+
+  // 笔尖与笔身的分界线：一道垂直于笔杆的短线，让人看出「这里换了硬度」
+  Stroke(g).line(bodyU + ux, bodyV + uy, bodyU - ux, bodyV - uy).paint(painter, color);
+}
+
 }  // namespace
 
-bool paintVectorIcon(Painter& painter, IconId id, const Rect& rc, Color color) {
-  if (rc.width() <= 0 || rc.height() <= 0) return false;
+bool paintVectorIcon(Painter& painter, IconId id, const Rect& rc, Color color) {  if (rc.width() <= 0 || rc.height() <= 0) return false;
   const Grid g = makeGrid(rc);
 
   switch (id) {
@@ -246,6 +283,9 @@ bool paintVectorIcon(Painter& painter, IconId id, const Rect& rc, Color color) {
       return true;
     case IconId::kSaveAs:
       paintSaveAs(painter, g, color);
+      return true;
+    case IconId::kEdit:
+      paintEdit(painter, g, color);
       return true;
     default:
       return false;

@@ -48,6 +48,7 @@ constexpr int kTitleBarIdButtons = 0x7A04;
 constexpr int kTitleBarIdMinimize = 0x7A05;
 constexpr int kTitleBarIdMaximize = 0x7A06;
 constexpr int kTitleBarIdClose = 0x7A07;
+constexpr int kTitleBarIdActions = 0x7A08;
 
 // 标题栏默认度量（96 DPI 设计值）。平台差异只有按钮在哪一侧与几个数字，
 // 实现放在 src/os/<platform>/，通用层只读数据。
@@ -131,6 +132,10 @@ class TitleBar : public FrameLayout { public:
 
   // 内部部件；等价于 findViewById(kTitleBarIdXxx)
   LinearLayout* band() const { return band_; }
+  // 宿主自定义按钮的容器：在系统按钮左侧（按钮在右）或右侧（按钮在左）。
+  // 放这里而不是自己往 band 里插，是为了让布局顺序、命中测试与标题剩余
+  // 宽度都不必让宿主重复计算一遍。
+  LinearLayout* actions() const { return actions_; }
   Button* systemButton(TitleBarButton button) const;
 
   HitTarget onHitTest(const Point& windowPoint) override;
@@ -162,6 +167,7 @@ class TitleBar : public FrameLayout { public:
   LinearLayout* band_ = nullptr;
   ImageView* iconView_ = nullptr;
   TextView* titleView_ = nullptr;
+  LinearLayout* actions_ = nullptr;
   LinearLayout* buttons_ = nullptr;
   Button* minimizeButton_ = nullptr;
   Button* maximizeButton_ = nullptr;

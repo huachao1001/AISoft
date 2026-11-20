@@ -57,7 +57,7 @@ class StrokeRecorder : public RecordingBackend {
 AIUI_TEST(vector_icons_cover_the_toolbar_set) {
   for (IconId id : {IconId::kZoomIn, IconId::kZoomOut, IconId::kFitWindow,
                     IconId::kZoomActual, IconId::kRotateLeft, IconId::kRotateRight,
-                    IconId::kFullscreen, IconId::kSaveAs}) {
+                    IconId::kFullscreen, IconId::kSaveAs, IconId::kEdit}) {
     StrokeRecorder backend;
     Painter painter(backend);
     AIUI_CHECK(paintVectorIcon(painter, id, Rect{0, 0, 24, 24}, makeColor(0, 0, 0, 255)));
@@ -94,7 +94,8 @@ AIUI_TEST(vector_icons_scale_line_width_with_size) {
 AIUI_TEST(vector_icons_stay_inside_the_box) {
   const Rect box{40, 60, 88, 108};  // 48x48
   for (IconId id : {IconId::kZoomIn, IconId::kFitWindow, IconId::kRotateLeft,
-                    IconId::kRotateRight, IconId::kFullscreen, IconId::kSaveAs}) {
+                    IconId::kRotateRight, IconId::kFullscreen, IconId::kSaveAs,
+                    IconId::kEdit}) {
     StrokeRecorder backend;
     Painter painter(backend);
     AIUI_CHECK(paintVectorIcon(painter, id, box, makeColor(0, 0, 0, 255)));
