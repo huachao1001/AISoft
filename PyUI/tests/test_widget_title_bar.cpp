@@ -484,5 +484,40 @@ TEST(title_bar_hover_repaints_the_button) {
   CHECK(sameRgb(hot, winAppearance().buttonHover));
 }
 
+// 内置标题栏：XML 里 band 声明了 role="caption"，而 TitleBar::hitTest 会把
+// band 上的命中改判给 TitleBar 自己。若 TitleBar 自身没有角色，这份声明就
+// 在改判那一步被丢掉——「拖动条由 XML 声明」也就名存实亡。
+TEST(title_bar_declares_caption_role_so_xml_role_survives_hittest) {
+  RootHarness harness(Size{400, 32});
+  TitleBar* bar = harness.add<TitleBar>();
+  bar->setAppearance(winAppearance());
+  harness.relayout();
+
+  CHECK(bar->windowRole() == WindowRole::kCaption);
+
+  // 标题空白处：命中会被改判成 TitleBar 自身，角色必须仍是 caption。
+  MouseEvent event;
+  event.position = Point{200, 16};
+  View* hit = harness.root().hitTest(event.position);
+  CHECK(hit == bar);
+  CHECK(hit->windowRole() == WindowRole::kCaption);
+}
+
+// 三个按钮仍然优先于容器角色：往上找角色不能越过按钮自己的 role。
+TEST(title_bar_buttons_keep_their_own_role_over_caption) {
+  RootHarness harness(Size{400, 32});
+  TitleBar* bar = harness.add<TitleBar>();
+  bar->setAppearance(winAppearance());
+  harness.relayout();
+
+  auto* maximize = bar->findView<Button>(TitleBar::kIdMaximize);
+  CHECK(maximize != nullptr);
+  if (maximize == nullptr) return;
+
+  View* hit = harness.root().hitTest(maximize->absoluteBounds().center());
+  CHECK(hit == maximize);
+  CHECK(hit->windowRole() == WindowRole::kMaximize);
+}
+
 }  // namespace test
 }  // namespace pyui

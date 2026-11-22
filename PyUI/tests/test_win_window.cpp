@@ -646,6 +646,71 @@ TEST(win_platform_subsystems_are_available) {
   CHECK(host.contextMenu()->supportsSubmenus());
 }
 
+// 最大化按钮的悬停必须「进入/离开」成对。
+//
+// 这条测的是最有价值的不变量：悬停唯一的合法条件是「指针现在指着按钮」。
+// 历史上出错的方式是——离开通知只到一次，被排队中的 WM_NCHITTEST 重新
+// 点亮，之后再没有第二次通知，灰底永久残留。
+//
+// 注意这里**真的移动光标**：后端判定悬停以实时光标为准，不信任消息里带的
+// 坐标（那条队列坐标正是残留的成因）。所以「把光标放到按钮上」是进入悬停的
+// 唯一合法方式，测试也照这个前提来。
+TEST(win_window_max_button_hover_clears_when_cursor_leaves) {
+  Fixture fixture;
+  if (fixture.window == nullptr) return;
+  const HWND hwnd = rawHandle(fixture.window);
+  fixture.window->setBounds(Rect::at(220, 220, 400, 300));
+  pumpMessages();
+
+  const Point origin = fixture.window->clientOrigin();
+  const Rect client = fixture.window->clientRect();
+
+  // 把光标放到客户区内的按钮热区（顶部一行），并让宿主回答「这里是按钮」。
+  POINT saved{};
+  ::GetCursorPos(&saved);
+  fixture.host.nextHit = HitTarget::kMaxButton;
+  fixture.host.mouseMoves = 0;
+  fixture.host.mouseLeaves = 0;
+  ::SetCursorPos(origin.x + 100, origin.y + 10);
+  ::SendMessageW(hwnd, WM_NCHITTEST, 0, MAKELPARAM(origin.x + 100, origin.y + 10));
+  const bool entered = fixture.host.mouseMoves > 0;
+
+  // 光标移到窗口外（按钮一定不在那里），再发离开通知：必须清除。
+  ::SetCursorPos(origin.x + 100, origin.y - 60);
+  fixture.host.nextHit = HitTarget::kClient;
+  ::SendMessageW(hwnd, WM_NCMOUSELEAVE, 0, 0);
+  const bool cleared = fixture.host.mouseLeaves > 0;
+
+  // 无论进入是否成功（光标被别的窗口抢走时长这样），**清除必须发生**：
+  // 悬停不能因为「没进去」或「进去了但离开通知丢了」而卡住。
+  ::SetCursorPos(saved.x, saved.y);
+  CHECK(entered);
+  CHECK(cleared);
+  (void)client;
+}
+
+// 悬停期间同一位置不重复推 MouseMove。
+// 这是灰底残留的另一半病因：坐标没变却每条命中消息都推一次，悬停被反复
+// 「点亮」，清掉之后立刻又亮。
+TEST(win_window_max_button_hover_is_idempotent_per_position) {
+  Fixture fixture;
+  if (fixture.window == nullptr) return;
+  const HWND hwnd = rawHandle(fixture.window);
+  fixture.window->setBounds(Rect::at(200, 200, 400, 300));
+  pumpMessages();
+
+  fixture.host.nextHit = HitTarget::kMaxButton;
+  const Point origin = fixture.window->clientOrigin();
+  fixture.host.mouseMoves = 0;
+
+  for (int i = 0; i < 3; ++i) {
+    ::SendMessageW(hwnd, WM_NCHITTEST, 0, MAKELPARAM(origin.x + 120, origin.y + 10));
+  }
+  // 位置没变，只应产生一次 MouseMove。真实光标位置在这里是固定的
+  // （测试没有移动鼠标），所以这条断言不依赖光标漂移。
+  CHECK(fixture.host.mouseMoves <= 1);
+}
+
 }  // namespace test
 }  // namespace pyui
 

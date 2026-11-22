@@ -74,14 +74,15 @@ bool AppWindow::create() {
   params.style.minimizable = options_.minimizable;
   params.style.maximizable = options_.maximizable;
 
-  if (options_.customTitleBar) {
-    // captionHeight 用的是 TitleBarAppearance 的**设计值**：后端会自己
-    // 按窗口 DPI 换算成非客户区高度，两处不能各乘一次。
-    const TitleBarAppearance appearance = titleBarAppearance();
-    params.style.captionHeight = appearance.effectiveVisualHeight();
-  } else {
-    params.style.captionHeight = 0;
-  }
+  // 窗口**始终**走自绘非客户区：captionHeight 告诉后端「顶部这一条归我」，
+  // 系统因此不会画它自己的标题栏，只保留左右/底部的边框、投影与贴边吸附。
+  //
+  // customTitleBar 只决定「我们自己画不画那条标题栏」，不决定系统画不画。
+  // 早先把它当成「用系统标题栏」的开关，结果是关掉标题栏就退回 Windows
+  // 外观，与 PyUI 的整个前提冲突。隐藏后用户要拖动，就在自己的布局里放
+  // role="caption"，机制完全一样。
+  const TitleBarAppearance appearance = titleBarAppearance();
+  params.style.captionHeight = appearance.effectiveVisualHeight();
 
   window_ = platform().createWindow(nullptr, params, *this);
   if (window_ == nullptr) return false;
@@ -134,6 +135,10 @@ bool AppWindow::create() {
   root_.setSize(Size{client.width(), client.height()});
   root_.performLayout();
 
+  // 自定义布局里的 role 按钮要能干实事。内置标题栏自己接好了动作，这里只补
+  // 没接的那部分（见 bindWindowRoles）。
+  bindWindowRoles(root_.contentView());
+
   if (onDrop_) window_->setFileDropHandler(onDrop_);
   if (frameTimerMs_ > 0) window_->setDelayTimer(frameTimerMs_);
 
@@ -165,6 +170,8 @@ void AppWindow::setContentView(std::unique_ptr<ViewGroup> content) {
                         .withWeight(1.0f));
     }
     root_.performLayout();
+    // 新内容里可能也带 role 声明，同样要接上动作。
+    bindWindowRoles(host);
     root_.invalidate();
     return;
   }
@@ -194,6 +201,49 @@ void AppWindow::setBackgroundColor(Color color) {
   background_ = color;
   if (window_ != nullptr) window_->setBackgroundColor(color);
   root_.invalidate();
+}
+
+void AppWindow::bindWindowRoles(ViewGroup* root) {
+  if (root == nullptr || window_ == nullptr) return;
+
+  // 深度优先遍历整棵子树。只处理带窗口角色的控件，其余一概不碰。
+  std::vector<View*> stack{root};
+  while (!stack.empty()) {
+    View* view = stack.back();
+    stack.pop_back();
+
+    if (auto* group = dynamic_cast<ViewGroup*>(view)) {
+      for (View* child : group->children()) stack.push_back(child);
+    }
+
+    // 已经有人接过点击就不抢：内置标题栏、以及应用自己写的 onClick 都走这条。
+    if (view->hasOnClick()) continue;
+
+    switch (view->windowRole()) {
+      case WindowRole::kMinimize:
+        view->setOnClick([this] {
+          if (window_ != nullptr) window_->minimize();
+        });
+        break;
+      case WindowRole::kMaximize:
+        view->setOnClick([this] {
+          if (window_ != nullptr) window_->toggleMaximize();
+        });
+        break;
+      case WindowRole::kClose:
+        view->setOnClick([this] {
+          // 与内置关闭按钮同一条路：先问关闭拦截，再真关。
+          if (onClose_ && onClose_()) return;
+          if (window_ != nullptr) window_->close();
+        });
+        break;
+      case WindowRole::kNone:
+      case WindowRole::kCaption:
+      case WindowRole::kTitle:
+      case WindowRole::kIcon:
+        break;
+    }
+  }
 }
 
 // ── 行为挂点 ──
@@ -341,29 +391,39 @@ void AppWindow::onTimer() {
 }
 
 HitTarget AppWindow::onHitTest(const Point& position) {
-  if (titleBar_ == nullptr) return HitTarget::kClient;
-
-  // 命中的控件自己声明了角色就以角色为准——位置和 id 都不参与判断。
-  // 这样应用自定义标题栏时，按钮放在哪、用什么 id 都可以，只要写了 role。
-  View* hit = root_.hitTest(position);
-  if (hit != nullptr) {
-    switch (hit->windowRole()) {
-      case WindowRole::kMaximize: return HitTarget::kMaxButton;
-      case WindowRole::kMinimize: return HitTarget::kClient;
-      case WindowRole::kClose: return HitTarget::kClient;
-      case WindowRole::kCaption: return HitTarget::kCaption;
-      case WindowRole::kNone: break;
+  // 从命中视图往上找第一个声明了角色的节点——**这一步不依赖标题栏是否存在**。
+  //
+  // 为什么顺序如此：role 是布局数据，用户可能把标题栏整个隐藏掉，自己在任意
+  // 位置摆一个 role="caption" 的 View 当拖动条，或者只留一个 role="close"
+  // 的自定义关闭按钮。以 titleBar_ 是否存在为前置条件，会让这些声明的角色
+  // 在「无内置标题栏」时全部失效——布局写了 role 却按不动。
+  //
+  // 往上找而不是只看命中视图本身，是因为容器也可能声明角色（内置标题栏的
+  // band 就是 role="caption"），而命中可能落在它的空白处。
+  if (View* hit = root_.hitTest(position)) {
+    View* owner = hit;
+    while (owner != nullptr && owner->windowRole() == WindowRole::kNone) owner = owner->parent();
+    if (owner != nullptr) {
+      switch (owner->windowRole()) {
+        case WindowRole::kMaximize: return HitTarget::kMaxButton;
+        case WindowRole::kMinimize:
+        case WindowRole::kClose: return HitTarget::kClient;
+        case WindowRole::kCaption: return HitTarget::kCaption;
+        // title / icon 是装饰：落到下面的标题栏兜底，与「标题文字也能拖」一致。
+        case WindowRole::kTitle:
+        case WindowRole::kIcon:
+        case WindowRole::kNone: break;
+      }
     }
   }
 
-  // 标题栏的绝对矩形（窗口客户区坐标）。后端已经先判过缩放带，
-  // 所以这里只回答「是不是标题栏」，缩放边不归宿主管。
-  const Rect bar = titleBar_->absoluteBounds();
-  if (!bar.contains(position)) return HitTarget::kClient;
-
-  // 标题栏空白区：交给系统做拖动、双击最大化、贴边吸附、Snap Layouts。
-  // 判到「命中结果在标题栏子树里」也算空白——文字与图标是透明装饰。
-  return HitTarget::kCaption;
+  // 没有任何角色声明时，内置标题栏的绝对矩形兜底：整条都能拖。
+  // 这是默认标题栏的便利行为，不比角色声明优先。
+  if (titleBar_ != nullptr) {
+    const Rect bar = titleBar_->absoluteBounds();
+    if (bar.contains(position)) return HitTarget::kCaption;
+  }
+  return HitTarget::kClient;
 }
 
 bool AppWindow::onCloseRequest() {

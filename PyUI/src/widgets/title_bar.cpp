@@ -47,6 +47,11 @@ TitleBar::TitleBar() {
   // 「后写覆盖先写」，而应用自己的注册发生在静态初始化期，顺序由链接顺序
   // 保证不了，所以这里在**运行期**再查一次：如果应用注册了同名布局，
   // inflate 拿到的就是应用那份。
+  // 标题栏整体就是窗口的拖动条。声明成角色而不是靠下面 onHitTest 的兜底，
+  // 是为了让「命中的是被替换过的 this」时角色信息不丢——hitTest 会把 band
+  // 上的命中改判给 TitleBar 自己，若这里没有角色，XML 里写的 role="caption"
+  // 就在这一步被丢掉了。
+  setWindowRole(WindowRole::kCaption);
   std::unique_ptr<ViewGroup> root = LayoutInflater::inflate(kDefaultLayout);
   if (root == nullptr) {
     // 布局没注册也不该让标题栏变成空条：至少保住三个按钮，窗口还能用。

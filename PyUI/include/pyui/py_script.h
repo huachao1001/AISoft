@@ -49,6 +49,8 @@ struct AppSpec {
   // 动画帧间隔（毫秒）；0 表示不跑帧定时器
   int frameInterval = 0;
   std::string theme = "light";
+  // 是否画内置标题栏。false 表示不画那条标题栏，内容铺满窗口；
+  // 窗口本身仍是自绘的（系统标题栏从不出现），要拖动就在布局里写 role="caption"。
   bool customTitleBar = true;
   bool resizable = true;
 

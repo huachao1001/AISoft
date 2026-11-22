@@ -95,6 +95,16 @@ class ViewRoot {
   // 命中测试：窗口坐标 → 最深的可交互视图
   View* hitTest(Point windowPoint) const;
 
+  // 按窗口角色触发一次点击（窗口坐标）。
+  //
+  // role 是**布局数据**，控件本身只是普通 Button，它不知道窗口存在。内置
+  // 标题栏由 TitleBar 自己接好三个动作，应用自定义布局时没人接——按钮画出来
+  // 却点不动。AppWindow 在装配阶段用 bindWindowRoles 给它们挂上 onClick，
+  // 这里则是「按坐标找角色并执行」的入口，供不经过按下/抬起配对的场景使用。
+  //
+  // 返回 true 表示命中的控件带窗口角色、点击已执行。
+  bool dispatchWindowRoleClick(Point windowPoint);
+
   // ── 计时 ──
   // 由宿主周期性调用（60 Hz 或按需），驱动需要动画的控件
   void dispatchTimer();

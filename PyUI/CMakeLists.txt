@@ -376,6 +376,7 @@ if(PYUI_BUILD_TESTS)
     tests/test_widget_progress_bar.cpp
     tests/test_widget_slider.cpp
     tests/test_widget_title_bar.cpp
+    tests/test_window_role.cpp
     tests/test_widget_no_native.cpp
     tests/test_layouts.cpp
     tests/test_surface.cpp

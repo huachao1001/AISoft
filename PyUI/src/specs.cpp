@@ -93,9 +93,14 @@ std::vector<AttributeSpec> buildCommon() {
   out.push_back(color("background", "setBackgroundColor"));
   // 窗口角色：把「这个控件在窗口里干什么」写成布局数据，平台判定只认它。
   // 没有它就只能靠约定 id 认最大化按钮，按钮一挪位置或换个 id 就失灵。
+  //
+  // 它是**能力声明**而不是外观属性：写了 caption 就能拖窗口，写了
+  // minimize/maximize/close 就真的会最小化/最大化/关闭，与放在哪个布局里、
+  // 有没有内置标题栏无关。内置 titlebar.xml 只是这些声明的一份现成范例。
   out.push_back(enumOf("role", "setWindowRole", "WindowRole",
                        {"none", "caption", "maximize", "minimize", "close", "title", "icon"},
-                       "标题栏/缩放带角色：拖动、最大化、最小化、关闭、标题、图标"));
+                       "窗口角色：caption 拖动，minimize/maximize/close 三个按钮，"
+                       "title/icon 是装饰"));
   return out;
 }
 

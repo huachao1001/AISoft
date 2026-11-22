@@ -261,8 +261,28 @@ struct FileAssociation {
 **2. 非客户区靠 `WM_NCCALCSIZE` / `WM_NCHITTEST` 让出来。**
 不是「去掉 `WS_CAPTION` 再自己画」——后者会丢掉贴边吸附、双击最大化、
 Snap Layouts、窗口投影与 Win11 圆角，还得自己实现多显示器 DPI 切换。
-让出非客户区只需在 `WM_NCCALCSIZE` 返回 0，并在 `WM_NCHITTEST` 里回
-`HTCAPTION` / `HTLEFT` / `HTMAXBUTTON`，系统把这些全部接过去。
+让出非客户区只需把客户区顶边抬到窗口顶端（`WM_NCCALCSIZE`），并在
+`WM_NCHITTEST` 里回 `HTCAPTION` / `HTLEFT` / `HTMAXBUTTON`，系统把这些
+全部接过去。
+
+**这几件事由谁决定，是这一节最容易走偏的地方**：命中结果来自**布局数据**，
+不是核心代码里的坐标或 id。控件用 XML 的 `role` 属性声明自己在窗口里干什么：
+
+| role | 命中 | 行为 |
+|---|---|---|
+| `caption` | `HTCAPTION` | 拖动窗口、双击最大化、贴边吸附 |
+| `maximize` | `HTMAXBUTTON` | 贴靠布局预览；点击由我们接管 |
+| `minimize` / `close` | `HTCLIENT` | 普通按钮，动作由我们接 |
+| `title` / `icon` | 装饰 | 命中穿透到父容器 |
+
+判定只看角色：把 `role="maximize"` 的按钮挪到标题栏最左边、换个 id，命中会
+跟着跑到新位置。核心代码里没有任何「0x7A06 是最大化按钮」这样的假设。
+
+**内置标题栏只是默认值，不是必需品。** 不写任何布局也有标题栏（由
+`assets/layouts/titlebar.xml` 编进 `pyui_core`）；想自己画，就把
+`customTitleBar` 关掉，在自己的布局里给控件写上同样的 role——拖动与三个
+按钮照旧可用。**关掉标题栏不等于退回 Windows 系统标题栏**：PyUI 的窗口
+在任何配置下都是自绘的，系统标题栏从不出现。
 
 最大化时必须把窗口按边框厚度缩回来：系统会把最大化窗口放大到超出工作区
 （让边框藏到屏幕外），不缩就裁掉一圈内容。

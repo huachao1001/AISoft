@@ -48,9 +48,16 @@ class AppWindow final : public WindowHost {
     bool minimizable = true;
     bool maximizable = true;
 
-    // 是否用自绘标题栏。false 时保留系统标题栏，所有内容都在客户区里，
-    // 适合对话框与工具窗；true 时窗口顶部由 TitleBar 绘制，拖动、双击最大化、
-    // 贴边吸附仍然交给系统（见 DESIGN.md 4.4 节第 2 条）。
+    // 标题栏。有三种形态，由这个开关决定：
+    //
+    //   true（默认） 用内置的自绘标题栏（TitleBar，从 titlebar.xml 装配）。
+    //   false        不画任何标题栏，内容铺满整个窗口。窗口边框、阴影、贴边
+    //                吸附仍由系统提供，但顶部没有拖动条——需要拖动的话，
+    //                在自己的布局里放一个 role="caption" 的 View。
+    //
+    // 注意这**不是**「换成 Windows 系统标题栏」：PyUI 的窗口始终是自绘的，
+    // 系统标题栏在任何配置下都不会出现。要做无边框外观就关掉它，
+    // 然后在自己的布局里声明 role，拖动与三个按钮依旧可用。
     bool customTitleBar = true;
 
     // 本可执行文件里的图标资源 id；0 表示由平台决定（通常取 exe 主图标）
@@ -151,6 +158,12 @@ class AppWindow final : public WindowHost {
   void syncBlinkTimer();
   // 退出事件循环；窗口在析构时统一销毁
   void quit(int exitCode);
+  // 把布局里 role="minimize/maximize/close" 的控件接到真实窗口动作上。
+  //
+  // 只补「没挂过 onClick」的那些：内置标题栏已经在构造函数里接好了，
+  // 应用自己写的 onClick 也不能被覆盖。这样「写 role 就有行为」与
+  // 「内置标题栏照旧」两条同时成立。
+  void bindWindowRoles(ViewGroup* root);
 
   Options options_;
   ViewRoot root_;

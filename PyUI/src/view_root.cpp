@@ -286,6 +286,23 @@ void ViewRoot::dispatchMouseUp(const MouseEvent& e) {
   setHotView(target);
 }
 
+bool ViewRoot::dispatchWindowRoleClick(Point windowPoint) {
+  View* target = hitTest(windowPoint);
+  if (target == nullptr) return false;
+
+  // 角色声明在控件本身上。装饰性子视图（图标、标题）标了透明，命中不会落到
+  // 它们；万一内部还有嵌套，往上找第一个带角色的祖先即可。
+  View* owner = target;
+  while (owner != nullptr && owner->windowRole() == WindowRole::kNone) owner = owner->parent();
+  if (owner == nullptr) return false;
+
+  // 只触发点击，不构造鼠标事件：控件自己的 onClick 不接受事件参数，
+  // 而上层如果需要点击位置，会在 MouseDown 那条正常路径里已经拿到。
+  owner->dispatchClick();
+  invalidate();
+  return true;
+}
+
 void ViewRoot::dispatchMouseMove(const MouseEvent& e) {
   // 按住鼠标期间指针被「捕获」：移动事件继续投给按下时命中的视图，
   // 而不是重新做命中测试。滑块拖出控件外再拉回来、在输入框外拖选文字、

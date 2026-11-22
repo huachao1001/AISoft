@@ -27,7 +27,10 @@
   平台」变成「换一份 XML」，而那正是需要避免的分叉。
 -->
 <FrameLayout id="0x7A00">
-  <LinearLayout id="0x7A01" orientation="horizontal" gravity="center"
+  <!-- band 声明 role="caption"：拖动窗口、双击最大化由**XML 属性**表达，
+       而不是靠「默认整条标题栏都能拖」的兜底。这样这份文件也是一份可照抄的
+       范例——用户想自己写标题栏时，把 role 照搬到自己的布局里即可。 -->
+  <LinearLayout id="0x7A01" role="caption" orientation="horizontal" gravity="center"
                 width="match" height="38">
     <!-- 应用图标：不参与命中，事件落到标题栏自己，拖动才对整条有效 -->
     <ImageView id="0x7A02" role="icon" width="11" height="match" align="start,center"/>

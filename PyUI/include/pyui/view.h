@@ -270,6 +270,9 @@ class View {
 
   // ── 事件：支持回调与派生覆盖两种风格 ──
   void setOnClick(Handler fn) { onClick_ = std::move(fn); }
+  // 是否已经挂过点击回调。窗口角色动作只在「没人接手」时补上，
+  // 否则会覆盖应用自己写的 onClick。
+  bool hasOnClick() const { return static_cast<bool>(onClick_); }
   void setOnMouseDown(MouseHandler fn) { onMouseDownFn_ = std::move(fn); }
   void setOnMouseUp(MouseHandler fn) { onMouseUpFn_ = std::move(fn); }
   void setOnMouseMove(MouseHandler fn) { onMouseMoveFn_ = std::move(fn); }

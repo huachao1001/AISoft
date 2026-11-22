@@ -178,7 +178,32 @@ CMake 侧对应变量 `-DPYUI_PYTHON=...`；不设时先看 `PYTHON`，再找
 根本不调用的菜单、托盘、文件关联——**缺符号只有在应用第一次链接时才暴露**，
 那时才发现已经太晚。
 
-## 编辑中文文件的硬性要求
+## 标题栏能力由 role 属性声明，不接受按 id 或坐标认控件
+
+窗口的拖动条与三个系统按钮，**身份来自 XML 的 `role` 属性**，不是 id，
+也不是坐标。核心代码里不允许出现「0x7A06 是最大化按钮」这类假设——那样应用
+把按钮挪个位置或换个 id 就全失灵。
+
+| role | 命中 | 行为 |
+|---|---|---|
+| `caption` | `HTCAPTION` | 拖动、双击最大化、贴边吸附 |
+| `maximize` | `HTMAXBUTTON` | 贴靠布局预览；点击由我们接管 |
+| `minimize` / `close` | `HTCLIENT` | 普通按钮，动作由 `AppWindow::bindWindowRoles` 挂上 |
+| `title` / `icon` | 装饰 | 命中穿透到父容器 |
+
+三条不能破坏的不变量：
+
+1. **判定只看角色**。`AppWindow::onHitTest` 从命中的视图往上找第一个带角色的
+   节点，与它叫什么 id、放在哪个容器无关。
+2. **隐藏内置标题栏不改变机制**。`customTitleBar = false` 只是「我们不画那条
+   标题栏」，窗口**仍然是自绘的**——系统标题栏在任何配置下都不出现。要拖动，
+   就在自己的布局里写 `role="caption"`。
+3. **内置标题栏只是默认值**。`assets/layouts/titlebar.xml` 编进 `pyui_core`，
+   应用放一份同名文件即可整体替换。它的 band 自己写了 `role="caption"`，
+   所以那份文件可以直接当范例照抄。
+
+改这块时跑 `tests/test_window_role.cpp`：它用一份**完全没有 id** 的自建布局
+（按钮还在左边）验证 role 依然生效。这是「位置无关」的唯一自动化证据。## 编辑中文文件的硬性要求
 
 **不要用 PowerShell 的 `-replace` / `Set-Content` / `Get-Content -Raw` 改含中文的
 文件**。它们会按控制台代码页（GBK）解码 UTF-8，把中文和相邻的引号一起弄坏，
