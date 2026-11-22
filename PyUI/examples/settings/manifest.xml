@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  设置面板的应用清单。
+
+  这个应用会运行期换主题，但初始主题仍然声明在这里——它是窗口创建
+  那一刻的状态，与「用户点了哪个按钮」是两件事。
+-->
+<manifest name="settings">
+  <activity name="SettingsActivity" main="true">
+    <window title="设置" layout="settings" width="560" height="640"
+            minWidth="460" minHeight="540" theme="light"/>
+  </activity>
+</manifest>

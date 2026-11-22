@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  计算器界面。
+
+  这个文件只描述「长什么样」：按钮在哪一格、字号多大、间距多少。
+  行为全在 calculator.py 里（哪个按钮做什么、键盘怎么响应、算式怎么算）。
+  两者的连接点只有 id：脚本里用 find("key7") 拿到这些控件。
+
+  为什么用 FrameLayout 做按钮网格：
+    网格的对齐是「行列等分」，用嵌套 LinearLayout 需要两层容器加 weight，
+    XML 会膨胀成 40 行且改一个按钮要数三次。FrameLayout 的 x/y 是绝对设计值，
+    四个按钮一行写清楚，改列宽只改四个数字。
+-->
+<LinearLayout orientation="vertical" padding="12" spacing="10">
+
+  <!-- 显示区：主结果显示算式，副行显示上一次输入的历史 -->
+  <FrameLayout id="screen" width="match" height="86" background="#FF1E2228">
+    <TextView id="history" text="" textAlign="right" width="match" height="20"
+              color="#FF8A929E" x="0" y="10"/>
+    <TextView id="display" text="0" textAlign="right" textSize="huge" bold="true"
+              width="match" height="40" color="#FFFFFFFF" x="0" y="34"/>
+  </FrameLayout>
+
+  <!-- 功能键：清空、退格、正负号、百分号 -->
+  <!--
+    退格用 ←（U+2190）而不是 ⌫（U+232B）：后者在 Windows 默认界面字体
+    （Segoe UI）里没有字形，界面上会显示成方框。脚本与布局里出现的符号
+    都必须是 UI 字体覆盖得到的码点——中文靠 GDI 的字体链接能自动回退，
+    但符号不在那条链上。
+  -->
+  <FrameLayout width="match" height="52">
+    <Button id="clear" text="AC" style="subtle" width="66" height="48" x="0" y="0"/>
+    <Button id="back" text="←" style="subtle" width="66" height="48" x="70" y="0"/>
+    <Button id="sign" text="±" style="subtle" width="66" height="48" x="140" y="0"/>
+    <Button id="percent" text="%" style="subtle" width="66" height="48" x="210" y="0"/>
+  </FrameLayout>
+
+  <!-- 数字与运算符：3 列数字 + 1 列运算符 -->
+  <FrameLayout width="match" height="52">
+    <Button id="key7" text="7" width="66" height="48" x="0" y="0"/>
+    <Button id="key8" text="8" width="66" height="48" x="70" y="0"/>
+    <Button id="key9" text="9" width="66" height="48" x="140" y="0"/>
+    <Button id="div" text="÷" style="primary" width="66" height="48" x="210" y="0"/>
+  </FrameLayout>
+
+  <FrameLayout width="match" height="52">
+    <Button id="key4" text="4" width="66" height="48" x="0" y="0"/>
+    <Button id="key5" text="5" width="66" height="48" x="70" y="0"/>
+    <Button id="key6" text="6" width="66" height="48" x="140" y="0"/>
+    <Button id="mul" text="×" style="primary" width="66" height="48" x="210" y="0"/>
+  </FrameLayout>
+
+  <FrameLayout width="match" height="52">
+    <Button id="key1" text="1" width="66" height="48" x="0" y="0"/>
+    <Button id="key2" text="2" width="66" height="48" x="70" y="0"/>
+    <Button id="key3" text="3" width="66" height="48" x="140" y="0"/>
+    <Button id="sub" text="−" style="primary" width="66" height="48" x="210" y="0"/>
+  </FrameLayout>
+
+  <FrameLayout width="match" height="52">
+    <Button id="key0" text="0" width="136" height="48" x="0" y="0"/>
+    <Button id="dot" text="." width="66" height="48" x="140" y="0"/>
+    <Button id="add" text="+" style="primary" width="66" height="48" x="210" y="0"/>
+  </FrameLayout>
+
+  <Button id="equals" text="=" style="primary" width="match" height="48"/>
+
+</LinearLayout>

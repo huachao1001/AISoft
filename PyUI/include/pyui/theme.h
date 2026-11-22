@@ -1,0 +1,166 @@
+// 界面配色与设计尺寸（96 DPI 设计值）
+//
+// 控件绘制时向所在视图树取当前主题，所以换主题只改一棵树的 theme，
+// 不必重建控件，也不必让宿主跟着改每一处颜色。
+#pragma once
+
+#include "pyui/types.h"
+
+namespace pyui {
+
+struct Theme {
+  // 标题
+  const char* name = "light";
+
+  // ── 底色 ──
+  Color body = makeColor(0xf3, 0xf4, 0xf6);
+  Color tool = makeColor(0xf7, 0xf8, 0xfa);
+  Color pane = makeColor(0xff, 0xff, 0xff);
+
+  // ── 分隔线 ──
+  Color line = makeColor(0xdd, 0xdd, 0xdd);
+  Color lineSoft = makeColor(0xf3, 0xf4, 0xf6);
+  Color lineHead = makeColor(0xe5, 0xe7, 0xeb);
+  Color headerBg = makeColor(0xf9, 0xfa, 0xfb);
+
+  // ── 文字 ──
+  Color text = makeColor(0x33, 0x33, 0x33);
+  Color textHead = makeColor(0x55, 0x55, 0x55);
+  Color textMuted = makeColor(0x66, 0x66, 0x66);
+  Color textFaint = makeColor(0xaa, 0xaa, 0xaa);
+  Color ink = makeColor(0x44, 0x44, 0x44);
+  // 禁用态文字：比 textFaint 更淡，但要仍可读
+  Color textDisabled = makeColor(0xbb, 0xbb, 0xbb);
+
+  // ── 交互态 ──
+  Color link = makeColor(0x25, 0x63, 0xeb);
+  Color linkHover = makeColor(0xe8, 0xf0, 0xfe);
+  Color currentBg = makeColor(0xef, 0xf6, 0xff);
+  Color selBg = makeColor(0xdb, 0xea, 0xfe);
+  Color rowHover = makeColor(0xf7, 0xf8, 0xfa);
+  Color hover = makeColor(0xf3, 0xf4, 0xf6);
+  Color activeInk = makeColor(0x1d, 0x4e, 0xd8);
+
+  // ── 按钮 ──
+  Color btnBg = makeColor(0xff, 0xff, 0xff);
+  Color btnHoverBg = makeColor(0xf0, 0xf4, 0xf9);
+  Color btnDownBg = makeColor(0xe4, 0xeb, 0xf3);
+  Color btnDisBg = makeColor(0xf8, 0xf8, 0xf8);
+
+  // ── 输入类控件 ──
+  Color inputBg = makeColor(0xff, 0xff, 0xff);
+  Color inputFocus = makeColor(0x60, 0xa5, 0xfa);
+  // 输入框、下拉框、单选/复选共用同一支描边。各控件仍可覆盖，
+  // 但默认外观要对齐，否则同一排控件会深浅不一。
+  Color controlBorder = makeColor(0xd0, 0xd5, 0xdd);
+
+  // ── 强调色 ──
+  // 主行动按钮、输入光标、聚焦描边共用。改这一处整体换色，
+  // 不要让各控件各自挑一个相近的蓝，否则一屏会出现好几种强调色。
+  Color accent = makeColor(0x25, 0x63, 0xeb);
+  Color accentHover = makeColor(0x1d, 0x4e, 0xd8);
+  Color accentDown = makeColor(0x1a, 0x43, 0xbd);
+  Color accentInk = makeColor(0xff, 0xff, 0xff);
+
+  // ── 进度与滑块 ──
+  Color trackBg = makeColor(0xe4, 0xe7, 0xec);
+  Color trackFill = makeColor(0x25, 0x63, 0xeb);
+  Color thumb = makeColor(0xff, 0xff, 0xff);
+  Color thumbBorder = makeColor(0xc0, 0xc6, 0xd0);
+
+  // ── 标题栏 ──
+  Color titleBg = makeColor(0xff, 0xff, 0xff);
+  Color titleBgInactive = makeColor(0xff, 0xff, 0xff);
+  Color titleText = makeColor(0x1a, 0x1a, 0x1a);
+  Color titleTextInactive = makeColor(0x99, 0x99, 0x99);
+  Color titleButtonHover = makeColor(0xe8, 0xe8, 0xe8);
+  Color titleButtonDown = makeColor(0xd8, 0xd8, 0xd8);
+  Color closeHover = makeColor(0xe8, 0x11, 0x23);
+  Color closeDown = makeColor(0xc5, 0x0e, 0x1d);
+  Color closeInk = makeColor(0xff, 0xff, 0xff);
+  Color titleLine = makeColor(0xe5, 0xe5, 0xe5);
+
+  // ── 图标 ──
+  Color iconMuted = makeColor(0x6b, 0x72, 0x80);
+};
+
+inline constexpr Theme kLightTheme = Theme{};
+
+inline constexpr Theme kDarkTheme = [] {
+  Theme t;
+  t.name = "dark";
+  t.body = makeColor(0x1e, 0x1e, 0x1e);
+  t.tool = makeColor(0x25, 0x25, 0x26);
+  t.pane = makeColor(0x25, 0x25, 0x26);
+
+  t.line = makeColor(0x3c, 0x3c, 0x3c);
+  t.lineSoft = makeColor(0x2d, 0x2d, 0x2d);
+  t.lineHead = makeColor(0x3c, 0x3c, 0x3c);
+  t.headerBg = makeColor(0x2d, 0x2d, 0x2d);
+
+  t.text = makeColor(0xd4, 0xd4, 0xd4);
+  t.textHead = makeColor(0xb0, 0xb0, 0xb0);
+  t.textMuted = makeColor(0x9a, 0x9a, 0x9a);
+  t.textFaint = makeColor(0x6a, 0x6a, 0x6a);
+  t.ink = makeColor(0xe0, 0xe0, 0xe0);
+  t.textDisabled = makeColor(0x5a, 0x5a, 0x5a);
+
+  t.link = makeColor(0x4a, 0x9e, 0xff);
+  t.linkHover = makeColor(0x2a, 0x3f, 0x5f);
+  t.currentBg = makeColor(0x2a, 0x3f, 0x5f);
+  t.selBg = makeColor(0x2a, 0x4a, 0x6f);
+  t.rowHover = makeColor(0x2a, 0x2d, 0x2e);
+  t.hover = makeColor(0x2a, 0x2d, 0x2e);
+  t.activeInk = makeColor(0x7a, 0xb8, 0xff);
+
+  t.btnBg = makeColor(0x2d, 0x2d, 0x2d);
+  t.btnHoverBg = makeColor(0x33, 0x38, 0x3d);
+  t.btnDownBg = makeColor(0x3f, 0x46, 0x50);
+  t.btnDisBg = makeColor(0x2a, 0x2a, 0x2a);
+
+  t.inputBg = makeColor(0x1e, 0x1e, 0x1e);
+  t.inputFocus = makeColor(0x4a, 0x9e, 0xff);
+  t.controlBorder = makeColor(0x4a, 0x4d, 0x52);
+
+  // 深色下强调色要提亮，否则在 #252526 上几乎看不出饱和
+  t.accent = makeColor(0x2f, 0x6f, 0xe8);
+  t.accentHover = makeColor(0x3a, 0x7d, 0xf5);
+  t.accentDown = makeColor(0x25, 0x5b, 0xc4);
+  t.accentInk = makeColor(0xff, 0xff, 0xff);
+
+  t.trackBg = makeColor(0x3a, 0x3d, 0x42);
+  t.trackFill = makeColor(0x2f, 0x6f, 0xe8);
+  t.thumb = makeColor(0xd0, 0xd0, 0xd0);
+  t.thumbBorder = makeColor(0x55, 0x58, 0x5e);
+
+  t.titleBg = makeColor(0x20, 0x20, 0x20);
+  t.titleBgInactive = makeColor(0x20, 0x20, 0x20);
+  t.titleText = makeColor(0xd4, 0xd4, 0xd4);
+  t.titleTextInactive = makeColor(0x80, 0x80, 0x80);
+  t.titleButtonHover = makeColor(0x33, 0x33, 0x33);
+  t.titleButtonDown = makeColor(0x40, 0x40, 0x40);
+  t.closeHover = makeColor(0xe8, 0x11, 0x23);
+  t.closeDown = makeColor(0xc5, 0x0e, 0x1d);
+  t.closeInk = makeColor(0xff, 0xff, 0xff);
+  t.titleLine = makeColor(0x3c, 0x3c, 0x3c);
+
+  t.iconMuted = makeColor(0x8a, 0x91, 0x9e);
+  return t;
+}();
+
+inline const Theme& defaultTheme() { return kLightTheme; }
+
+// 按名字取内置主题；找不到返回浅色
+const Theme* themeByName(const char* name);
+
+// ── 设计尺寸（96 DPI）──
+constexpr int kSizeRowH = 44;
+constexpr int kSizeHeaderH = 40;
+constexpr int kSizeControlH = 36;   // 输入框、按钮的标准高度
+constexpr int kSizeCheckBox = 18;   // 复选框边长
+constexpr int kSizeTrackH = 6;      // 进度条、滑块轨道厚度
+constexpr int kSizeThumb = 18;      // 滑块直径
+constexpr int kRadiusButton = 6;
+constexpr int kRadiusControl = 4;
+
+}  // namespace pyui

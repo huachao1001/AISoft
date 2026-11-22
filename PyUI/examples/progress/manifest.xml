@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  进度演示的应用清单。
+
+  frameInterval 是帧定时器的间隔（毫秒）。16ms ≈ 60fps，再小也没用：
+  宿主的事件循环与光标闪烁共用同一个定时器，真正能跑多快取决于平台。
+  它不是界面行为的一部分，所以放在清单里而不是脚本里。
+-->
+<manifest name="progress">
+  <activity name="ProgressActivity" main="true">
+    <window title="进度演示" layout="progress" width="560" height="420"
+            minWidth="420" minHeight="340" frameInterval="16"/>
+  </activity>
+</manifest>

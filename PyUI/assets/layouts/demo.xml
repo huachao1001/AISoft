@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  端到端验证用布局：把它编译进来的测试（tests/test_layouts.cpp）逐项断言
+  下面每个属性都真的落到了控件上，所以这里刻意覆盖到每一类属性——
+  文本样式、双轴对齐、按钮样式与图标、选中态、数值区间、密码掩码。
+
+  改动这里之前先看一眼 test_layouts.cpp：那些断言不是「顺便测一下」，
+  而是「XML → C++ → 控件树」这条链路的唯一验收标准。
+-->
+<LinearLayout orientation="vertical" spacing="8" padding="12">
+  <TextView id="title" text="PyUI 布局样例" textSize="huge" bold="true" color="#FF222222"
+            width="match" height="wrap"/>
+
+  <FrameLayout id="head" background="#FFFFFFFF" width="match" height="36">
+    <TextView id="crumb" text="根目录 / 示例" textAlign="left"
+              width="match" height="wrap" align="start,center"/>
+  </FrameLayout>
+
+  <LinearLayout id="row" orientation="horizontal" spacing="6" paddingHorizontal="0"
+                paddingVertical="2" width="match" height="wrap">
+    <Button id="ok" text="确定" style="primary" iconSize="16" radius="6"
+            width="80" height="match"/>
+    <Button id="more" text="更多" style="outline" icon="chevronDown" iconPlacement="left"
+            width="80" height="match"/>
+    <Button id="stretch" text="撑满" weight="1"/>
+  </LinearLayout>
+
+  <CheckBox id="optChecksum" text="校验文件" checked="true" marginTop="4"/>
+  <CheckBox id="optPartial" text="部分选" tristate="true"/>
+
+  <RadioButton id="optFast" text="快速" checked="true"/>
+  <RadioButton id="optBest" text="最佳压缩"/>
+
+  <TextField id="target" placeholder="输出到…" width="match" height="32"/>
+  <TextField id="secret" password="true" placeholder="密码"/>
+
+  <ProgressBar id="bar" progress="0.35" showPercent="true" thickness="6"
+               width="match" height="wrap"/>
+  <ProgressBar id="barBusy" indeterminate="true" width="match" height="wrap"/>
+
+  <Slider id="level" min="1" max="9" value="5" step="1" width="match" height="wrap"/>
+
+  <LinearLayout id="foot" orientation="horizontal" spacing="8" gravity="end"
+                paddingHorizontal="0" paddingVertical="6">
+    <Button id="cancel" text="取消" style="subtle" width="72" height="match"/>
+    <Button id="apply" text="应用" style="primary" width="72" height="match"/>
+  </LinearLayout>
+</LinearLayout>

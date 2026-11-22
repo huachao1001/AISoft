@@ -1,0 +1,7 @@
+# 构建期工具的字节码缓存（pyuic 是 CPython 脚本，只有构建期会用到）
+__pycache__/
+*.pyc
+
+# 开发期临时产物
+*.png
+*.exe

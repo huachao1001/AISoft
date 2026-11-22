@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  进度演示界面。
+
+  两件事值得看：
+    1. 上面是「确定进度」——数值由 on_frame 随时间推进；
+    2. 下面是「不确定进度」——同样是动画，但表达的是「不知道还要多久」。
+  两者用的是同一个 ProgressBar 控件，差别只在 indeterminate。
+
+  拖放区是一个普通的 View，加了一圈虚线式提示（用 background 与 padding
+  做出来的视觉暗示）。真正的拖放由宿主转发 on_file_drop，控件本身不知情。
+-->
+<LinearLayout orientation="vertical" padding="18" spacing="14">
+
+  <TextView id="heading" text="文件处理" textSize="large" bold="true"
+            width="match" height="30" color="#FF1E2228"/>
+
+  <TextView id="hint" text="把文件拖进下面的区域试试" width="match" height="22"
+            color="#FF5A6472"/>
+
+  <!-- 拖放区 -->
+  <FrameLayout id="drop" width="match" height="76" background="#FFF1F4F8">
+    <TextView id="drop_text" text="拖放文件到这里" width="match" height="match"
+              textAlign="center" color="#FF8A929E"/>
+  </FrameLayout>
+
+  <!-- 确定进度 -->
+  <TextView id="known_label" text="确定进度" width="match" height="22" color="#FF5A6472"/>
+  <ProgressBar id="known" progress="0" showPercent="true" width="match" height="24"/>
+
+  <!-- 不确定进度 -->
+  <TextView id="busy_label" text="不确定进度" width="match" height="22" color="#FF5A6472"/>
+  <ProgressBar id="busy" indeterminate="true" width="match" height="24"/>
+
+  <!-- 状态与操作 -->
+  <LinearLayout orientation="horizontal" width="match" height="40" spacing="8">
+    <TextView id="status" text="就绪" width="match" height="match" weight="1"
+              textAlign="left" color="#FF5A6472"/>
+    <Button id="start" text="开始" style="primary" width="100" height="36"/>
+    <Button id="reset" text="重置" style="subtle" width="100" height="36"/>
+  </LinearLayout>
+
+</LinearLayout>

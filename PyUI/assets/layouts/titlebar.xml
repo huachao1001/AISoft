@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  默认标题栏。
+
+  这份文件是**内置默认实现**：它被编译进 pyui_core，任何应用在没提供自己的
+  assets/layouts/titlebar.xml 时用的就是它。结构与 AiUI 的 TitleBar 逐节点
+  对齐，id 沿用 AiUI 的 0x7A00–0x7A08，所以同一份布局在两个库里指向同一个
+  部件。
+
+    TitleBar (FrameLayout)
+    └── band : LinearLayout(水平)     贴顶，高度 = 逻辑高度
+        ├── ImageView    应用图标           0x7A02
+        ├── TextView     标题               0x7A03
+        ├── View         撑开占位（weight）
+        └── LinearLayout 三个系统按钮       0x7A04
+            ├── Button   最小化             0x7A05
+            ├── Button   最大化             0x7A06
+            └── Button   关闭               0x7A07
+
+  为什么按钮的顺序是「最小化、最大化、关闭」而不是别的：这是 Windows 的
+  既有习惯，也是三个按钮里唯一不会让肌肉记忆出错的一种。macOS 把红绿灯放
+  左边，靠的是 TitleBar::setAppearance 在运行期整体翻转按钮条的摆放，
+  而不是另写一份 XML——结构与顺序在所有平台一致，只有位置和尺寸不同。
+
+  注意：这份 XML 只描述**结构**。高度、内边距、配色、字号、图标尺寸全部
+  来自 TitleBarAppearance（平台度量 + 主题）。把数字写进 XML 会让「换一个
+  平台」变成「换一份 XML」，而那正是需要避免的分叉。
+-->
+<FrameLayout id="0x7A00">
+  <LinearLayout id="0x7A01" orientation="horizontal" gravity="center"
+                width="match" height="38">
+    <!-- 应用图标：不参与命中，事件落到标题栏自己，拖动才对整条有效 -->
+    <ImageView id="0x7A02" role="icon" width="11" height="match" align="start,center"/>
+
+    <!-- 标题：按内容自然排，超宽时尾部省略（middleEllipsis 关掉，
+         窗口标题尾部省略更易辨认） -->
+    <TextView id="0x7A03" role="title" textSize="normal" textAlign="left" ellipsis="true"
+              width="wrap" height="match" align="start,center"/>
+
+    <!-- 撑开占位：把右侧按钮条推到窗口右缘 -->
+    <View id="0x7A08" weight="1" width="wrap" height="wrap"/>
+
+    <LinearLayout id="0x7A04" orientation="horizontal" gravity="center"
+                  width="wrap" height="match">
+      <Button id="0x7A05" role="minimize" style="subtle" icon="minimize" iconPlacement="only"
+              iconSize="11" padX="0" radius="0" width="46" height="38"/>
+      <Button id="0x7A06" role="maximize" style="subtle" icon="maximize" iconPlacement="only"
+              iconSize="11" padX="0" radius="0" width="46" height="38"/>
+      <Button id="0x7A07" role="close" style="subtle" icon="close" iconPlacement="only"
+              iconSize="11" padX="0" radius="0" width="46" height="38"/>
+    </LinearLayout>
+  </LinearLayout>
+</FrameLayout>

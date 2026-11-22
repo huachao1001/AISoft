@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  笔记编辑器界面。
+
+  上下两段：上面是标题输入，中间是正文，底部是状态栏。
+  正文用 TextField 而不是多行文本区——本库目前只有单行输入框，
+  但把高度撑到 fill 之后它仍然能输入和滚动，足够做「短笔记」这个示例。
+  真正需要富文本编辑时应该新增控件，而不是在这里塞 hack。
+-->
+<LinearLayout orientation="vertical" padding="16" spacing="10">
+
+  <!-- 标题行 -->
+  <LinearLayout orientation="horizontal" width="match" height="34" spacing="8">
+    <TextView id="title_label" text="标题" width="48" height="match"
+              textAlign="center" color="#FF5A6472"/>
+    <TextField id="title" text="" placeholder="给这条笔记起个名字"
+               width="match" height="32" weight="1"/>
+  </LinearLayout>
+
+  <!-- 正文 -->
+  <TextView id="body_label" text="内容" width="match" height="22" color="#FF5A6472"/>
+  <TextField id="body" text="" placeholder="在这里写点什么……"
+             width="match" height="match" weight="1"/>
+
+  <!-- 状态栏：保存状态 + 字数 -->
+  <LinearLayout orientation="horizontal" width="match" height="26" spacing="8">
+    <TextView id="status" text="未修改" width="match" height="match" weight="1"
+              textAlign="left" color="#FF5A6472"/>
+    <TextView id="count" text="0 字" width="88" height="match"
+              textAlign="right" color="#FF5A6472"/>
+  </LinearLayout>
+
+  <!-- 操作按钮 -->
+  <LinearLayout orientation="horizontal" width="match" height="40" spacing="8">
+    <Button id="open" text="打开…" style="subtle" width="96" height="38"/>
+    <Button id="new" text="新建" style="subtle" width="96" height="38"/>
+    <View width="match" height="match" weight="1"/>
+    <Button id="save" text="保存" style="primary" width="110" height="38"/>
+  </LinearLayout>
+
+</LinearLayout>

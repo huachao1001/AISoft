@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  笔记的应用清单。
+
+  文件关联挂在 <activity> 上而不是整个清单上：双击 .pynote 时，最终要回答的
+  是「交给哪个界面打开」，不是「程序是什么」。这与 Android 把 intent-filter
+  写在 activity 里同一个理由。
+
+  清单与脚本里写同一个字段会在构建期报错（每个字段只有一个来源）。
+-->
+<manifest name="notes">
+  <activity name="NotesActivity" main="true"
+            progId="PyUI.Note" description="PyUI 笔记">
+    <window title="笔记" layout="notes" width="640" height="520"
+            minWidth="480" minHeight="360"/>
+
+    <!-- 扩展名不带点：双击 .pynote 文件交给本程序打开。 -->
+    <extension>pynote</extension>
+  </activity>
+
+  <tray tooltip="PyUI 笔记"/>
+</manifest>

@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  设置面板界面。
+
+  这一份 XML 的目的不是好看，而是「一屏看全所有控件」：
+  TextView / Button / CheckBox / RadioButton / TextField / ProgressBar /
+  Slider，加上 LinearLayout / FrameLayout 两种容器与 View 占位。
+
+  为什么用 LinearLayout 纵向堆叠而不是 FrameLayout 绝对定位：
+  设置页的行高由控件决定且要随主题字号变，绝对坐标每加一行都要重算
+  下面所有行的 y。这里的对齐只需要 horizontal 容器的 weight，
+  排版意图在 XML 里就写完了。
+
+  注意 theme_light / theme_dark 两个 RadioButton：单选按钮**不自己管互斥**
+  （见 radio_button.h），所以脚本里换主题时手动同步这两个的 checked。
+  本库还没有「按 id 把两个控件认成一组」的语法，硬塞进 XML 会造成
+  「并排两组选项被合并成一组」这个更糟的问题。
+-->
+<LinearLayout orientation="vertical" padding="20" spacing="14">
+
+  <TextView id="heading" text="首选项" textSize="large" bold="true"
+            width="match" height="32" color="#FF1E2228"/>
+  <TextView id="caption" text="改动即时生效，点“保存”写入配置文件"
+            width="match" height="22" color="#FF5A6472"/>
+
+  <!-- ── 主题：两个单选按钮 ── -->
+  <TextView id="theme_label" text="外观" width="match" height="22" color="#FF5A6472"/>
+  <LinearLayout orientation="horizontal" width="match" height="30" spacing="16">
+    <RadioButton id="theme_light" text="浅色" checked="true" width="120" height="30"/>
+    <RadioButton id="theme_dark" text="深色" width="120" height="30"/>
+  </LinearLayout>
+
+  <!-- ── 昵称：单行输入 ── -->
+  <TextView id="nickname_label" text="昵称" width="match" height="22" color="#FF5A6472"/>
+  <TextField id="nickname" text="" placeholder="留空则不计入完整度"
+             width="match" height="34"/>
+
+  <!-- ── 音量：滑块 + 当前值 ── -->
+  <LinearLayout orientation="horizontal" width="match" height="22">
+    <TextView id="volume_label" text="音量" width="match" height="match" weight="1"
+              color="#FF5A6472"/>
+    <TextView id="volume_value" text="60%" width="64" height="match"
+              textAlign="right" color="#FF5A6472"/>
+  </LinearLayout>
+  <Slider id="volume" min="0" max="100" value="60" step="1" width="match" height="28"/>
+
+  <!-- ── 两个复选框 ── -->
+  <CheckBox id="autostart" text="开机自动启动" width="match" height="30"/>
+  <CheckBox id="compact" text="紧凑模式" checked="true" width="match" height="30"/>
+
+  <!-- ── 完整度：由其它项算出来的只读指示 ── -->
+  <LinearLayout orientation="horizontal" width="match" height="22">
+    <TextView id="ready_label" text="配置完整度" width="match" height="match" weight="1"
+              color="#FF5A6472"/>
+    <TextView id="ready_value" text="0%" width="64" height="match"
+              textAlign="right" color="#FF5A6472"/>
+  </LinearLayout>
+  <ProgressBar id="ready" progress="0" width="match" height="20"/>
+
+  <!-- 把状态栏推到贴近按钮的位置：设置项少的时候不留大片空白 -->
+  <View width="match" height="match" weight="1"/>
+
+  <!-- ── 状态与操作 ── -->
+  <TextView id="status" text="就绪" width="match" height="24"
+            textAlign="left" color="#FF5A6472"/>
+  <LinearLayout orientation="horizontal" width="match" height="38" spacing="8">
+    <Button id="reset" text="恢复默认" style="subtle" width="110" height="38"/>
+    <View width="match" height="match" weight="1"/>
+    <Button id="save" text="保存" style="primary" width="110" height="38"/>
+  </LinearLayout>
+
+</LinearLayout>

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  计算器的应用清单。
+
+  结构照 AndroidManifest 的分工：<activity> 是入口单位，窗口描述挂在它下面。
+  为什么清单要写 Activity 名字：一个 exe 可能有多个脚本（扩展包里的库），
+  「谁是这个程序的入口界面」必须有唯一声明。名字就是脚本里那个类名，
+  构建期与脚本对不上会直接报错。
+
+  清单与脚本里写同一个字段会在构建期报错（每个字段只有一个来源）。
+
+  尺寸是 96 DPI 设计值。窗口在 125% / 150% 缩放下会按比例放大。
+  最小尺寸留出「少一行数字键」的余量，再小就放不下按钮了。
+-->
+<manifest name="calculator">
+  <activity name="CalculatorActivity" main="true">
+    <window title="计算器" layout="calculator" width="316" height="512"
+            minWidth="316" minHeight="468"
+            customTitleBar="true" resizable="false"/>
+  </activity>
+</manifest>
