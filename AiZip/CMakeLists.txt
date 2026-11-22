@@ -250,6 +250,11 @@ target_compile_definitions(test_arc PRIVATE
   UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS
 )
 target_compile_options(test_arc PRIVATE /O2 /utf-8 /W4 /permissive-)
-target_link_options(test_arc PRIVATE /OPT:REF /OPT:ICF ${Z7_LINK_OPTIONS})
+# 也挂同一份清单：活动代码页、DPI 感知这些进程级设置会影响内核怎么解
+# 文件名编码，回归工具必须和应用跑在同一套设置下才能测出差异。
+target_link_options(test_arc PRIVATE
+  /OPT:REF /OPT:ICF
+  "/MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/src/res/aizip.manifest"
+  ${Z7_LINK_OPTIONS})
 target_link_libraries(test_arc PRIVATE 7zstatic comctl32 shell32 shlwapi ole32 oleaut32 uuid
                                         uxtheme msimg32 dwmapi)

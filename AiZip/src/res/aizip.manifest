@@ -13,7 +13,12 @@
     <windowsSettings>
       <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
       <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">permonitorv2</dpiAwareness>
-      <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+      <!-- 这里不要声明 activeCodePage=UTF-8。
+           它会把整个进程的 ANSI/OEM 代码页改成 65001，而 7-Zip 解码 ZIP 里
+           没有 UTF-8 标志位的文件名时用的正是 CP_OEMCP：GBK 名字会被整串
+           当成 UTF-8 解，中文全是乱码。压缩时也会跟着改写出 UTF-8 名字，
+           老版本 WinRAR / 资源管理器又读不了。保持系统默认代码页即可；
+           需要不依赖进程代码页的地方由 archive 层显式指定。 -->
     </windowsSettings>
   </application>
   <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
