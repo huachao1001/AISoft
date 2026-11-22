@@ -6,6 +6,8 @@
 #include "test_framework.h"
 
 #include "AiUI/font.h"
+#include "AiUI/layouts/linear_layout.h"
+#include "AiUI/view_root.h"
 #include "AiUI/widgets/slider.h"
 
 namespace {
@@ -145,6 +147,78 @@ AIUI_TEST(slider_keyboard_nudges_value) {
   slider.setValue(1.0f);
   slider.onKeyDown(Key::kRight, none);
   AIUI_CHECK(slider.value() == 1.0f);
+}
+
+// 拖动过程中不换光标：滑块只有 28 高，指针在抓手/握拳/箭头间跳反而干扰，
+// 拖出边界后残留的握拳形状还会让人以为卡住了
+AIUI_TEST(slider_keeps_arrow_cursor_while_dragging) {
+  SliderEnv env;
+  auto root = std::make_unique<LinearLayout>(Orientation::kVertical);
+  auto* slider = new Slider();
+  root->addView(slider, LayoutParams{}.withSize(200, 28));
+  AIUI_CHECK(root->create(nullptr, Rect{0, 0, 400, 300}));
+
+  ViewRoot* vr = root->root();
+  FakeWindow* window = env.fake.platform().lastWindow();
+  AIUI_CHECK(window != nullptr);
+
+  vr->onMouseMove(leftAt(40, 14));
+  AIUI_CHECK(window->cursor() == CursorShape::kArrow);
+  vr->onMouseDown(leftAt(40, 14));
+  AIUI_CHECK(window->cursor() == CursorShape::kArrow);
+  vr->onMouseMove(leftAt(160, 200));  // 拖到控件外
+  AIUI_CHECK(window->cursor() == CursorShape::kArrow);
+  vr->onMouseUp(leftAt(160, 200));
+  AIUI_CHECK(window->cursor() == CursorShape::kArrow);
+}
+
+// 拖出控件外仍要跟手：捕获生效时移动事件不该因为越界被丢掉
+AIUI_TEST(slider_drag_continues_outside_its_bounds) {
+  SliderEnv env;
+  auto root = std::make_unique<LinearLayout>(Orientation::kVertical);
+  auto* slider = new Slider();
+  root->addView(slider, LayoutParams{}.withSize(200, 28));
+  AIUI_CHECK(root->create(nullptr, Rect{0, 0, 400, 300}));
+
+  ViewRoot* vr = root->root();
+  vr->onMouseDown(leftAt(40, 14));
+  vr->onMouseMove(leftAt(180, 260));  // 纵向早已离开控件
+  const float dragged = slider->value();
+  AIUI_CHECK(dragged > 0.85f);
+
+  vr->onMouseMove(leftAt(20, 260));
+  AIUI_CHECK(slider->value() < 0.1f);
+  vr->onMouseUp(leftAt(20, 260));
+}
+
+// 拖到控件外松手：悬停环必须跟着落点关掉，否则拇指会一直亮着，
+// 看着像还停在拖动状态；再移回来还要能重新亮起
+AIUI_TEST(slider_release_outside_clears_hover) {
+  SliderEnv env;
+  TestSlider slider;
+  slider.layout(Rect{0, 0, 200, 28});
+
+  const Color hoverRing = slider.theme().accentHover;
+  auto hasHoverRing = [&] {
+    RecordingBackend backend;
+    Painter painter(backend);
+    slider.paintForTest(painter, slider.clientRect());
+    for (const FillCall& fill : backend.fills()) {
+      if (fill.color == hoverRing) return true;
+    }
+    return false;
+  };
+
+  slider.onMouseMove(leftAt(100));
+  AIUI_CHECK(hasHoverRing());
+
+  slider.onMouseDown(leftAt(100));
+  slider.onMouseMove(leftAt(160, 200));
+  slider.onMouseUp(leftAt(160, 200));
+  AIUI_CHECK(!hasHoverRing());
+
+  slider.onMouseMove(leftAt(100));
+  AIUI_CHECK(hasHoverRing());
 }
 
 // 绘制不能越界：滑块圆心在两端时整个圆仍落在控件矩形内

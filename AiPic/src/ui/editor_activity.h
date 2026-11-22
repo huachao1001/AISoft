@@ -60,9 +60,11 @@ class EditorActivity : public AiUI::Activity {
   void rebuildPanel();
   void buildCropPanel();
   void buildResizePanel();
-  // 加一行「标题 + 滑块 + 数值」，返回滑块供调用方接回调
+  // 加一行「标题 + 滑块 + 数值」，返回滑块供调用方接回调。
+  // outCaption 拿回标题控件，拖动时要往里写新数值
   AiUI::Slider* addSliderRow(const std::wstring& label, float value,
-                             const std::wstring& valueText, AiUI::LinearLayout* body);
+                             const std::wstring& valueText, AiUI::LinearLayout* body,
+                             AiUI::TextView** outCaption = nullptr);
   AiUI::TextView* addLabel(const std::wstring& text, bool muted,
                            AiUI::LinearLayout* body);
 
@@ -70,6 +72,9 @@ class EditorActivity : public AiUI::Activity {
   void refreshStage();
   void refreshPreview();
   void refreshActions();
+  // 面板里那两行「结果：W × H」的文字，拖动中每帧重算
+  void refreshCropResult();
+  void refreshResizeResult();
   // 把像素交给 PhotoView（内部管理 Image 句柄的释放）
   void presentPixels(const AiUI::RgbaImage& pixels);
 
@@ -104,12 +109,12 @@ class EditorActivity : public AiUI::Activity {
   AiUI::Button* btnApply_ = nullptr;
   AiUI::Button* btnReset_ = nullptr;
   AiUI::Button* btnHomeOpen_ = nullptr;
+  // 结果文字：拖动滑块时直接改它，重建面板才换新控件
+  AiUI::TextView* cropResult_ = nullptr;
+  AiUI::TextView* resizeResult_ = nullptr;
 
   // 工具标签：与 Tool 一一对应
   std::vector<AiUI::Button*> tabs_;
-
-  // 当前交给 PhotoView 的位图句柄：换预览时必须先释放旧的
-  AiUI::Image previewImage_;
 };
 
 }  // namespace ui

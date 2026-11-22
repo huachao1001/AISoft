@@ -563,6 +563,14 @@ void ViewRoot::onMouseUp(const MouseEvent& e) {
     capture_ = nullptr;
     if (window_) window_->captureMouse(false);
   }
+
+  // 拖动期间事件全给捕获者，悬停与光标一直没更新。松手时鼠标可能已经
+  // 拖到别处（甚至拖出控件外），这里按落点重算：否则图案会停在上一个控件的
+  // 拖动态，看着像卡住了。
+  if (overlay_ && overlay_->onOverlayMouseMove(e.position)) return;
+  View* under = hitTest(e.position);
+  setHovered(under, &e);
+  if (window_) window_->setCursorShape(under ? under->cursorShape() : CursorShape::kArrow);
 }
 
 void ViewRoot::onMouseMove(const MouseEvent& e) {

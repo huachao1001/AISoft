@@ -93,7 +93,8 @@ bool Slider::onMouseDown(const MouseEvent& e) {
   if (!isEnabled() || e.button != MouseButton::kLeft) return false;
   dragging_ = true;
   captureMouse();
-  setCursor(CursorShape::kGrabbing);
+  // 不换光标：控件只有 28 高，指针在抓手、握拳、箭头之间来回跳反而干扰，
+  // 拖出边界后残留的握拳形状还会让人以为卡住了
   // 按下即定位到点击处：用户点轨道中间某点，期待直接跳过去而不是从这里开始拖
   valueFromX(e.position.x, clientRect());
   invalidate();
@@ -107,17 +108,17 @@ void Slider::onMouseMove(const MouseEvent& e) {
   }
   if (!hovered_) {
     hovered_ = true;
-    setCursor(CursorShape::kGrab);
     invalidate();
   }
 }
 
 void Slider::onMouseUp(const MouseEvent& e) {
-  (void)e;
   if (!dragging_) return;
   dragging_ = false;
   releaseMouse();
-  setCursor(CursorShape::kGrab);
+  // 松手时可能已经拖到控件外面了：悬停态要按落点重判，
+  // 否则拇指会一直亮着悬停环，下次移进来也不会重新触发
+  hovered_ = clientRect().contains(e.position);
   invalidate();
   if (onRelease_) onRelease_(value_);
 }

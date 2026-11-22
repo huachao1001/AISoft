@@ -177,6 +177,9 @@ void EditorActivity::rebuildPanel() {
   }
 
   panelBody_->removeAllViews();
+  // removeAllViews 会销毁子控件：这两个指针跟着作废，不能留着悬空
+  cropResult_ = nullptr;
+  resizeResult_ = nullptr;
   if (pixels_.isEmpty()) {
     addLabel(L"还没有打开图片", true, panelBody_);
     refreshActions();
@@ -193,19 +196,26 @@ void EditorActivity::rebuildPanel() {
 void EditorActivity::buildCropPanel() {
   addLabel(L"拖动滑块调整裁切范围", true, panelBody_);
 
-  // 四条边各一个滑块：比例值直接映射到图像坐标
+  // 四条边各一个滑块：比例值直接映射到图像坐标。
+  // 拖动时要同时刷新标题里的百分比和「结果」那一行——不然用户拖了半天，
+  // 界面上没有一个数字在变，看起来就像根本没拖动。
   auto edge = [this](const wchar_t* label, float initial, float& target, bool isLeft) {
-    AiUI::Slider* slider = addSliderRow(label, initial, percentText(initial), panelBody_);
+    AiUI::TextView* caption = nullptr;
+    AiUI::Slider* slider =
+        addSliderRow(label, initial, percentText(initial), panelBody_, &caption);
     if (!slider) return;
     float* ref = &target;
-    slider->setOnChange([this, ref, isLeft](float v) {
+    const std::wstring name = label;
+    slider->setOnChange([this, ref, isLeft, caption, name](float v) {
       // 左右边不能交叉：左/上边最多推到对边前 1%，否则裁出空图
       if (isLeft) {
         *ref = (std::min)(v, (isLeft ? cropRight_ : cropBottom_) - 0.01f);
       } else {
         *ref = (std::max)(v, (isLeft ? cropLeft_ : cropTop_) + 0.01f);
       }
+      if (caption) caption->setText(name + L"  " + percentText(*ref));
       refreshPreview();
+      refreshCropResult();
     });
   };
 
@@ -215,12 +225,20 @@ void EditorActivity::buildCropPanel() {
   edge(L"下边", cropBottom_, cropBottom_, false);
 
   // 当前裁切后的尺寸，给用户一个明确的手感
+  cropResult_ = addLabel(L"", true, panelBody_);
+  refreshCropResult();
+}
+
+// 裁切结果那一行的文字：拖动中每帧都要重算，它是最直接的反馈
+void EditorActivity::refreshCropResult() {
+  if (!cropResult_) return;
   const int w = static_cast<int>(std::lround((cropRight_ - cropLeft_) * pixels_.width));
   const int h = static_cast<int>(std::lround((cropBottom_ - cropTop_) * pixels_.height));
-  addLabel(L"结果：" + std::to_wstring((std::max)(1, w)) + L" × " +
-               std::to_wstring((std::max)(1, h)),
-           true, panelBody_);
-}void EditorActivity::buildResizePanel() {
+  cropResult_->setText(L"结果：" + std::to_wstring((std::max)(1, w)) + L" × " +
+                       std::to_wstring((std::max)(1, h)));
+}
+
+void EditorActivity::buildResizePanel() {
   addLabel(L"目标宽高（像素）", true, panelBody_);
 
   // 用两个滑块表示宽高比例，范围取当前尺寸的 10%..200%：
@@ -229,14 +247,19 @@ void EditorActivity::buildCropPanel() {
   const int baseW = (std::max)(1, pixels_.width);
   const int baseH = (std::max)(1, pixels_.height);
   auto axis = [this](const wchar_t* label, float initial, int& target, int base) {
-    AiUI::Slider* slider = addSliderRow(label, initial, std::to_wstring(target), panelBody_);
+    AiUI::TextView* caption = nullptr;
+    AiUI::Slider* slider =
+        addSliderRow(label, initial, std::to_wstring(target), panelBody_, &caption);
     if (!slider) return;
     int* ref = &target;
     const int src = base;
-    slider->setOnChange([this, ref, src](float v) {
+    const std::wstring name = label;
+    slider->setOnChange([this, ref, src, caption, name](float v) {
       const float scale = 0.1f + v * 1.9f;  // 10%..200%
       *ref = (std::max)(1, static_cast<int>(std::lround(src * scale)));
+      if (caption) caption->setText(name + L"  " + std::to_wstring(*ref));
       refreshPreview();
+      refreshResizeResult();
     });
   };
 
@@ -245,9 +268,15 @@ void EditorActivity::buildCropPanel() {
   axis(L"宽度", (std::max)(0.0f, (std::min)(1.0f, wv)), resizeWidth_, baseW);
   axis(L"高度", (std::max)(0.0f, (std::min)(1.0f, hv)), resizeHeight_, baseH);
 
-  addLabel(L"结果：" + std::to_wstring((std::max)(1, resizeWidth_)) + L" × " +
-               std::to_wstring((std::max)(1, resizeHeight_)),
-           true, panelBody_);
+  resizeResult_ = addLabel(L"", true, panelBody_);
+  refreshResizeResult();
+}
+
+// 缩放结果那一行：和裁剪同理，拖动中必须跟着变
+void EditorActivity::refreshResizeResult() {
+  if (!resizeResult_) return;
+  resizeResult_->setText(L"结果：" + std::to_wstring((std::max)(1, resizeWidth_)) + L" × " +
+                         std::to_wstring((std::max)(1, resizeHeight_)));
 }
 
 AiUI::TextView* EditorActivity::addLabel(const std::wstring& text, bool muted,
@@ -263,9 +292,13 @@ AiUI::TextView* EditorActivity::addLabel(const std::wstring& text, bool muted,
   return label;
 }
 
+// 一行滑块：标题（含当前数值）+ 滑块。
+// caption 要回传给调用方——拖动时那一行的数值必须跟着变，
+// 否则用户只能看预览猜自己调到了多少。
 AiUI::Slider* EditorActivity::addSliderRow(const std::wstring& label, float value,
                                             const std::wstring& valueText,
-                                            AiUI::LinearLayout* body) {
+                                            AiUI::LinearLayout* body,
+                                            AiUI::TextView** outCaption) {
   auto* row = new AiUI::LinearLayout();
   row->setOrientation(AiUI::Orientation::kVertical);
   AiUI::LayoutParams rowParams;
@@ -280,6 +313,7 @@ AiUI::Slider* EditorActivity::addSliderRow(const std::wstring& label, float valu
   capParams.width = AiUI::LayoutParams::kMatchParent;
   capParams.height = kLabelHeight * dpi() / 96;
   row->addView(caption, capParams);
+  if (outCaption) *outCaption = caption;
 
   auto* slider = new AiUI::Slider();
   slider->setValue(value);
@@ -322,23 +356,23 @@ void EditorActivity::refreshStage() {
   if (photo_) photo_->show(has);
 }
 
-// 把像素交给 PhotoView：它要的是 Image 句柄，旧的必须释放，
-// 否则每拖一次滑块就漏一张位图
+// 把像素交给 PhotoView。
+//
+// 所有权要分清：setImage 会接管并负责释放句柄（换图、析构、clearImage
+// 都在控件里做）。所以这里绝不能自己再释放一份，否则同一个位图被释放两次，
+// 下一帧拖动就会踩到坏堆——表现是拖一下就卡死。
 void EditorActivity::presentPixels(const AiUI::RgbaImage& pixels) {
   if (!photo_) return;
-  if (previewImage_.isValid()) {
-    platform()->releaseImage(previewImage_);
-    previewImage_ = AiUI::Image{};
-  }
   if (pixels.isEmpty()) {
+    // clearImage 会释放控件当前的句柄
     photo_->clearImage();
     return;
   }
-  previewImage_ = platform()->createImage(pixels);
-  if (previewImage_.isValid()) {
-    photo_->setImage(previewImage_);
-    photo_->setImageHasAlpha(hasAlpha(pixels));
-  }
+  const AiUI::Image image = platform()->createImage(pixels);
+  if (!image.isValid()) return;
+  // 交给控件之后别再碰这个句柄：它的生命周期归 PhotoView
+  photo_->setImage(image);
+  photo_->setImageHasAlpha(hasAlpha(pixels));
 }
 
 void EditorActivity::refreshActions() {
