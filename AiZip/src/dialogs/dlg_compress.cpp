@@ -373,12 +373,14 @@ void runCompressTask(AiUI::NativeHandle owner, const CompressTask& task) {
   options.archivePath = task.outPath;
 
   std::wstring error;
+  bool canceled = false;
   const bool ok = ShowProgressDialog(owner, L"正在压缩", task.outPath,
                                      [&](const arc::ProgressFn& prog) {
     return arc::Compress(task.sources, options, prog, error);
-  });
+  }, &canceled);
 
-  if (!ok && !error.empty()) {
+  // 用户点取消：不弹「压缩失败」，那只会让人以为出了问题
+  if (!ok && !canceled && !error.empty()) {
     AiUI::MessageBoxParams params;
     params.title = L"爱压";
     params.message = L"压缩失败：\n" + error;

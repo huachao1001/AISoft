@@ -44,9 +44,22 @@ using PasswordFn = std::function<bool(std::wstring& out)>;
 // 交给 askOverwrite 询问，调用方不提供回调则直接覆盖。
 struct ExtractOptions {
   std::wstring targetDir;
+  // 本次解压显式指定的口令。留空就用 Archive 记住的那一个（Password()），
+  // 界面不必每层自己维护一份。
   std::wstring password;
   // 落地时去掉包内这层公共目录前缀（用于"外层已建同名目录"的场景）
   std::wstring stripTopDir;
+};
+
+// 解压的三种结局。取消必须和失败分开表达：取消是用户自己按的（关掉口令
+// 输入框、点进度窗的取消），调用方应当静默收场；失败才需要弹错误框。
+//
+// 以前用「返回 false + error 为空」表示取消，调用方看到空串就顺手补一句
+// 「无法解出该内容」，于是用户明明自己取消了，还会挨一个弹窗。
+struct ExtractResult {
+  bool ok = false;
+  bool canceled = false;
+  std::wstring error;  // 仅失败时有意义
 };
 
 struct CompressOptions {
@@ -76,14 +89,22 @@ class Archive {
 
   const std::vector<Entry>& Entries() const { return entries_; }
   bool IsOpen() const { return archive_ != nullptr; }
+  // 这个包实际用过的口令（打开阶段给的，或解压阶段问到的）。
+  //
+  // 记在 Archive 里而不是界面上：一层包一个对象，嵌套预览压栈时口令跟着
+  // 一起走，天然按层隔离。加密包能读出目录时内核打开阶段不要口令，第一次
+  // 真解数据才要，不记下来每点一个文件都要用户重输一遍。
+  const std::wstring& Password() const { return password_; }
   // 真正把包打开的那个 handler 对应的格式显示名（如 L"ZIP"）。
   // 没开包或该 handler 没有可读名字时返回空串。
   std::wstring FormatName() const;
 
-  // indices 为空表示全部
-  bool Extract(const std::vector<uint32_t>& indices, const ExtractOptions& opts,
-               const ProgressFn& progress, const OverwriteFn& askOverwrite,
-               const PasswordFn& askPassword, std::wstring& error);
+  // indices 为空表示全部。
+  //
+  // 取消与失败分开返回：ExtractResult::canceled 为真时调用方必须静默收场。
+  ExtractResult Extract(const std::vector<uint32_t>& indices, const ExtractOptions& opts,
+                        const ProgressFn& progress, const OverwriteFn& askOverwrite,
+                        const PasswordFn& askPassword);
 
   static bool IsArchiveFile(const std::wstring& path);
 
@@ -98,6 +119,8 @@ class Archive {
   // 打开成功的那个 handler。格式标签要用它，而不是猜扩展名。
   GUID handlerClsid_ = {};
   bool hasHandlerClsid_ = false;
+  // 最近一次成功用过的口令；空表示还没用过口令
+  std::wstring password_;
 };
 
 // 压缩一组路径到新压缩包

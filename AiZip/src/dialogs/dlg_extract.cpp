@@ -167,9 +167,11 @@ bool DlgExtract::onAccept() {
 // 对话框已关闭，owner 退回主窗口
 void runExtractTask(AiUI::NativeHandle owner, const ExtractTask& task) {
   std::wstring error;
+  bool progressCanceled = false;
+  bool extractCanceled = false;
   const bool ok = ShowProgressDialog(owner, L"正在解压", task.archivePath,
                                      [&](const arc::ProgressFn& prog) {
-    return g_app.archive.Extract(
+    const arc::ExtractResult r = g_app.archive.Extract(
         task.indices, task.options, prog,
         [owner](const std::wstring& path) -> int {
           // 覆盖询问必须回到 UI 线程：它是模态的
@@ -193,12 +195,18 @@ void runExtractTask(AiUI::NativeHandle owner, const ExtractTask& task) {
             if (accepted) out = pwd;
           });
           return accepted;
-        },
-        error);
-  });
+        });
+    if (!r.ok) {
+      extractCanceled = r.canceled;
+      error = r.error;
+    }
+    return r.ok;
+  }, &progressCanceled);
 
   if (!ok) {
-    if (!error.empty()) {
+    // 用户在口令框点取消、或点了进度窗的取消：都不该再弹「解压失败」。
+    // 那是他自己按的，弹框只会让人以为出了问题。
+    if (!progressCanceled && !extractCanceled && !error.empty()) {
       AiUI::MessageBoxParams params;
       params.title = L"爱压";
       params.message = L"解压失败：\n" + error;

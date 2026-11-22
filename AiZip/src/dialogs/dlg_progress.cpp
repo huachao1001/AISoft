@@ -53,6 +53,11 @@ class DlgProgress : public DialogActivity {
   ~DlgProgress() override;
 
   bool succeeded() const { return succeeded_.load(); }
+  // 用户是不是自己点了取消（含关窗确认）。
+  //
+  // 不能复用 cancel_：那个标志在 onDestroy / 析构里也会置位（让工作线程
+  // 停下来），于是每一次失败都会被误认成「用户取消」。这里只记用户意图。
+  bool canceledByUser() const { return userCanceled_.load(); }
 
  protected:
   const wchar_t* layoutName() const override { return L"dlg_progress"; }
@@ -91,6 +96,8 @@ class DlgProgress : public DialogActivity {
   AiUI::Button* cancelButton_ = nullptr;
 
   std::atomic<bool> cancel_{false};
+  // 用户明确的取消意图：只在用户确认取消时置位，供调用方区分「取消」与「失败」
+  std::atomic<bool> userCanceled_{false};
   std::atomic<bool> finished_{false};
   // 确认框开着时不再响应第二次点击
   bool askingCancel_ = false;
@@ -257,6 +264,7 @@ void DlgProgress::requestCancel() {
   askingCancel_ = false;
 
   if (answer != AiUI::MessageBoxResult::kYes || finished_.load()) return;
+  userCanceled_.store(true);
   cancel_.store(true);
   // 确认后按钮置灰，避免连点
   if (cancelButton_) cancelButton_->setEnabled(false);
@@ -431,11 +439,14 @@ void DlgProgress::onDestroy() {
 }  // namespace
 
 bool ShowProgressDialog(AiUI::NativeHandle owner, const std::wstring& title,
-                        const std::wstring& targetName, const WorkFn& work) {
+                        const std::wstring& targetName, const WorkFn& work,
+                        bool* canceledOut) {
   DlgProgress dlg(title, targetName, work);
   // 参考图的比例：约 3:1 的长条，两行文字上下排开
   dlg.runModal(owner, 560, 176);
-  return dlg.succeeded();
+  const bool ok = dlg.succeeded();
+  if (canceledOut) *canceledOut = !ok && dlg.canceledByUser();
+  return ok;
 }
 void RunOnUiThread(const std::function<void()>& fn) {
   if (!fn) return;

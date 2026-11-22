@@ -39,6 +39,8 @@ struct PasswordState {
   std::wstring password;
   PasswordFn ask;
   bool asked = false;
+  // 用户把口令输入框关掉了（不是输错）：再问也没意义，直接当取消处理
+  bool declined = false;
   // 内核确实来要过口令（不代表用户真给了）：用于区分「需要密码」
   // 与「文件损坏/格式不支持」
   bool requested = false;
@@ -47,7 +49,7 @@ struct PasswordState {
     requested = true;
     if (password.empty() && !asked && ask) {
       asked = true;
-      ask(password);
+      if (!ask(password)) declined = true;
     }
     return password;
   }
@@ -162,6 +164,11 @@ class PasswordSource {
 
   // 内核是否来索取过口令
   bool PasswordRequested() const { return state_.requested; }
+  // 用户放弃输入口令
+  bool PasswordDeclined() const { return state_.declined; }
+  // 目前实际持有的口令（可能为空）：调用方成功后要把它记下来，
+  // 同一个包后续的条目就不必再问一遍。
+  const std::wstring& Used() const { return state_.password; }
 
  private:
   PasswordState state_;
@@ -436,9 +443,13 @@ class ExtractCallback final : public z7::IArchiveExtractCallback {
     if (canceled_) return E_ABORT;
     if (!outStream) return E_POINTER;
     *outStream = nullptr;
+    if (index >= entries_.size()) return E_FAIL;
+    // 先记下标再判 askMode：数据坏掉时内核会改用「只测试不落地」的模式
+    // （askMode != 0），这条路径也要认出是哪个条目，才能判断是不是加密条目
+    // 全都没解出来——7z 的 AES 密码错就是靠这个特征认的。
+    currentIndex_ = index;
     if (askMode != 0) return S_OK;
 
-    if (index >= entries_.size()) return E_FAIL;
     const Entry& e = entries_[index];
 
     // 包内路径转落地相对路径，拒绝穿越
@@ -533,7 +544,16 @@ class ExtractCallback final : public z7::IArchiveExtractCallback {
         !currentTarget_.empty()) {
       AiUI::platform()->setModifiedTime(currentTarget_, currentEntry_->modifiedMillis);
     }
-    if (result != 0) errorCount_++;
+    if (result != 0) {
+      errorCount_++;
+      // 口令错与数据坏都会落到错误条目上，但只有前者该提示「重新输密码」。
+      // 内核用独立的操作结果码区分（zip 走 kOpWrongPassword）；7z 之类由
+      // CRC 失配暴露，只能靠「加密条目全失败」推断。两条线索都记下来。
+      if (result == kOpWrongPassword) wrongPassword_++;
+      const uint32_t at = currentIndex_;
+      if (at < entries_.size() && entries_[at].encrypted) encryptedFailed_++;
+    }
+    currentIndex_ = kNoIndex;
     currentTarget_.clear();
     currentPath_.clear();
     currentEntry_ = nullptr;
@@ -541,9 +561,19 @@ class ExtractCallback final : public z7::IArchiveExtractCallback {
   }
 
   int ErrorCount() const { return errorCount_; }
+  int WrongPasswordCount() const { return wrongPassword_; }
+  // 加密条目里失败了几条：等于选中的加密条目数时，几乎只能是口令不对
+  int EncryptedFailedCount() const { return encryptedFailed_; }
   bool Canceled() const { return canceled_; }
 
  private:
+  // NExtract::NOperationResult 的枚举顺序（Archive/IArchive.h）：
+  // kOK=0, kUnsupportedMethod=1, kDataError=2, kCRCError=3, kUnavailable=4,
+  // kUnexpectedEnd=5, kDataAfterEnd=6, kIsNotArc=7, kHeadersError=8,
+  // kWrongPassword=9。只固定这一档，其余不在这里抄。
+  static constexpr int32_t kOpWrongPassword = 9;
+  static constexpr uint32_t kNoIndex = 0xFFFFFFFFu;
+
   const std::vector<Entry>& entries_;
   ExtractOptions opts_;
   ProgressFn progress_;
@@ -557,10 +587,15 @@ class ExtractCallback final : public z7::IArchiveExtractCallback {
   std::wstring currentPath_;
   std::wstring currentTarget_;
   const Entry* currentEntry_ = nullptr;
+  // 当前正在处理的条目下标：GetStream 一定先于 SetOperationResult 被调用，
+  // 数据校验失败时 currentEntry_ 可能是空（内核走的是测试模式），只能靠它。
+  uint32_t currentIndex_ = kNoIndex;
   bool currentSkip_ = false;
   bool canceled_ = false;
   int overwriteAll_ = 0;
   int errorCount_ = 0;
+  int wrongPassword_ = 0;
+  int encryptedFailed_ = 0;
 };
 
 // ───────────────────────── 压缩回调 ─────────────────────────
@@ -724,10 +759,12 @@ Archive::Archive(Archive&& other) noexcept
       archive_(other.archive_),
       entries_(std::move(other.entries_)),
       handlerClsid_(other.handlerClsid_),
-      hasHandlerClsid_(other.hasHandlerClsid_) {
+      hasHandlerClsid_(other.hasHandlerClsid_),
+      password_(std::move(other.password_)) {
   other.stream_ = nullptr;
   other.archive_ = nullptr;
   other.hasHandlerClsid_ = false;
+  other.password_.clear();
 }
 
 Archive& Archive::operator=(Archive&& other) noexcept {
@@ -738,9 +775,11 @@ Archive& Archive::operator=(Archive&& other) noexcept {
   entries_ = std::move(other.entries_);
   handlerClsid_ = other.handlerClsid_;
   hasHandlerClsid_ = other.hasHandlerClsid_;
+  password_ = std::move(other.password_);
   other.stream_ = nullptr;
   other.archive_ = nullptr;
   other.hasHandlerClsid_ = false;
+  other.password_.clear();
   return *this;
 }
 
@@ -774,6 +813,7 @@ void Archive::Close() {
   }
   entries_.clear();
   hasHandlerClsid_ = false;
+  password_.clear();
 }
 
 OpenResult Archive::Open(const std::wstring& filePath, const std::wstring& password) {
@@ -844,6 +884,8 @@ OpenResult Archive::Open(const std::wstring& filePath, const std::wstring& passw
   cb->Release();
   // 只有内核确实来要过口令，才算「需要密码」；否则是格式或数据问题
   const bool passwordRequested = pwd->PasswordRequested();
+  // 只有这次真的用过（用户给了）才记下来。记空串等于没记。
+  const std::wstring usedPassword = pwd->Used();
   delete pwd;
 
   if (!opened) {
@@ -857,6 +899,7 @@ OpenResult Archive::Open(const std::wstring& filePath, const std::wstring& passw
   stream_ = inStream;
   handlerClsid_ = openedClsid;
   hasHandlerClsid_ = true;
+  password_ = usedPassword;
 
   uint32_t count = 0;
   if (opened->GetNumberOfItems(&count) != S_OK) {
@@ -895,48 +938,103 @@ OpenResult Archive::Open(const std::wstring& filePath, const std::wstring& passw
   return r;
 }
 
-bool Archive::Extract(const std::vector<uint32_t>& indices, const ExtractOptions& opts,
-                      const ProgressFn& progress, const OverwriteFn& askOverwrite,
-                      const PasswordFn& askPassword, std::wstring& error) {
+ExtractResult Archive::Extract(const std::vector<uint32_t>& indices, const ExtractOptions& opts,
+                              const ProgressFn& progress, const OverwriteFn& askOverwrite,
+                              const PasswordFn& askPassword) {
+  ExtractResult res;
   if (!archive_) {
-    error = L"压缩包未打开";
-    return false;
+    res.error = L"压缩包未打开";
+    return res;
   }
   if (!util::EnsureDirectory(opts.targetDir)) {
-    error = L"无法创建目标目录";
-    return false;
+    res.error = L"无法创建目标目录";
+    return res;
   }
 
-  auto* pwd = new PasswordSource(opts.password, askPassword);
-  auto* cb = new ExtractCallback(entries_, opts, progress, askOverwrite, pwd);
-  cb->AddRef();
+  // 本次用哪个口令：调用方显式给的优先，其次用这个包记住的。二者都没有
+  // 就等内核来要——7-Zip 只在真解到加密数据时才索取，能读目录的加密包
+  // 因此不会在打开阶段多余地弹窗。
+  const std::wstring initialPassword = !opts.password.empty() ? opts.password : password_;
 
-  HRESULT hr;
+  // 选中的条目里有几条是加密的：判断「失败是不是口令造成的」用得上。
+  // 加密条目全失败而其他条目没事，基本只可能是密码不对。
+  constexpr int kMaxPasswordAttempts = 3;
+  int encryptedSelected = 0;
   if (indices.empty()) {
-    hr = archive_->Extract(nullptr, 0xFFFFFFFF, 0, cb);
+    for (const Entry& e : entries_) {
+      if (e.encrypted && !e.isDir) encryptedSelected++;
+    }
   } else {
-    std::vector<uint32_t> idx = indices;
-    hr = archive_->Extract(idx.data(), static_cast<uint32_t>(idx.size()), 0, cb);
+    for (uint32_t i : indices) {
+      if (i < entries_.size() && entries_[i].encrypted && !entries_[i].isDir) encryptedSelected++;
+    }
   }
 
-  const int errors = cb->ErrorCount();
-  const bool canceled = cb->Canceled();
-  cb->Release();
-  delete pwd;
+  std::vector<uint32_t> idx = indices;
+  for (int attempt = 0;; ++attempt) {
+    auto* pwd = new PasswordSource(attempt == 0 ? initialPassword : std::wstring(), askPassword);
+    auto* cb = new ExtractCallback(entries_, opts, progress, askOverwrite, pwd);
+    cb->AddRef();
 
-  if (canceled) {
-    error = L"操作已取消";
-    return false;
+    HRESULT hr;
+    if (indices.empty()) {
+      hr = archive_->Extract(nullptr, 0xFFFFFFFF, 0, cb);
+    } else {
+      hr = archive_->Extract(idx.data(), static_cast<uint32_t>(idx.size()), 0, cb);
+    }
+
+    const int errors = cb->ErrorCount();
+    int wrongPassword = cb->WrongPasswordCount();
+    const int encryptedFailed = cb->EncryptedFailedCount();
+    const bool canceled = cb->Canceled();
+    const std::wstring usedPassword = pwd->Used();
+    const bool declined = pwd->PasswordDeclined();
+    cb->Release();
+    delete pwd;
+
+    if (canceled) {
+      // 用户按了取消：既不是成功也不是失败，调用方不该弹任何框
+      res.canceled = true;
+      return res;
+    }
+
+    // 7z 的 AES 不给「口令错」这个结果码，只表现为 CRC 失败。这里补一条
+    // 推断：选中的加密条目全都没解出来，就当口令不对——和 zip 一条口径。
+    if (wrongPassword == 0 && encryptedSelected > 0 && encryptedFailed >= encryptedSelected) {
+      wrongPassword = encryptedFailed;
+    }
+
+    // 口令用对了就记下来：同一个包里其余加密条目不必再问一遍。
+    // 用户取消输入也照记——记下的是空的，等于「这个包还没解过密」。
+    if (!usedPassword.empty() && wrongPassword == 0) password_ = usedPassword;
+
+    if (wrongPassword > 0) {
+      // 只提示「密码错误」是没用的信息：得让用户能再试一次。
+      // 界面上解压与嵌套预览走的是同一个回调，重试因此对两者都生效。
+      // 最多问三次：再多只是在拖长一个注定失败的操作。
+      if (askPassword && !declined && attempt < kMaxPasswordAttempts - 1) {
+        continue;
+      }
+      // 用户自己关掉了输入框：这不是错误，按取消处理，调用方不该再弹框
+      if (declined) {
+        res.canceled = true;
+        return res;
+      }
+      res.error = L"密码错误，请重试";
+      return res;
+    }
+
+    if (hr != S_OK) {
+      res.error = errors > 0 ? L"解压过程中出现错误" : L"解压失败（密码错误或数据损坏）";
+      return res;
+    }
+    if (errors > 0) {
+      res.error = L"部分文件解压失败";
+      return res;
+    }
+    res.ok = true;
+    return res;
   }
-  if (hr != S_OK) {
-    error = errors > 0 ? L"解压过程中出现错误" : L"解压失败（密码错误或数据损坏）";
-    return false;
-  }
-  if (errors > 0) {
-    error = L"部分文件解压失败";
-    return false;
-  }
-  return true;
 }
 
 bool Archive::IsArchiveFile(const std::wstring& path) {
@@ -1093,7 +1191,9 @@ static bool CompressOnce(const std::vector<util::SourceItem>& items, const GUID&
 
   if (canceled) {
     discard();
-    error = L"操作已取消";
+    // 用户自己取消不是失败：留空 error，调用方据此静默收场。
+    // 用一句「操作已取消」当错误会让界面弹「压缩失败：操作已取消」。
+    error.clear();
     return false;
   }
   if (hr != S_OK || errors > 0) {

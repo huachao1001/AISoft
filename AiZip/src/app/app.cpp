@@ -284,6 +284,23 @@ void Fail(const std::wstring& text, AiUI::NativeHandle owner = nullptr) {
   AiUI::platform()->showMessageBox(owner, params);
 }
 
+// 统一的密码询问实现：工作线程里调用，实际弹窗回到 UI 线程。
+//
+// 所有 Extract 调用都必须带上它。以前只有部分入口传了回调，像「包内条目落地」
+// 这条路径传的是 nullptr——内核拿不到口令，只能报「部分文件解压失败」，
+// 用户看到的是一句错误，却没有任何地方能输入密码。
+arc::PasswordFn AskPasswordFn(AiUI::NativeHandle owner) {
+  return [owner](std::wstring& out) -> bool {
+    bool accepted = false;
+    ui::RunOnUiThread([&] {
+      std::wstring pwd;
+      accepted = ui::PromptText(owner, L"输入密码", L"压缩包已加密，请输入密码：", pwd, true);
+      if (accepted) out = pwd;
+    });
+    return accepted;
+  };
+}
+
 // 打开压缩包；只有内核确实索取口令时才弹输入框。
 //
 // 普通加密包能正常读目录，口令留到解压阶段由 Extract 的回调再问；
@@ -439,6 +456,24 @@ std::wstring EnsureStageDir() {
   return g_app.stageDir;
 }
 
+// 超过这个大小的条目不在 UI 线程上就地解：否则解一个 2G 的内层包就是
+// 几分钟的「未响应」，用户既看不到进度也点不了取消。
+constexpr uint64_t kStageInlineMax = 32ull * 1024 * 1024;
+
+// 真正把某个条目解到镜像目录。dir 已建好，prog 可为空（不要进度）。
+bool ExtractStageEntry(int entryIndex, const std::wstring& dir, const arc::ProgressFn& prog,
+                       std::wstring& error) {
+  arc::ExtractOptions opts;
+  opts.targetDir = dir;
+  const std::vector<uint32_t> indices{static_cast<uint32_t>(entryIndex)};
+  const arc::ExtractResult r =
+      g_app.archive.Extract(indices, opts, prog, nullptr, AskPasswordFn(DialogOwner()));
+  if (r.ok) return true;
+  // 用户取消（关掉口令框 / 点进度窗取消）不是错误：留空 error，调用方静默收场
+  error = r.canceled ? std::wstring() : r.error;
+  return false;
+}
+
 // 把当前层的某个条目按包内相对路径解到镜像目录，返回落地路径。
 //
 // 已经在镜像里就直接复用：双击一个文件两次不该解两遍，大文件尤其明显。
@@ -454,11 +489,29 @@ std::wstring StageEntry(int entryIndex, const std::wstring& entryPath, std::wstr
   std::replace(landed.begin(), landed.end(), L'/', L'\\');
   if (util::PathExists(landed)) return landed;
 
-  arc::ExtractOptions opts;
-  opts.targetDir = dir;
-  const std::vector<uint32_t> indices{static_cast<uint32_t>(entryIndex)};
-  if (!g_app.archive.Extract(indices, opts, nullptr, nullptr, nullptr, error)) {
-    if (error.empty()) error = L"无法解出该内容";
+  const auto& entries = g_app.archive.Entries();
+  const uint64_t size =
+      (entryIndex >= 0 && entryIndex < static_cast<int>(entries.size()))
+          ? static_cast<uint64_t>(entries[static_cast<size_t>(entryIndex)].size)
+          : 0;
+
+  bool ok = false;
+  if (size > kStageInlineMax) {
+    // 大条目：交给进度窗在后台线程解。模态循环照常泵消息，主窗口不会假死，
+    // 不想等还能点取消——就地解的话这两件事都做不到。
+    ok = ui::ShowProgressDialog(DialogOwner(), L"正在解出", entryPath,
+                                [&](const arc::ProgressFn& prog) {
+                                  return ExtractStageEntry(entryIndex, dir, prog, error);
+                                });
+  } else {
+    ok = ExtractStageEntry(entryIndex, dir, nullptr, error);
+  }
+  if (!ok) {
+    // 失败或取消可能在镜像里留下半截文件。必须清掉：否则下次双击时
+    // 「已经在镜像里」的缓存判断会把这个残缺文件当成完整内容直接用。
+    if (util::PathExists(landed) && !util::IsDirectory(landed)) {
+      AiUI::platform()->deleteFile(landed);
+    }
     return {};
   }
 
@@ -764,8 +817,11 @@ std::wstring AppExportArchive() {
   const std::wstring outDir = util::JoinPath(workRoot, L"out");
   const std::wstring outPath = util::JoinPath(outDir, util::BaseName(original));
 
-  std::wstring password;
+  // 口令直接用包上记住的那一份：加密包在打开或第一次解条目时已经问过并
+  // 记下来了。重打包必须沿用同一个口令，否则导出的包会丢掉密码保护。
+  std::wstring password = g_app.archive.Password();
   std::wstring error;
+  bool canceled = false;
   const auto deleted = g_app.edits.deleted;
   const auto added = g_app.edits.added;
   const auto modified = g_app.edits.modified;
@@ -793,25 +849,20 @@ std::wstring AppExportArchive() {
     if (!keep.empty()) {
       arc::ExtractOptions opts;
       opts.targetDir = unpackDir;
-      if (!g_app.archive.Extract(
-              keep, opts, prog, nullptr,
-              [&password](std::wstring& out) -> bool {
-                bool accepted = false;
-                ui::RunOnUiThread([&] {
-                  std::wstring pwd;
-                  accepted = ui::PromptText(g_app.mainWnd, L"输入密码",
-                                            L"压缩包已加密，请输入密码：", pwd, true);
-                  if (accepted) {
-                    pwd.swap(password);
-                    out = password;
-                  }
-                });
-                return accepted;
-              },
-              error)) {
-        if (error.empty()) error = L"无法解开原压缩包";
+      // 用同一个密码回调，并把它记下来：重新压缩时要用同一个口令，
+      // 否则导出出来的包会变成不加密的（等于把密码保护弄丢了）。
+      const arc::ExtractResult r =
+          g_app.archive.Extract(keep, opts, prog, nullptr, AskPasswordFn(g_app.mainWnd));
+      if (!r.ok) {
+        // 用户取消（关掉口令框 / 点进度窗取消）：不写文案，让它安静收场
+        if (r.canceled) {
+          canceled = true;
+        } else {
+          error = r.error.empty() ? L"无法解开原压缩包" : r.error;
+        }
         return false;
       }
+      password = g_app.archive.Password();
     }
 
     // 2) 把镜像里新增/改动的条目盖到解压结果上。
@@ -864,10 +915,13 @@ std::wstring AppExportArchive() {
       return false;
     }
     return true;
-  });
+  }, &canceled);
 
   if (!ok) {
     util::RemoveDirectoryTree(workRoot);
+    // 用户取消：不弹框。导出是「重新打包」，取消后原包一个字节都没动，
+    // 弹一个失败框只会让人以为出了事故。
+    if (canceled) return {};
     return error.empty() ? L"导出失败" : error;
   }
 
@@ -975,23 +1029,52 @@ std::wstring AppPrepareDragPaths(const std::vector<int>& indices,
     arc::ExtractOptions opts;
     opts.targetDir = dir;
     std::wstring error;
-    // 拖拽是阻塞的，中途没法弹窗：覆盖一律允许（不覆盖上面已排除了镜像里
+    bool extractCanceled = false;
+    // 拖拽本身是阻塞的，中途没法弹窗：覆盖一律允许（不覆盖上面已排除了镜像里
     // 的现存内容），密码只能在这里先问一次。
-    const bool ok = g_app.archive.Extract(
-        entryIndices, opts, nullptr,
-        [](const std::wstring&) -> int { return 3; },  // 3 = 全部覆盖
-        [](std::wstring& out) -> bool {
-          bool accepted = false;
-          ui::RunOnUiThread([&] {
-            std::wstring pwd;
-            accepted = ui::PromptText(DialogOwner(), L"输入密码",
-                                      L"压缩包已加密，请输入密码：", pwd, true);
-            if (accepted) out = pwd;
-          });
-          return accepted;
-        },
-        error);
-    if (!ok) return error.empty() ? L"无法取出选中的内容" : error;
+    auto work = [&](const arc::ProgressFn& prog) {
+      const arc::ExtractResult r = g_app.archive.Extract(
+          entryIndices, opts, prog,
+          [](const std::wstring&) -> int { return 3; },  // 3 = 全部覆盖
+          AskPasswordFn(DialogOwner()));
+      if (!r.ok) extractCanceled = r.canceled;
+      error = r.ok ? std::wstring() : r.error;
+      return r.ok;
+    };
+
+    // 要落地的东西可能有几个 G（拖一整个目录最常见）。那种体量不能占着
+    // UI 线程死解，一律走后台线程 + 可取消的进度窗。
+    uint64_t totalBytes = 0;
+    for (uint32_t i : entryIndices) {
+      const auto& entries = g_app.archive.Entries();
+      if (i < entries.size()) totalBytes += entries[i].size;
+    }
+    bool ok;
+    bool canceled = false;
+    if (totalBytes > kStageInlineMax) {
+      ok = ui::ShowProgressDialog(DialogOwner(), L"正在取出", L"选中的内容",
+                                  [&](const arc::ProgressFn& prog) { return work(prog); },
+                                  &canceled);
+    } else {
+      ok = work(nullptr);
+    }
+    if (!ok) {
+      // 取消/失败都会在镜像里留下半截内容；不清理的话，下次拖同一项时
+      // 「镜像里已经有了」的判断会让它拿着残缺文件当成品拖出去。
+      for (uint32_t i : entryIndices) {
+        const std::wstring disk = StagePathFor(g_app.archive.Entries()[i].path);
+        if (disk.empty() || !util::PathExists(disk)) continue;
+        if (util::IsDirectory(disk)) {
+          util::RemoveDirectoryTree(disk);
+        } else {
+          AiUI::platform()->deleteFile(disk);
+        }
+      }
+      // 用户取消不是错误：和双击取出口径一致，静默收场（空错误、空路径表，
+      // 调用方看到没有可拖的东西就不会启动拖拽）。
+      if (canceled || extractCanceled) return {};
+      return error.empty() ? L"无法取出选中的内容" : error;
+    }
   }
 
   for (const auto& landed : targets) {
@@ -1060,8 +1143,10 @@ bool ExtractArchiveInto(const std::wstring& path, const std::wstring& targetDir,
   }
 
   std::wstring error;
+  bool canceled = false;
+  bool extractCanceled = false;
   const bool ok = ui::ShowProgressDialog(owner, L"正在解压", path, [&](const arc::ProgressFn& prog) {
-    return g_app.archive.Extract(
+    const arc::ExtractResult r = g_app.archive.Extract(
         {}, opts, prog,
         [owner](const std::wstring& filePath) -> int {
           // 覆盖询问是模态的，必须回到 UI 线程
@@ -1077,19 +1162,18 @@ bool ExtractArchiveInto(const std::wstring& path, const std::wstring& targetDir,
           });
           return result;
         },
-        [owner](std::wstring& out) -> bool {
-          bool accepted = false;
-          ui::RunOnUiThread([&] {
-            std::wstring pwd;
-            accepted = ui::PromptText(owner, L"输入密码", L"压缩包已加密，请输入密码：", pwd, true);
-            if (accepted) out = pwd;
-          });
-          return accepted;
-        },
-        error);
-  });
+        AskPasswordFn(owner));
+    if (!r.ok) {
+      extractCanceled = r.canceled;
+      error = r.error;
+    }
+    return r.ok;
+  }, &canceled);
 
-  if (!ok && !error.empty()) Fail(L"解压失败：\n" + error, owner);
+  // 取消（关掉口令框、点进度窗取消）不是失败：不弹框，安静收场。
+  if (!ok && !canceled && !extractCanceled && !error.empty()) {
+    Fail(L"解压失败：\n" + error, owner);
+  }
   // 关掉句柄：否则压缩包会一直被占用，用户改不了名也删不掉
   g_app.archive.Close();
   if (ok && g_app.mainWnd) AppRefreshView();
