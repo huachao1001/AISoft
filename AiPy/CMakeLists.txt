@@ -159,6 +159,60 @@ if(MSVC)
 endif()
 set_target_properties(aipy_pylib_threading PROPERTIES OUTPUT_NAME "threading_pylib")
 
+# ── libs/fs / libs/time / libs/json：系统库 ──
+#
+# Design.md 第 2.2 条：非核心能力以系统库方式提供，对齐标准 Python 接口。
+# 这三个是最常用的（文件、时间、数据交换），都用与 threading 相同的两条宏
+# 注册——AIPY_PYLIB_MODULE + AIPY_PYLIB_FUNCTION，没有各自的 registry。
+#
+# 同样每个导出函数一个编译单元：只读文件的脚本不该把 fs.open 的文件对象
+# 拖进产物。
+add_library(aipy_pylib_fs STATIC
+  libs/fs/src/module.cpp
+  libs/fs/src/io.cpp
+  libs/fs/src/fn_read_text.cpp
+  libs/fs/src/fn_write_text.cpp
+  libs/fs/src/fn_append_text.cpp
+  libs/fs/src/fn_exists.cpp
+  libs/fs/src/fn_stat.cpp
+  libs/fs/src/fn_size.cpp
+  libs/fs/src/fn_listdir.cpp
+  libs/fs/src/fn_mkdir.cpp
+  libs/fs/src/fn_remove.cpp
+  libs/fs/src/fn_open.cpp
+)
+target_include_directories(aipy_pylib_fs PUBLIC libs/fs/include)
+target_link_libraries(aipy_pylib_fs PRIVATE aipy)
+
+add_library(aipy_pylib_time STATIC
+  libs/time/src/module.cpp
+  libs/time/src/fn_time.cpp
+  libs/time/src/fn_monotonic.cpp
+  libs/time/src/fn_sleep.cpp
+  libs/time/src/fn_format.cpp
+)
+target_link_libraries(aipy_pylib_time PRIVATE aipy)
+
+add_library(aipy_pylib_json STATIC
+  libs/json/src/module.cpp
+  libs/json/src/codec.cpp
+  libs/json/src/fn_dumps.cpp
+  libs/json/src/fn_loads.cpp
+)
+target_include_directories(aipy_pylib_json PUBLIC libs/json/include)
+target_link_libraries(aipy_pylib_json PRIVATE aipy)
+
+foreach(lib aipy_pylib_fs aipy_pylib_time aipy_pylib_json)
+  if(MSVC)
+    # 与 aipy 同一条理由：分发出的 pylib 必须关 /GL，否则用户机器上
+    # 只有 link.exe、没有 c2.dll，链接会失败。
+    target_compile_options(${lib} PRIVATE $<$<CONFIG:Release>:/GL->)
+  endif()
+endforeach()
+set_target_properties(aipy_pylib_fs PROPERTIES OUTPUT_NAME "fs_pylib")
+set_target_properties(aipy_pylib_time PROPERTIES OUTPUT_NAME "time_pylib")
+set_target_properties(aipy_pylib_json PROPERTIES OUTPUT_NAME "json_pylib")
+
 # ── 把 examples/ 下的每个脚本都打成 exe ──
 #
 # 这是交付形态的样板：构建一次就得到 4 个独立 exe，双击即可运行，
@@ -192,6 +246,9 @@ if(AIPY_PYTHON)
               ${CMAKE_CURRENT_SOURCE_DIR}/tools/aipyic/link.py
               aipy_app
               aipy_pylib_threading
+              aipy_pylib_fs
+              aipy_pylib_time
+              aipy_pylib_json
       COMMENT "打包示例 ${stem}.exe"
       VERBATIM)
     list(APPEND AIPY_EXAMPLE_EXES ${example_exe})
@@ -233,6 +290,9 @@ set(AIPY_DIST_COMPILER_SOURCES
 set(AIPY_DIST_LIBS
   $<TARGET_FILE:aipy_pylib_threading>
   $<TARGET_FILE:aipy_pylib_text>
+  $<TARGET_FILE:aipy_pylib_fs>
+  $<TARGET_FILE:aipy_pylib_time>
+  $<TARGET_FILE:aipy_pylib_json>
 )
 
 set(AIPY_DIST_COMMANDS)
@@ -296,6 +356,7 @@ add_custom_target(aipy_dist ALL
   COMMAND ${CMAKE_COMMAND} -E copy_if_different
           ${AIPY_DIST_LIBS} ${AIPY_DIST_DIR}/lib/
   DEPENDS aipy_app aipy_pylib_threading aipy_pylib_text
+          aipy_pylib_fs aipy_pylib_time aipy_pylib_json
           ${AIPY_DIST_COMPILER_SOURCES}
           ${AIPY_DIST_DIR}/link_recipe.json
   COMMENT "拷贝发布件到 ${AIPY_DIST_DIR}"
@@ -394,6 +455,15 @@ if(AIPY_BUILD_TESTS)
                      ${CMAKE_CURRENT_SOURCE_DIR}/tools/aipyic/aipyic.py
                      ${CMAKE_BINARY_DIR}
                      $<TARGET_FILE_DIR:aipy_pylib_threading>
+                     ${AIPY_PYTHON})
+
+    # 三个系统库：fs / time / json。各验功能 + 函数级按需。
+    add_test(NAME aipy_system_libs
+             COMMAND ${AIPY_PYTHON}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_system_libs.py
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tools/aipyic/aipyic.py
+                     ${CMAKE_BINARY_DIR}
+                     $<TARGET_FILE_DIR:aipy_pylib_fs>
                      ${AIPY_PYTHON})
   endif()
 

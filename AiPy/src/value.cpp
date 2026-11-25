@@ -1355,5 +1355,33 @@ void setLogSink(LogSink sink) {
 
 void log(const Value& value) { logSink()(value.toString()); }
 
+// ── 诊断输出 ──
+//
+// 与 logSink 分开一套，理由见 value.h：print 走 log，而 print 的输出是
+// **程序输出**；pylib 的失败原因是**诊断**，不该混进去。
+
+namespace {
+
+DiagnosticSink& diagnosticSink() {
+  static DiagnosticSink sink = [](const std::string& text) {
+    std::fprintf(stderr, "[aipy] %s\n", text.c_str());
+  };
+  return sink;
+}
+
+}  // namespace
+
+void setDiagnosticSink(DiagnosticSink sink) {
+  if (sink != nullptr) {
+    diagnosticSink() = std::move(sink);
+    return;
+  }
+  diagnosticSink() = [](const std::string& text) {
+    std::fprintf(stderr, "[aipy] %s\n", text.c_str());
+  };
+}
+
+void diagnose(const std::string& text) { diagnosticSink()(text); }
+
 
 }

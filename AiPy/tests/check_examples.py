@@ -26,6 +26,7 @@ import io
 import os
 import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 AIPY = os.path.normpath(os.path.join(HERE, '..'))
@@ -219,10 +220,10 @@ def main(argv):
     # ── 每个示例都打包成 exe 实跑 ──
     #
     # 这是交付形态，只验字节码等价不够：尾部索引写错时字节码本身完全正确，
-    # 坏的是「怎么读回来」。四个示例都要过，因为漏掉一个就可能漏掉只有
+    # 坏的是「怎么读回来」。每份示例都要过，因为漏掉一个就可能漏掉只有
     # 那份脚本才会踩到的路径（比如 03 用了独有内建，内建名表要走一遍）。
     if launcher_exe:
-        # 前三份：产物输出必须与 VM 跑脚本时一致。
+        # 这几份：产物输出必须与 VM 跑脚本时一致。
         for name in cpython_examples + ('03_builtins.py',):
             script = os.path.join(examples, name)
             expected = run_cpython(script) if name in cpython_examples \
@@ -233,6 +234,38 @@ def main(argv):
             else:
                 print('ok   %-17s 打包成 exe 后输出一致'
                       % (os.path.splitext(name)[0] + '.exe'))
+
+    # 06 用 fs/time/json 三个系统库，会在**当前目录**建工作区（并自己清理）。
+    # 所以给它一个空目录，并断言关键输出——其中「目录内容」依赖它自己
+    # 建的两个文件，是这份脚本最值得验的一条。
+    files_script = os.path.join(examples, '06_files.py')
+    files_required = [
+        '建目录: True',
+        '记录数: 3',
+        '内容: [\'ALPHA\', \'BETA\', \'GAMMA\']',
+        'JSON: {"names":["ALPHA","BETA","GAMMA"],"count":3,"ok":true}',
+        '还原 count: 3',
+        '计时有效: True',
+        'with 写完: True',
+        "目录内容: ['lines.txt', 'records.txt']",
+        '清理后存在: False',
+    ]
+    if launcher_exe:
+        work = tempfile.mkdtemp(prefix='aipy_06_')
+        result = check_bundle(files_script, launcher_exe, work,
+                              build_dir=os.path.dirname(os.path.abspath(launcher_exe)),
+                              lib_dir=os.path.dirname(os.path.abspath(launcher_exe)))
+        if isinstance(result, list):
+            failures.extend(result)
+        else:
+            missing = [line for line in files_required if line not in result.stdout]
+            if missing:
+                failures.extend(['06_files.exe 缺少预期输出：'] +
+                                ['  未找到: %r' % line for line in missing])
+                print('  ✗ 06_files.exe 输出不符')
+            else:
+                print('ok   %-17s %d 条关键输出（打包产物）'
+                      % ('06_files.exe', len(files_required)))
 
     if failures:
         for line in failures:

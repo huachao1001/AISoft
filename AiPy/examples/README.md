@@ -30,6 +30,7 @@ build\examples\02_wordcount.exe   328 KB
 build\examples\03_builtins.exe    330 KB
 build\examples\04_tool.exe        330 KB
 build\examples\05_threads.exe     356 KB（含 threading 库）
+build\examples\06_files.exe       405 KB（含 fs/time/json 三个库）
 ```
 
 每个都是**单文件**：双击或在任何目录运行都行，不需要 Python、不需要 MSVC、
@@ -77,12 +78,13 @@ python tools\aipyic\aipyic.py --disasm build\back.bc
 | `03_builtins.py` | 18 个内建里的实用部分，含 AiPy 独有的三个 | 不能（用了独有内建） |
 | `04_tool.py` | 可交付的小工具：满减/折扣/税额/运费，**打包成 exe 的示例** | 能，输出逐字节一致 |
 | `05_threads.py` | `Thread`/`join` + `with lock:` 保护共享状态，**用到 pylib** | 不能（`Thread` 第一个参数是函数名） |
+| `06_files.py` | `fs` 读写文件、`json` 存取结构、`time` 计时，含 `with fs.open` | 不能（`fs` 不是标准库） |
 
 前三份能在 CPython 里跑，这件事本身是「AiPy 实现的是 Python 子集」的证据。
 `tests/check_examples.py` 每次构建都拿 CPython 的输出逐行比对，跑题了就构建
 失败。
 
-**五份都会打包成 exe 实跑一遍**：输出必须与脚本一致。这一步验的是尾部
+**六份都会打包成 exe 实跑一遍**：输出必须与脚本一致。这一步验的是尾部
 索引——字节码正确时它仍可能坏——而且 `03` 用了独有内建、`05` 用了 pylib，
 会把「内建名表」和「按需链接」两条路径各走一遍。
 

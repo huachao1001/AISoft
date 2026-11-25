@@ -140,6 +140,55 @@ python tools\aipyic\aipyic.py --exe app.py app.exe ^
 独立编译单元——静态库的抽取粒度是 `.obj`，一个 `.obj` 里塞几个函数就会
 一起被拉进来。`libs/threading/src/fn_*.cpp` 就是这么分的。
 
+### 内置的系统库
+
+`libs/` 下每个目录是一个独立 pylib，模块名与 CPython 标准库同名。
+四个已实现：
+
+| 库 | 对标 | 函数 |
+|---|---|---|
+| `threading` | `threading` | `Thread` / `Lock` / `Event` / `current_thread` / `active_count` + `start`/`waitAll`/`poll`/`pending` |
+| `fs` | `open` / `os.path` | `read_text` `write_text` `append_text` `exists` `is_dir` `is_file` `size` `listdir` `mkdir` `remove` `open` |
+| `time` | `time` | `time` `monotonic` `sleep` `localtime` `strftime` |
+| `json` | `json` | `dumps` `loads` |
+
+```python
+import fs
+import json
+
+path = "data/records.txt"
+fs.mkdir("data")
+fs.write_text(path, "alpha\nbeta\n")
+print(fs.exists(path))                  # True
+
+encoded = json.dumps({"names": ["alpha", "beta"], "count": 2})
+print(encoded)                          # {"names":["alpha","beta"],"count":2}
+print(json.loads(encoded)["count"])     # 2
+
+# 文件对象：with 退出必关（包括 return / break / continue）
+with fs.open("out.txt", "w") as handle:
+    handle.write("hello")
+```
+
+**失败用返回值表示，不抛异常**（语言没有异常通道）：
+
+| 函数 | 失败时返回 |
+|---|---|
+| `fs.read_text` / `fs.open` / `fs.listdir` | `None` |
+| `fs.write_text` / `fs.mkdir` / `fs.remove` | `False` |
+| `fs.size` | `-1` |
+| `json.dumps` / `json.loads` | `None` |
+
+失败原因走**诊断通道**（默认 stderr），不与 `print` 混在一起——`print` 是
+程序输出，库的报错是诊断，两者混在一起会让重定向到文件的输出变脏。
+
+**`fs` 的路径按 UTF-8 处理**：Windows 上一律走宽字符 API，中文用户名、
+中文目录下不会出现「文件明明在却报不存在」。
+
+`json` 的两处刻意不同（理由见 `libs/json/src/codec.cpp` 文件头）：
+字典键**必须**是字符串（`{1: 2}` 会报错而不是静默转成 `"1"`）；
+超出 64 位的整数解析失败而不是静默截断。
+
 ### 内置的 `libs/threading`
 
 线程不是 Python 语义，是具体能力，所以在 `libs/` 下、不进 `aipy.lib`。
@@ -306,7 +355,6 @@ src/vm/disasm.cpp        反汇编
 src/vm/state.cpp         热加载的状态搬运
 
 libs/threading/include/aipy/threading/threading.h  线程库对外说明与边界
-libs/threading/include/aipy/threading/registry.h   函数级注册（AIPY_THREADING_FN）
 libs/threading/include/aipy/threading/pool.h       池与可等待结果（共用底座）
 libs/threading/src/pool.cpp                        池、Future、按名字提交
 libs/threading/src/fn_thread.cpp                   每个导出函数一个编译单元
@@ -318,7 +366,13 @@ libs/threading/src/fn_pending.cpp
 libs/threading/src/fn_wait_all.cpp
 libs/threading/src/fn_active_count.cpp
 libs/threading/src/fn_current_thread.cpp
-libs/threading/src/module.cpp                      模块级注册（AIPY_PYLIB）
+libs/threading/src/module.cpp                      模块级注册（AIPY_PYLIB_MODULE）
+
+libs/fs/src/io.cpp                                路径（UTF-8 ↔ 宽字符）、读写、错误描述
+libs/fs/src/fn_*.cpp                              11 个导出函数，各一个编译单元
+libs/time/src/fn_*.cpp                            time/monotonic/sleep/localtime/strftime
+libs/json/src/codec.cpp                           序列化与解析
+libs/json/src/fn_*.cpp                            dumps / loads
 
 tools/aipyic/compiler.py 脚本 → 字节码（只用标准库 ast）
 tools/aipyic/pack.py     .bc 二进制格式（权威定义在其头部）
@@ -358,7 +412,7 @@ LANGUAGE.md              支持哪些 Python 语法，逐条实测（186 条）
 `internal.h` 里的 `Frame` 刻意不放进 `aipy/vm.h`：它是执行循环的私有数据，
 让宿主看见就等于承诺永不变，而这个结构会随指令集调整。
 
-## 十一条测试
+## 十二条测试
 
 | 测试 | 作用 |
 |---|---|
@@ -370,6 +424,7 @@ LANGUAGE.md              支持哪些 Python 语法，逐条实测（186 条）
 | `aipy_activity` | `class X(Activity)` 展开路径：字段、增强赋值、方法前向调用 |
 | `aipy_pylib` | 按需链接：链了能调、没链报错、不用扩展的产物里无 pylib 符号 |
 | `aipy_threading` | 线程库：`Thread`/`Event` 对齐、函数级按需、`with` 完整语义、提交时校验 |
+| `aipy_system_libs` | `fs`/`time`/`json` 三库：功能、错误返回值约定、各自的函数级按需 |
 | `aipy_vm_semantics` | VM 结果与 CPython 逐变量一致 |
 | `aipy_layers` | 边界守护：无界面符号、`Host` 是不透明 `void*` |
 | `aipy_standard` | Design.md 第 4 节：系统库与用户库同一套宏、平台细节集中在 `toolchain.py` |

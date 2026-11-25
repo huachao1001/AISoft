@@ -103,7 +103,11 @@ PyUI 将来就是这样一个 `pylib`：它自带 `pyui_core`/`pyui_script`，�
 
 `libs/` 下每个目录是一个独立 pylib，**不进 `aipy.lib`**。判断标准很简单：
 **它是 Python 语义，还是具体能力？** 语义留在 `src/`；能力进 `libs/`。
-线程、文件、网络、界面全属于后者。
+线程、文件、时间、JSON、网络、界面全属于后者。
+
+现有四个：`threading`（线程）、`fs`（文件）、`time`（时间）、`json`（数据
+交换）。它们与用户自定义库用的是**同一套** `AIPY_PYLIB_MODULE` /
+`AIPY_PYLIB_FUNCTION`，没有私有注册代码——加第五个库只需要新目录 + 两条宏。
 
 线程刻意只提供**按名字跑脚本函数**：AiPy 里函数不是值（`Value` 没有
 函数类型，`g = f` 编译不过），所以没有 `Thread(target=worker)` 这种写法
@@ -275,7 +279,7 @@ cmake --build build
 cd build && ctest --output-on-failure
 ```
 
-十条测试：
+十二条测试：
 
 | 测试 | 作用 |
 |---|---|
@@ -283,10 +287,11 @@ cd build && ctest --output-on-failure
 | `aipy_standalone` | 只链 `aipy` 的程序，同时是独立性的回归测试 |
 | `aipy_vm_tests` | 字节码端到端：循环、函数、方法、切片、错误行号、状态搬运 |
 | `aipy_disasm` | 反汇编器与 C++ 加载器各自解码同一份 `.bc` |
-| `aipy_examples` | 示例与 CPython 逐行比对；四份示例全部打包成 exe 实跑 |
+| `aipy_examples` | 示例与 CPython 逐行比对；六份示例全部打包成 exe 实跑 |
 | `aipy_activity` | `class X(Activity)` 展开路径：字段、增强赋值、方法前向调用 |
 | `aipy_pylib` | 按需链接：链了能调、没链报错、不用扩展的产物里无 pylib 符号 |
 | `aipy_threading` | 线程库：`Thread`/`Event` 对齐、函数级按需、`with` 完整语义、提交时校验 |
+| `aipy_system_libs` | `fs`/`time`/`json` 三库：功能、错误返回值约定、各自的函数级按需 |
 | `aipy_vm_semantics` | VM 结果与 CPython 逐变量一致 |
 | `aipy_layers` | 边界守护：无界面符号、`Host` 是不透明 `void*` |
 

@@ -59,6 +59,46 @@ def main(argv):
           any(l.startswith('AIPY_PYLIB_FUNCTION(text,') for l in user_lib),
           str(user_lib))
 
+    # 所有系统库都必须用同一套宏。这条是「标准化」的实际判据：加一个新库
+    # 时不复制任何私有注册代码，只写 AIPY_PYLIB_MODULE + 若干 FUNCTION。
+    system_libraries = []
+    libs_root = os.path.join(root, 'libs')
+    if os.path.isdir(libs_root):
+        system_libraries = sorted(
+            name for name in os.listdir(libs_root)
+            if os.path.isdir(os.path.join(libs_root, name)))
+
+    check('libs/ 下有多个系统库（至少 thread/fs/time/json 四个）',
+          len(system_libraries) >= 4, str(system_libraries))
+
+    for name in system_libraries:
+        module_cpp = os.path.join(libs_root, name, 'src', 'module.cpp')
+        if not os.path.isfile(module_cpp):
+            check('%s 有 module.cpp' % name, False, '缺失')
+            continue
+        declared = macro_lines(module_cpp)
+        ok = any(l.startswith('AIPY_PYLIB_MODULE(%s)' % name) for l in declared)
+        check('%s 用 AIPY_PYLIB_MODULE(%s)' % (name, name), ok, str(declared))
+
+        # 每个 fn_*.cpp 必须用 FUNCTION 宏，且模块名对得上。
+        src_dir = os.path.join(libs_root, name, 'src')
+        bad = []
+        produced = 0
+        for file_name in sorted(os.listdir(src_dir)):
+            if not file_name.startswith('fn_') or not file_name.endswith('.cpp'):
+                continue
+            lines = macro_lines(os.path.join(src_dir, file_name))
+            functions = [l for l in lines if l.startswith('AIPY_PYLIB_FUNCTION(')]
+            if not functions:
+                bad.append('%s 没有 AIPY_PYLIB_FUNCTION' % file_name)
+                continue
+            produced += len(functions)
+            for line in functions:
+                if not line.startswith('AIPY_PYLIB_FUNCTION(%s,' % name):
+                    bad.append('%s 的模块名不是 %s' % (file_name, name))
+        check('%s 的导出函数都用 FUNCTION 宏（%d 个）' % (name, produced),
+              not bad and produced > 0, str(bad))
+
     sys_module = macro_lines(os.path.join(root, 'libs/threading/src/module.cpp'))
     user_module = macro_lines(os.path.join(root, 'tests/pylib/text_pylib.cpp'))
     check('两边都用 AIPY_PYLIB_MODULE 声明模块',

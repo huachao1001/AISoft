@@ -389,5 +389,17 @@ using LogSink = std::function<void(const std::string&)>;
 void setLogSink(LogSink sink);
 void log(const Value& value);
 
+// 诊断输出：pylib 的失败原因走这里，**不走 log**。
+//
+// 为什么必须与 `log` 分开：`print` 用的就是 log，而 launcher 把 log 接到
+// stdout（应用产物要与 `python script.py` 一样只看程序输出）。pylib 的
+// 「读不到 a.txt: 文件或目录不存在」如果也走 log，就会混进程序输出——
+// 脚本自己 print 的内容和库的诊断分不开，重定向到文件时更糟。
+//
+// 默认写 stderr（命令行下看得见），GUI 宿主可以换成 OutputDebugString。
+using DiagnosticSink = std::function<void(const std::string&)>;
+void setDiagnosticSink(DiagnosticSink sink);
+void diagnose(const std::string& text);
+
 
 }

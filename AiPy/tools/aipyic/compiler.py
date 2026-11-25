@@ -902,6 +902,12 @@ class Compiler:
 
         if isinstance(node, ast.BoolOp):
             # and/or 返回操作数本身，且短路：值留在栈上，条件决定跳不跳。
+            #
+            # 每条 JUMP_IF_*_KEEP 后面必须紧跟 POP：短路命中时值要**留在
+            # 栈上**当结果（所以用 KEEP 版跳转），而没命中时要把它弹掉再去
+            # 求下一个操作数。少了这条 POP，`a and b` 的两个操作数会同时
+            # 留在栈上——`print("x: " + str(a and b))` 会输出 "TrueTrue"，
+            # 而单独写 `x = a and b` 只是把 a 静默丢在栈里，症状更隐蔽。
             is_and = isinstance(node.op, ast.And)
             keep = 'JUMP_IF_FALSE_KEEP' if is_and else 'JUMP_IF_TRUE_KEEP'
             fixups = []
@@ -910,6 +916,7 @@ class Compiler:
                 self.block.emit(keep, node)
                 fixups.append(len(self.block.code))
                 self.block.emit_u16(0)
+                self.block.emit('POP', node)
             self.expr(node.values[-1])
             end = len(self.block.code)
             for fixup in fixups:
