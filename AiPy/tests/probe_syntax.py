@@ -13,7 +13,7 @@
 常量 "splitlines"，要到 VM 里才发现「字符串没有这个方法」。只看编译结果
 会把一批不支持的方法误判成支持。
 
-用法：probe_syntax.py <aipy_run.exe>   不带参数时只检查编译
+用法：probe_syntax.py <pcc.exe> [aipy_run.exe]
 """
 
 import io
@@ -24,30 +24,27 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 AIPY = os.path.normpath(os.path.join(HERE, '..'))
-sys.path.insert(0, os.path.join(AIPY, 'tools', 'aipyic'))
-
-import compiler
-import pack
 
 
-def probe(source, run_exe, scratch):
+def probe(pcc, source, run_exe, scratch):
     """返回 (能否用, 错误信息)。给了 run_exe 就实际跑一遍。"""
-    try:
-        program = compiler.compile_source(source, '<probe>')
-    except compiler.CompileError as error:
-        text = str(error)
+    script = os.path.join(scratch, 'probe.py')
+    with open(script, 'w', encoding='utf-8', newline='\n') as handle:
+        handle.write(source)
+    path = os.path.join(scratch, 'probe.bc')
+
+    compiled = subprocess.run([pcc, script, path], capture_output=True,
+                              text=True, encoding='utf-8', errors='replace')
+    if compiled.returncode != 0:
+        text = compiled.stderr.strip()
         marker = 'error: '
         if marker in text:
             text = text.split(marker, 1)[1]
-        return (False, text)
-    except Exception as error:  # 编译器自己崩了也是结果
-        return (False, '编译器异常 %s: %s' % (type(error).__name__, error))
+        return (False, text or '编译失败（退出码 %d）' % compiled.returncode)
 
-    if run_exe is None or scratch is None:
+    if run_exe is None:
         return (True, '')
 
-    path = os.path.join(scratch, 'probe.bc')
-    pack.write_file(program, path)
     completed = subprocess.run([run_exe, path], capture_output=True, text=True,
                                encoding='utf-8')
     if completed.returncode != 0:
@@ -139,7 +136,8 @@ CASES = [
     ('语句', 'raise', 'raise ValueError("x")\n', 'no'),
     ('语句', 'try/except', 'try:\n    x = 1\nexcept:\n    x = 2\n', 'no'),
     ('语句', 'with', 'x = [1]\nwith x:\n    y = 1\n', 'no', '没有方法 __enter__'),
-    ('语句', 'with 多项', 'x = [1]\nwith x, x:\n    y = 1\n', 'no', '一次只支持一个 with 项'),
+    ('语句', 'with 多项', 'x = [1]\nwith x, x:\n    y = 1\n', 'no',
+     'only one item is allowed'),
     ('语句', 'with as', 'x = [1]\nwith x as v:\n    y = 1\n', 'no', '没有方法 __enter__'),
     ('语句', 'match', 'match 1:\n    case 1:\n        x = 1\n', 'no'),
     ('语句', 'global', 'x = 1\ndef f():\n    global x\n    x = 2\n', 'ok'),
@@ -280,17 +278,23 @@ CASES = [
 
 
 def main(argv):
-    run_exe = argv[1] if len(argv) > 1 else None
+    if len(argv) < 2:
+        print('用法: probe_syntax.py <pcc.exe> [aipy_run.exe]',
+              file=sys.stderr)
+        return 2
+    pcc = argv[1]
+    run_exe = argv[2] if len(argv) > 2 else None
+    if not os.path.isfile(pcc):
+        print('找不到 %s' % pcc, file=sys.stderr)
+        return 2
     failures = []
     stats = {'ok': 0, 'no': 0}
     rows = []
 
-    scratch = None
-    if run_exe is not None:
-        if not os.path.isfile(run_exe):
-            print('找不到 %s' % run_exe, file=sys.stderr)
-            return 2
-        scratch = tempfile.mkdtemp(prefix='aipy_probe_')
+    scratch = tempfile.mkdtemp(prefix='aipy_probe_')
+    if run_exe is not None and not os.path.isfile(run_exe):
+        print('找不到 %s' % run_exe, file=sys.stderr)
+        return 2
 
     for case in CASES:
         # 4 元组是常规用例；5 元组的第 5 项是「错误信息必须包含的片段」，
@@ -298,7 +302,7 @@ def main(argv):
         # with 就属于后者：语法支持，但 manager 没有 __enter__ 才失败。
         category, name, source, expect = case[:4]
         must_contain = case[4] if len(case) > 4 else None
-        ok, error = probe(source, run_exe, scratch)
+        ok, error = probe(pcc, source, run_exe, scratch)
         actual = 'ok' if ok else 'no'
         stats[actual] += 1
         verdict = '✓' if actual == expect else '✗'

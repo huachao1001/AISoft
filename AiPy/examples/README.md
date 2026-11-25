@@ -6,12 +6,12 @@
 ## 先跑起来
 
 ```bat
-python tools\aipyic\aipyic.py examples\01_basics.py build\01.bc
+build\pcc.exe examples\01_basics.py build\01.bc
 build\aipy_run.exe build\01.bc
 ```
 
-`aipyic.py` 把脚本编成字节码，`aipy_run.exe` 执行它。两步都能单独看：
-`aipyic.py --disasm build\01.bc` 显示生成的指令流。
+`pcc.exe` 把脚本编成字节码，`aipy_run.exe` 执行它。两步都能单独看：
+`pcc.exe --disasm build\01.bc` 显示生成的指令流。
 
 ## 打包成 exe
 
@@ -39,7 +39,7 @@ build\examples\06_files.exe       405 KB（含 fs/time/json 三个库）
 单个脚本打包也是一行：
 
 ```bat
-python tools\aipyic\aipyic.py --exe examples\04_tool.py build\invoice.exe
+build\pcc.exe --exe examples\04_tool.py build\invoice.exe
 ```
 
 ### 打包在做什么
@@ -51,7 +51,7 @@ python tools\aipyic\aipyic.py --exe examples\04_tool.py build\invoice.exe
 ```
 
 Windows 加载器只按节表映射镜像，尾部多余字节不参与加载，所以不需要资源段，
-也不需要任何编译器参与打包。**打包全过程是纯 Python 的文件复制。**
+也不需要任何编译器参与打包。**打包全过程是文件复制。**
 
 为什么不把脚本编成 C++ 数组再编译：那要求每次改脚本都重新编译并链接，而
 用户机器上只有 `link.exe`。那条路会把「改一行脚本」变成「装一套 MSVC」。
@@ -60,10 +60,9 @@ Windows 加载器只按节表映射镜像，尾部多余字节不参与加载，
 
 ```bat
 :: 从打包产物里取回字节码（调试用）
-python tools\aipyic\aipyic.py --unbundle build\invoice.exe build\back.bc
-
+build\pcc.exe --unbundle build\invoice.exe build\back.bc
 :: 反汇编看指令流
-python tools\aipyic\aipyic.py --disasm build\back.bc
+build\pcc.exe --disasm build\back.bc
 ```
 
 `--exe` 默认自动找最新构建出来的 `aipy_app.exe`；换构建目录时用

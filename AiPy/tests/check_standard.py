@@ -61,12 +61,18 @@ def main(argv):
 
     # 所有系统库都必须用同一套宏。这条是「标准化」的实际判据：加一个新库
     # 时不复制任何私有注册代码，只写 AIPY_PYLIB_MODULE + 若干 FUNCTION。
+    #
+    # libs/io 是例外：它不是能力，是 fs / os / os.path 共用的路径与换行
+    # 工具层，没有注册项也不导出任何脚本函数。所以不要求 module.cpp。
+    shared_layers = {'io'}
+
     system_libraries = []
     libs_root = os.path.join(root, 'libs')
     if os.path.isdir(libs_root):
         system_libraries = sorted(
             name for name in os.listdir(libs_root)
-            if os.path.isdir(os.path.join(libs_root, name)))
+            if os.path.isdir(os.path.join(libs_root, name))
+            and name not in shared_layers)
 
     check('libs/ 下有多个系统库（至少 thread/fs/time/json 四个）',
           len(system_libraries) >= 4, str(system_libraries))
@@ -77,7 +83,11 @@ def main(argv):
             check('%s 有 module.cpp' % name, False, '缺失')
             continue
         declared = macro_lines(module_cpp)
-        ok = any(l.startswith('AIPY_PYLIB_MODULE(%s)' % name) for l in declared)
+        # 点分模块名（`os.path`）用 _NAMED 变体：符号前缀是 os_path，
+        # 对外名字带点。两种都算「用了标准宏」。
+        ok = any(l.startswith('AIPY_PYLIB_MODULE(%s)' % name) or
+                 l.startswith('AIPY_PYLIB_MODULE_NAMED(%s,' % name)
+                 for l in declared)
         check('%s 用 AIPY_PYLIB_MODULE(%s)' % (name, name), ok, str(declared))
 
         # 每个 fn_*.cpp 必须用 FUNCTION 宏，且模块名对得上。
@@ -88,13 +98,16 @@ def main(argv):
             if not file_name.startswith('fn_') or not file_name.endswith('.cpp'):
                 continue
             lines = macro_lines(os.path.join(src_dir, file_name))
-            functions = [l for l in lines if l.startswith('AIPY_PYLIB_FUNCTION(')]
+            functions = [l for l in lines
+                         if l.startswith('AIPY_PYLIB_FUNCTION(') or
+                         l.startswith('AIPY_PYLIB_FUNCTION_NAMED(')]
             if not functions:
                 bad.append('%s 没有 AIPY_PYLIB_FUNCTION' % file_name)
                 continue
             produced += len(functions)
             for line in functions:
-                if not line.startswith('AIPY_PYLIB_FUNCTION(%s,' % name):
+                if not (line.startswith('AIPY_PYLIB_FUNCTION(%s,' % name) or
+                        line.startswith('AIPY_PYLIB_FUNCTION_NAMED(%s,' % name)):
                     bad.append('%s 的模块名不是 %s' % (file_name, name))
         check('%s 的导出函数都用 FUNCTION 宏（%d 个）' % (name, produced),
               not bad and produced > 0, str(bad))
@@ -130,37 +143,29 @@ def main(argv):
     check('旧的 AIPY_THREADING_FN 已全部迁走', not legacy, str(legacy))
 
     print()
-    print('── 4.1 跨平台：平台细节集中在 toolchain.py ──')
+    print('── 4.1 跨平台：平台细节集中在 toolchain ──')
 
-    toolchain = os.path.join(root, 'tools/aipyic/toolchain.py')
-    check('存在 tools/aipyic/toolchain.py', os.path.isfile(toolchain))
+    # 平台细节的唯一落点。Python 版（tools/aipyic）已降级为测试 oracle，
+    # 发布件是 tools/pcc 里的 C++ 实现，所以这条断言必须盯着后者——
+    # 盯 oracle 等于保护一个用户根本不会运行的文件。
+    toolchain_cpp = os.path.join(root, 'tools/pcc/src/backend/toolchain.cpp')
+    toolchain_h = os.path.join(root, 'tools/pcc/include/pcc/backend/toolchain.h')
+    check('存在 tools/pcc 的 toolchain 实现',
+          os.path.isfile(toolchain_cpp) and os.path.isfile(toolchain_h))
 
-    link_py = read(os.path.join(root, 'tools/aipyic/link.py'))
-    # link.py 里不该再有写死的平台参数；它们属于 toolchain。
-    platform_tokens = ["'/INCLUDE:", "'/WHOLEARCHIVE:", "advapi32", "uuid.lib"]
-    found = [token for token in platform_tokens if token in link_py]
-    check('link.py 里没有写死的链接器参数', not found, str(found))
+    # link 里不该再有写死的链接器参数；它们属于 toolchain。
+    link_cpp = read(os.path.join(root, 'tools/pcc/src/backend/link.cpp'))
+    platform_tokens = ['"/INCLUDE:', '"/WHOLEARCHIVE:', 'advapi32', 'uuid.lib']
+    found = [token for token in platform_tokens if token in link_cpp]
+    check('link.cpp 里没有写死的链接器参数', not found, str(found))
 
-    check('link.py 通过 for_current_host 取平台实现',
-          'for_current_host' in link_py)
+    check('link.cpp 通过 makeToolchain 取平台实现',
+          'makeToolchain' in link_cpp)
 
-    # 不支持的平台必须报清晰错误，而不是抛 NameError 或静默返回空。
-    sys.path.insert(0, os.path.join(root, 'tools', 'aipyic'))
-    import toolchain as module
-    try:
-        original = sys.platform
-        sys.platform = 'linux'
-        try:
-            module.for_current_host('ld')
-            raised = None
-        except module.ToolchainError as error:
-            raised = str(error)
-        finally:
-            sys.platform = original
-        check('不支持的平台报 ToolchainError（而不是崩溃）',
-              raised is not None and '还没有实现' in raised, str(raised))
-    except ImportError as error:
-        check('能 import toolchain', False, str(error))
+    # 不支持的平台必须报清晰错误，而不是返回一个半成品实现。
+    toolchain_source = read(toolchain_cpp)
+    check('不支持的平台走 unsupportedPlatform 分支',
+          'unsupportedPlatform' in toolchain_source)
 
     print()
     if FAILURES:

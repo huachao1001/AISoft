@@ -231,6 +231,34 @@ class Compiler:
             self.extensions.append(qualified)
         return self.extensions.index(qualified)
 
+    def dotted_name(self, node):
+        """把纯属性链摊成点分名（`os` / `os.path` / `os.path.joiner`）。
+
+        只接受「根是 Name、往上全是 Attribute」这一种形态：`f().x` 或
+        `a[0].x` 不是模块引用，返回空串让调用方走方法调用那条路。
+        """
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            base = self.dotted_name(node.value)
+            return base + '.' + node.attr if base else ''
+        return ''
+
+    def is_module(self, name):
+        """这个点分名是不是 import 过的模块。
+
+        两条判据：
+          1. 精确匹配（`import os.path`）
+          2. 点分边界上的前缀匹配（`import os` 之后写 `os.path.exists`）
+        第 2 条是 CPython 的真实行为：`import os` 之后 `os.path` 就可用。
+        """
+        for module in self.imported:
+            if name == module:
+                return True
+            if name.startswith(module + '.'):
+                return True
+        return False
+
     def builtin_index(self, name):
         """按首次使用顺序发内建下标。
 
@@ -1086,25 +1114,48 @@ class Compiler:
             self.block.emit_u8(len(node.args))
             return
 
+        # 裸名：可能是库注册的内建（`open`）
+        #
+        # 走到这里说明这个名字既不是语言内建、也不是脚本内函数。它可能是一个
+        # 库用 AIPY_PYLIB_BUILTIN 注册的短名（`open` → `fs.open`）。
+        #
+        # 这里不拒绝：编译器按设计不认识具体能力，而库是可插拔的。编成按名字
+        # 的扩展调用，由打包期决定能不能解析；解析不到就报
+        # 「没有任何库声明这个名字」。代价是拼写错误从编译期推迟到打包期，
+        # 换来的是「新增裸名不用改编译器」。
+        if isinstance(node.func, ast.Name):
+            if node.keywords:
+                raise CompileError('不支持关键字传参；按位置传', self.filename, node)
+            for argument in node.args:
+                self.expr(argument)
+            self.block.emit('CALL_EXT', node)
+            self.block.emit_u16(self.extension_index(node.func.id))
+            self.block.emit_u8(len(node.args))
+            return
+
         # 扩展：模块.函数(...)
         if isinstance(node.func, ast.Attribute):
             if node.keywords:
                 raise CompileError('不支持关键字传参；按位置传', self.filename, node)
             # 接收者是扩展模块名时走 CALL_EXT；否则是方法调用。
-            receiver = node.func.value
-            if isinstance(receiver, ast.Name) and receiver.id in self.imported:
+            #
+            # 模块名可以是点分的（`os.path.exists`）：取接收者的完整属性链，
+            # 再判断它是不是 import 过的模块（含点分前缀匹配——`import os`
+            # 之后 `os.path` 就可用，与 CPython 一致）。
+            receiver_name = self.dotted_name(node.func.value)
+            if receiver_name and self.is_module(receiver_name):
                 # 限定名进产物；函数指针由加载器按名字从已链接的 pylib 里查。
                 # 产物里不出现任何地址——同一个脚本换一套 pylib 链接组合也照样跑。
                 for argument in node.args:
                     self.expr(argument)
-                qualified = receiver.id + '.' + node.func.attr
+                qualified = receiver_name + '.' + node.func.attr
                 self.block.emit('CALL_EXT', node)
                 self.block.emit_u16(self.extension_index(qualified))
                 self.block.emit_u8(len(node.args))
                 return
             # 压栈顺序：接收者在下、参数在上。VM 从栈顶弹参数、
             # 最后弹接收者，所以接收者必须先压。
-            self.expr(receiver)
+            self.expr(node.func.value)
             for argument in node.args:
                 self.expr(argument)
             self.block.emit('CALL_METHOD', node)

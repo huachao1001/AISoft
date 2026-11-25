@@ -39,6 +39,12 @@ __declspec(allocate(".aipyfn$a")) ::aipy::pylib::Function aipy_pylib_fn_begin = 
     nullptr, nullptr, nullptr};
 __declspec(allocate(".aipyfn$z")) ::aipy::pylib::Function aipy_pylib_fn_end = {
     nullptr, nullptr, nullptr};
+
+// 裸名级哨兵。第三对，用途同上。
+__declspec(allocate(".aipybare$a")) ::aipy::pylib::BuiltinName
+    aipy_pylib_bare_begin = {nullptr, nullptr, nullptr};
+__declspec(allocate(".aipybare$z")) ::aipy::pylib::BuiltinName
+    aipy_pylib_bare_end = {nullptr, nullptr, nullptr};
 }
 
 namespace aipy {
@@ -47,11 +53,14 @@ namespace {
 
 using Module = ::aipy::pylib::Module;
 using Function = ::aipy::pylib::Function;
+using BuiltinName = ::aipy::pylib::BuiltinName;
 
 const Module* firstModule() { return &aipy_pylib_begin + 1; }
 const Module* lastModule() { return &aipy_pylib_end; }
 const Function* firstFunction() { return &aipy_pylib_fn_begin + 1; }
 const Function* lastFunction() { return &aipy_pylib_fn_end; }
+const BuiltinName* firstBare() { return &aipy_pylib_bare_begin + 1; }
+const BuiltinName* lastBare() { return &aipy_pylib_bare_end; }
 
 // 模块名是否真的注册过。
 //
@@ -88,7 +97,12 @@ std::vector<const char*> linkedModules() {
 
 vm::ExtensionFn resolve(const char* qualified) {
   if (qualified == nullptr) return nullptr;
-  const char* dot = std::strchr(qualified, '.');
+  // 按**最后一个**点切：函数名永远不含点，而模块名可以（`os.path.exists`）。
+  //
+  // 按第一个点切会把 `os.path.exists` 读成模块 `os` + 函数 `path.exists`，
+  // 于是 moduleRegistered("os") 失败，运行时报「没有链接进来」——但产物里
+  // 明明注册了 `os.path`。这个坑的症状是「链接信息正确、运行却说不存在」。
+  const char* dot = std::strrchr(qualified, '.');
   if (dot == nullptr) return nullptr;
   const std::size_t moduleLength = static_cast<std::size_t>(dot - qualified);
   const char* function = dot + 1;
@@ -110,6 +124,65 @@ vm::ExtensionFn resolve(const char* qualified) {
   return nullptr;
 }
 
+bool bareRegistered(const char* bare) {
+  if (bare == nullptr) return false;
+  const std::size_t length = std::strlen(bare);
+  for (const BuiltinName* it = firstBare(); it < lastBare(); ++it) {
+    if (it->bare == nullptr) continue;
+    if (std::strlen(it->bare) != length) continue;
+    if (std::memcmp(it->bare, bare, length) == 0) return true;
+  }
+  return false;
+}
+
+vm::ExtensionFn resolveBare(const char* bare) {
+  if (bare == nullptr) return nullptr;
+  const std::size_t length = std::strlen(bare);
+  for (const BuiltinName* it = firstBare(); it < lastBare(); ++it) {
+    if (it->bare == nullptr || it->module == nullptr ||
+        it->name == nullptr) {
+      continue;
+    }
+    if (std::strlen(it->bare) != length) continue;
+    if (std::memcmp(it->bare, bare, length) != 0) continue;
+
+    // 找到裸名了，但它所属的模块没被链接进来（只点了裸名项、没点模块项，
+    // 或者库根本没链）。返回 nullptr，让调用方报「没有链接进来」——这与
+    // 限定名的处理一致：注册项在、实现不在，就是没链接。
+    const std::size_t moduleLength = std::strlen(it->module);
+    if (!moduleRegistered(it->module, moduleLength)) return nullptr;
+
+    // 再按模块+函数名找出实现。不能直接信裸名表里的信息：「函数是否真的
+    // 被点进产物」由 .aipyfn 那节决定，裸名只说明「可以这么叫」。
+    const std::size_t nameLength = std::strlen(it->name);
+    for (const Function* fn = firstFunction(); fn < lastFunction(); ++fn) {
+      if (fn->module == nullptr || fn->name == nullptr || fn->fn == nullptr) {
+        continue;
+      }
+      if (std::strlen(fn->module) != moduleLength) continue;
+      if (std::memcmp(fn->module, it->module, moduleLength) != 0) continue;
+      if (std::strlen(fn->name) != nameLength) continue;
+      if (std::memcmp(fn->name, it->name, nameLength) != 0) continue;
+      return fn->fn;
+    }
+    return nullptr;
+  }
+  return nullptr;
+}
+
+std::vector<std::string> linkedBareNames() {
+  std::vector<std::string> entries;
+  for (const BuiltinName* it = firstBare(); it < lastBare(); ++it) {
+    if (it->bare == nullptr || it->module == nullptr ||
+        it->name == nullptr) {
+      continue;
+    }
+    entries.push_back(std::string(it->bare) + " <- " + it->module + "." +
+                      it->name);
+  }
+  return entries;
+}
+
 }  // namespace pylib
 }  // namespace aipy
 
@@ -127,6 +200,9 @@ namespace pylib {
 int linkedModuleCount() { return 0; }
 std::vector<const char*> linkedModules() { return {}; }
 vm::ExtensionFn resolve(const char*) { return nullptr; }
+vm::ExtensionFn resolveBare(const char*) { return nullptr; }
+bool bareRegistered(const char*) { return false; }
+std::vector<std::string> linkedBareNames() { return {}; }
 }  // namespace pylib
 }  // namespace aipy
 

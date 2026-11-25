@@ -1,24 +1,26 @@
 """生成 test_vm 需要的字节码，并检查编译器与 VM 的操作码表一致。
 
 这个脚本是「两套语言实现之间唯一的契约检查」。操作码编号在
-`vm_compiler.py` 的 OPCODES 表里、在 `vm.h` 的 enum class 里各有一份，
-顺序错一个就是「所有指令集体错位」，而症状是「程序跑出莫名其妙的结果」，
-不是崩溃。所以必须自动对拍。
+`tools/pcc/src/codegen/tables.cpp` 的表里、在 `vm.h` 的 enum class 里
+各有一份，顺序错一个就是「所有指令集体错位」，而症状是「程序跑出莫名其妙的
+结果」，不是崩溃。所以必须自动对拍。
+
+字节码由 `pcc.exe` 生成——它是发布件本身，用它生成测试输入等于顺带
+验证「编译器产出的字节码 VM 能读」。
+
+用法：build_bytecode.py <pcc.exe> --output-dir <dir>
 """
 
 import io
 import os
 import re
+import subprocess
 import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-AIPYIC = os.path.normpath(os.path.join(HERE, '..', 'tools', 'aipyic'))
 AIPY = os.path.normpath(os.path.join(HERE, '..'))
-sys.path.insert(0, AIPYIC)
-
-import pack as bytecode_pack
-import compiler as vm_compiler
+TABLES = os.path.join(AIPY, 'tools', 'pcc', 'src', 'codegen', 'tables.cpp')
 
 
 def opcodes_from_header():
@@ -42,8 +44,22 @@ def opcodes_from_header():
     return names
 
 
+def table_names(source, table):
+    """从 tables.cpp 的 `const char* const k<Table>[] = {...}` 取字符串。"""
+    path = os.path.join(AIPY, 'tools', 'pcc', 'src', 'codegen', 'tables.cpp')
+    with io.open(path, 'r', encoding='utf-8') as handle:
+        text = handle.read()
+    match = re.search(r'const char\* const %s\[\] = \{(.*?)\};' % table,
+                      text, re.DOTALL)
+    if not match:
+        raise SystemExit('tables.cpp 里找不到 %s' % table)
+    # 注释里也可能有引号，先去掉注释行。
+    body = re.sub(r'//[^\n]*', '', match.group(1))
+    return re.findall(r'"([^"]*)"', body)
+
+
 def normalize(name):
-    """kLoadLocal → LOAD_LOCAL，用来与 Python 侧的名字对齐。"""
+    """kLoadLocal → LOAD_LOCAL，用来与 C++ 侧的名字对齐。"""
     if name.startswith('k'):
         name = name[1:]
     return re.sub(r'(?<!^)(?=[A-Z])', '_', name).upper()
@@ -51,15 +67,15 @@ def normalize(name):
 
 def check_opcodes():
     header = [normalize(name) for name in opcodes_from_header()]
-    python = list(vm_compiler.OPCODES)
-    if header == python:
+    names = table_names(TABLES, 'kOpNames')
+    if header == names:
         return []
     problems = []
-    for index in range(max(len(header), len(python))):
+    for index in range(max(len(header), len(names))):
         h = header[index] if index < len(header) else '<缺失>'
-        p = python[index] if index < len(python) else '<缺失>'
-        if h != p:
-            problems.append('  第 %d 条：vm.h=%s  compiler.py=%s' % (index, h, p))
+        c = names[index] if index < len(names) else '<缺失>'
+        if h != c:
+            problems.append('  第 %d 条：vm.h=%s  tables.cpp=%s' % (index, h, c))
     return ['操作码表不一致：'] + problems
 
 
@@ -67,7 +83,7 @@ def check_tables():
     problems = []
     problems.extend(check_opcodes())
 
-    # 内建表：Python 侧的名字与 AiPy 的 kBuiltinTable 顺序必须一致。
+    # 内建表：编译器的名字与 AiPy 的 kBuiltinTable 顺序必须一致。
     path = os.path.join(AIPY, 'src', 'builtins.cpp')
     with io.open(path, 'r', encoding='utf-8') as handle:
         text = handle.read()
@@ -76,29 +92,41 @@ def check_tables():
         problems.append('builtins.cpp 里找不到 kBuiltinTable')
         return problems
     names = re.findall(r'\{"([^"]+)"', match.group(1))
-    if names != vm_compiler.BUILTINS:
+    compiled = table_names(TABLES, 'kBuiltins')
+    if names != compiled:
         problems.append('内建表不一致：')
-        problems.append('  AiPy  : %s' % ', '.join(names))
-        problems.append('  Python: %s' % ', '.join(vm_compiler.BUILTINS))
+        problems.append('  AiPy      : %s' % ', '.join(names))
+        problems.append('  编译器    : %s' % ', '.join(compiled))
     return problems
 
 
-def generate(script, output):
-    program = vm_compiler.compile_file(script)
-    size = bytecode_pack.write_file(program, output)
-    print('  %-28s %6d 字节' % (os.path.basename(output), size))
+def generate(pcc, script, output):
+    completed = subprocess.run([pcc, script, output], capture_output=True,
+                               text=True, encoding='utf-8', errors='replace')
+    if completed.returncode != 0:
+        raise SystemExit('编译 %s 失败：%s'
+                         % (os.path.basename(script), completed.stderr.strip()))
+    print('  %-28s %6d 字节' % (os.path.basename(output),
+                                os.path.getsize(output)))
 
 
 def main(argv):
+    if len(argv) < 2:
+        print('用法: build_bytecode.py <pcc.exe> [--output-dir <dir>]',
+              file=sys.stderr)
+        return 2
+    # argv 是「去掉脚本名之后」的参数，所以第一个就是 pcc。
+    # 写成 argv[1] 会把 "--output-dir" 当编译器路径，症状是
+    # FileNotFoundError: 系统找不到指定的文件。
+    pcc = os.path.abspath(argv[0])
+
     output_dir = None
-    rest = []
-    index = 0
+    index = 1
     while index < len(argv):
         if argv[index] == '--output-dir' and index + 1 < len(argv):
             output_dir = argv[index + 1]
             index += 2
             continue
-        rest.append(argv[index])
         index += 1
 
     problems = check_tables()
@@ -116,7 +144,7 @@ def main(argv):
     for name in sorted(os.listdir(scripts_dir)):
         if not name.endswith('.py'):
             continue
-        generate(os.path.join(scripts_dir, name),
+        generate(pcc, os.path.join(scripts_dir, name),
                  os.path.join(out_dir, name[:-3] + '.bc'))
         count += 1
     print('操作码与内建表一致；生成了 %d 份字节码 -> %s' % (count, out_dir))
@@ -125,3 +153,4 @@ def main(argv):
 
 if __name__ == '__main__':
     sys.exit(main(sys.argv[1:]))
+

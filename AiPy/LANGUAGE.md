@@ -4,13 +4,13 @@
 够打包成 exe，但去掉了所有需要「对象模型、异常通道、一等函数、模块系统」
 的特性。
 
-这份清单不是凭记忆写的。每一条都由 `tests/probe_syntax.py` 实测：编成
-字节码、用 `aipy_run.exe` 真的跑一遍，把结果记下来。共 184 条，当前
-**125 条支持、59 条不支持**。
+这份清单不是凭记忆写的。每一条都由 `tests/probe_syntax.py` 实测：用
+`pcc.exe` 编成字节码、再用 `aipy_run.exe` 真的跑一遍，把结果记下来。
+共 186 条，当前 **146 条支持、40 条不支持**。
 
 ```bat
 :: 重跑一遍（改了编译器后必做）
-python tests\probe_syntax.py build\final\aipy_run.exe
+python tests\probe_syntax.py build\final\pcc.exe build\final\aipy_run.exe
 ```
 
 > **为什么必须真的跑，不能只看编译**：方法名是运行期查表的。
@@ -249,8 +249,17 @@ class App(Activity):
 ### 内建函数
 
 `sorted` `enumerate` `zip` `map` `filter` `any` `all` `reversed`
-`isinstance` `type` `input` `open` `help` `dir` `id` `hash` `repr`
+`isinstance` `type` `input` `help` `dir` `id` `hash` `repr`
 `chr` `ord` `bin` `hex` `oct` `divmod` `pow` `sum(生成器)` 全部不支持。
+
+`open` **支持**，但它的实现来自 `fs.pylib`：库用 `AIPY_PYLIB_BUILTIN` 把它
+注册成裸名，所以脚本里写 `open(p)` 不用 import。这是「库能注册内建」的机制，
+不是编译器内置了 `open`。
+
+上表那些名字现在**编译期不再报错**（它们被编成按名字的扩展调用），而是在
+**打包期**报「没有任何库声明这个名字」。原因：编译器不认识具体能力，而库
+是可插拔的——同一个脚本在不同产物里可以链不同的库。代价是拼写错误推迟到
+打包期，换来的是新增裸名不用改编译器。
 
 内建也不能当值用：`f = len` 报错。
 

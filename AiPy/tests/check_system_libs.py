@@ -17,9 +17,10 @@
 「约定」最容易在改动中退化：某个函数改成返回空列表而不是 None，调用方
 的 `if x == None` 会静默失效。
 
-用法：check_system_libs.py <aipyic.py> <build 目录> <lib 目录> <python>
+用法：check_system_libs.py <pcc.exe> <build 目录> <lib 目录>
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -28,43 +29,47 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 AIPY = os.path.normpath(os.path.join(HERE, '..'))
 
-FS_SCRIPT = '''import fs
+FS_SCRIPT = '''import os
+import os.path
 
 DIR = "work"
-print("mkdir " + str(fs.mkdir(DIR)))
+print("makedirs " + str(os.makedirs(DIR)))
 
 path = DIR + "/a.txt"
-print("write " + str(fs.write_text(path, "line1\\nline2\\n")))
-print("exists " + str(fs.exists(path)))
-print("size_ok " + str(fs.size(path) > 0))
-print("is_file " + str(fs.is_file(path)))
-print("is_dir " + str(fs.is_dir(DIR)))
+with open(path, "w") as handle:
+    handle.write("line1\\nline2\\n")
+print("exists " + str(os.path.exists(path)))
+print("size_ok " + str(os.path.getsize(path) > 0))
+print("is_file " + str(os.path.isfile(path)))
+print("is_dir " + str(os.path.isdir(DIR)))
 
-text = fs.read_text(path)
+with open(path) as handle:
+    text = handle.read()
 print("read " + str(len(text)))
 
-fs.append_text(path, "line3\\n")
-print("append " + str(fs.size(path) > 0))
+with open(path, "a") as handle:
+    handle.write("line3\\n")
+print("append " + str(os.path.getsize(path) > 0))
 
-entries = fs.listdir(DIR)
+entries = os.listdir(DIR)
 entries.sort()
 print("list " + str(entries))
 
-# 不存在的文件：read_text 返回 None，不是空串。
-print("missing " + str(fs.read_text(DIR + "/nope.txt") == None))
-print("missing_size " + str(fs.size(DIR + "/nope.txt")))
+# 不存在的文件：exists 返回 False，getsize 返回 -1。
+print("missing " + str(os.path.exists(DIR + "/nope.txt")))
+print("missing_size " + str(os.path.getsize(DIR + "/nope.txt")))
 
 # with 文件对象：退出必关。
-with fs.open(path, "w") as handle:
+with open(path, "w") as handle:
     handle.write("rewritten")
-print("with_write " + str(fs.read_text(path)))
+with open(path) as handle:
+    print("with_write " + handle.read())
 
-print("remove " + str(fs.remove(path)))
-print("remove_missing " + str(fs.remove(path)))
+print("remove " + str(os.remove(path)))
+print("remove_missing " + str(os.remove(path)))
 '''
 
-FS_EXPECTED = '''mkdir True
-write True
+FS_EXPECTED = '''makedirs True
 exists True
 size_ok True
 is_file True
@@ -72,7 +77,7 @@ is_dir True
 read 12
 append True
 list ['a.txt']
-missing True
+missing False
 missing_size -1
 with_write rewritten
 remove True
@@ -132,11 +137,22 @@ print("non_string_key " + str(json.dumps({1: 2}) == None))
 NONE_OK = 'print("none_ok " + str(None == None))\n'
 
 
-def build_exe(aipyic, script, output, build_dir, lib_dir, python):
-    command = [python, aipyic, '--exe', script, output, '--build-dir', build_dir]
+def build_exe(pcc, script, output, build_dir, lib_dir):
+    command = [pcc, '--exe', script, output, '--build-dir', build_dir]
     if lib_dir:
         command += ['--lib-dir', lib_dir]
     return subprocess.run(command, capture_output=True, text=True, encoding='utf-8')
+
+
+def linked_functions(pcc, exe):
+    """读产物 `.aipyfn` 节里真实的扩展函数清单。"""
+    completed = subprocess.run([pcc, '--linked-info', exe],
+                               capture_output=True, text=True, encoding='utf-8')
+    if completed.returncode != 0:
+        raise SystemExit('读不到 %s 的注册节：%s'
+                         % (os.path.basename(exe), completed.stderr.strip()))
+    payload = json.loads('{' + completed.stdout + '}')
+    return [(entry[0], entry[1]) for entry in payload['functions']]
 
 
 def run(exe, cwd=None, timeout=30):
@@ -149,18 +165,16 @@ def run(exe, cwd=None, timeout=30):
 
 
 def main(argv):
-    if len(argv) < 5:
-        print('用法: check_system_libs.py <aipyic.py> <build> <libdir> <python>',
+    if len(argv) < 4:
+        print('用法: check_system_libs.py <pcc.exe> <build> <libdir>',
               file=sys.stderr)
         return 2
-    aipyic = os.path.abspath(argv[1])
+    pcc = os.path.abspath(argv[1])
     build_dir = os.path.abspath(argv[2])
     lib_dir = os.path.abspath(argv[3])
-    python = argv[4]
-
-    sys.path.insert(0, os.path.join(AIPY, 'tools', 'aipyic'))
-    import compiler
-    import link
+    if not os.path.isfile(pcc):
+        print('找不到 %s' % pcc, file=sys.stderr)
+        return 2
 
     failures = []
     scratch = tempfile.mkdtemp(prefix='aipy_system_')
@@ -174,7 +188,7 @@ def main(argv):
     def case(label, text, name, expected, cwd=None):
         script = write(name + '.py', text)
         exe = os.path.join(scratch, name + '.exe')
-        result = build_exe(aipyic, script, exe, build_dir, lib_dir, python)
+        result = build_exe(pcc, script, exe, build_dir, lib_dir)
         if result.returncode != 0:
             failures.append('%s 打包失败：%s'
                             % (label, result.stderr.strip() or result.stdout.strip()))
@@ -204,39 +218,37 @@ def main(argv):
     case('time 功能', TIME_SCRIPT, 'time_case', TIME_EXPECTED)
     case('json 功能', JSON_SCRIPT, 'json_case', JSON_EXPECTED)
 
-    # ── 函数级按需：每个库只点一个函数 ──    print()
+    # ── 函数级按需：每个库只点一个函数 ──
+    #
+    # 判据是产物 `.aipyfn` 节里的实际内容，不是打包器打印的摘要：摘要只是
+    # 「自己说点了什么」，而这里要验的是「链接器真的合并进了什么」。
     checks = [
-        ('fs', 'import fs\nprint(fs.exists("."))\n', 'exists'),
+        # 裸名 open 解析到 fs.open，产物里应当只有 fs 这一个模块。
+        # 路径用 forward slash：脚本源码是 Python，反斜杠会被当转义符。
+        ('fs', 'f = open("probe_open_target.txt", "w")\nf.close()\n', 'open'),
+        ('os', 'import os\nprint(os.listdir("."))\n', 'listdir'),
+        ('os.path', 'import os.path\nprint(os.path.exists("."))\n', 'exists'),
         ('time', 'import time\nprint(time.time() > 0)\n', 'time'),
         ('json', 'import json\nprint(json.dumps(1))\n', 'dumps'),
     ]
     for module, source, wanted in checks:
-        script = write('only_%s.py' % module, source)
-        program = compiler.compile_file(script)
-        probe = os.path.join(scratch, 'probe_%s.exe' % module)
-        try:
-            result = link.relink(build_dir, lib_dir, [module], probe,
-                                 extensions=program['extensions'])
-        except link.LinkError as error:
-            failures.append('%s 探针链接失败：%s' % (module, error))
-            print('  ✗ %s 探针链接失败' % module)
+        script = write('only_%s.py' % module.replace('.', '_'), source)
+        probe = os.path.join(scratch, 'probe_%s.exe' % module.replace('.', '_'))
+        built = build_exe(pcc, script, probe, build_dir, lib_dir)
+        if built.returncode != 0:
+            failures.append('%s 探针打包失败：%s'
+                            % (module, built.stderr.strip() or built.stdout.strip()))
+            print('  ✗ %s 探针打包失败' % module)
             continue
 
-        symbols = result.symbols
-        # 必须点名：目标函数 + 模块注册项。不能有别的函数的符号。
-        expected_min = {'aipy_%s_fn_%s' % (module, wanted),
-                        'aipy_pylib_entry_%s' % module}
-        extra = [s for s in symbols if s not in expected_min]
-        if extra:
-            failures.append('%s 只调 %s，却多点了 %s'
-                            % (module, wanted, ', '.join(extra)))
-            print('  ✗ %s 函数级按需失效：多点了 %s' % (module, ', '.join(extra)))
-        elif not expected_min.issubset(set(symbols)):
-            failures.append('%s 缺少必要符号：期望 %s，实际 %s'
-                            % (module, sorted(expected_min), symbols))
-            print('  ✗ %s 缺少必要符号' % module)
+        linked = linked_functions(pcc, probe)
+        if linked != [(module, wanted)]:
+            failures.append('%s 只调 %s，产物里却是 %r'
+                            % (module, wanted, linked))
+            print('  ✗ %s 函数级按需失效：%r' % (module, linked))
         else:
-            print('  ✓ %s 函数级按需：只点名 %s' % (module, ', '.join(sorted(expected_min))))
+            print('  ✓ %s 函数级按需：产物里只有 %s.%s'
+                  % (module, module, wanted))
 
     print()
     if failures:

@@ -14,9 +14,10 @@
 第 2 条只能真的链接两次、再看链接器收到的符号来验——`/INCLUDE` 没点到名
 的 obj 根本不会被抽出，而它「没被抽出」在源码层面看不出来。
 
-用法：check_threading.py <aipyic.py> <build 目录> <lib 目录> <python>
+用法：check_threading.py <pcc.exe> <build 目录> <lib 目录>
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -182,11 +183,22 @@ print("done")
 EXPECTED_THREAD_BAD_ARGS = "done\n"
 
 
-def build_exe(aipyic, script, output, build_dir, lib_dir, python):
-    command = [python, aipyic, '--exe', script, output, '--build-dir', build_dir]
+def build_exe(pcc, script, output, build_dir, lib_dir):
+    command = [pcc, '--exe', script, output, '--build-dir', build_dir]
     if lib_dir:
         command += ['--lib-dir', lib_dir]
     return subprocess.run(command, capture_output=True, text=True, encoding='utf-8')
+
+
+def linked_functions(pcc, exe):
+    """读产物 `.aipyfn` 节里真实的扩展函数清单。"""
+    completed = subprocess.run([pcc, '--linked-info', exe],
+                               capture_output=True, text=True, encoding='utf-8')
+    if completed.returncode != 0:
+        raise SystemExit('读不到 %s 的注册节：%s'
+                         % (os.path.basename(exe), completed.stderr.strip()))
+    payload = json.loads('{' + completed.stdout + '}')
+    return [(entry[0], entry[1]) for entry in payload['functions']]
 
 
 def run(exe, timeout=30):
@@ -199,22 +211,16 @@ def run(exe, timeout=30):
 
 
 def main(argv):
-    if len(argv) < 5:
-        print('用法: check_threading.py <aipyic.py> <build> <libdir> <python>',
+    if len(argv) < 4:
+        print('用法: check_threading.py <pcc.exe> <build> <libdir>',
               file=sys.stderr)
         return 2
-    aipyic = os.path.abspath(argv[1])
+    pcc = os.path.abspath(argv[1])
     build_dir = os.path.abspath(argv[2])
     lib_dir = os.path.abspath(argv[3])
-    python = argv[4]
-
-    # 直接拿 link 模块来查真实的 /INCLUDE 符号清单。
-    #
-    # 为什么不解析打包摘要：摘要只是打包器「自己说要链什么」，而函数级
-    # 按需要验的是「链接器实际收到了什么」。两者可能不一致——最初这个
-    # 测试就是因为信了摘要，在故意注入「全点名」后仍然报通过。
-    sys.path.insert(0, os.path.join(AIPY, 'tools', 'aipyic'))
-    import link
+    if not os.path.isfile(pcc):
+        print('找不到 %s' % pcc, file=sys.stderr)
+        return 2
 
     failures = []
     scratch = tempfile.mkdtemp(prefix='aipy_threading_')
@@ -229,7 +235,7 @@ def main(argv):
         """打包并跑一份脚本，比对完整输出。返回是否通过。"""
         script = write(name + '.py', text)
         exe = os.path.join(scratch, name + '.exe')
-        result = build_exe(aipyic, script, exe, build_dir, lib_dir, python)
+        result = build_exe(pcc, script, exe, build_dir, lib_dir)
         if result.returncode != 0:
             failures.append('%s 打包失败：%s'
                             % (label, result.stderr.strip() or result.stdout.strip()))
@@ -246,56 +252,49 @@ def main(argv):
 
     # ── 1. 功能：脚本函数真的在后台跑，结果正确 ──
     if build_and_run('后台线程结果', USE_THREAD, 'use_thread', EXPECTED):
-        # 打包摘要里应当只列真的调用到的函数。
+        # 产物里应当只列真的调用到的函数。
         script = os.path.join(scratch, 'use_thread.py')
-        result = build_exe(aipyic, script, os.path.join(scratch, 'summary.exe'),
-                           build_dir, lib_dir, python)
-        summary = result.stdout
-        if 'threading.start' not in summary or 'threading.waitAll' not in summary:
-            failures.append('打包摘要没有列出点名的函数：%r' % summary.strip())
-            print('  ✗ 打包摘要缺函数清单')
+        exe = os.path.join(scratch, 'use_thread_check.exe')
+        result = build_exe(pcc, script, exe, build_dir, lib_dir)
+        if result.returncode != 0:
+            failures.append('复查打包失败：%s' % result.stderr.strip())
+            print('  ✗ 复查打包失败')
+        else:
+            linked = set(linked_functions(pcc, exe))
+            wanted = {('threading', 'start'), ('threading', 'waitAll')}
+            if not wanted.issubset(linked):
+                failures.append('产物缺必要的扩展函数：%r' % (sorted(linked),))
+                print('  ✗ 产物缺必要的扩展函数')
+            else:
+                print('  ✓ 产物注册项：%s'
+                      % ', '.join('%s.%s' % entry for entry in sorted(linked)))
 
-    # ── 2. 函数级按需：只用 pending，链接器不该收到别的函数 ──
+    # ── 2. 函数级按需：只用 pending，别的函数不该进产物 ──
     simple = write('only_pending.py', ONLY_PENDING)
     simple_exe = os.path.join(scratch, 'only_pending.exe')
-    result = build_exe(aipyic, simple, simple_exe, build_dir, lib_dir, python)
+    result = build_exe(pcc, simple, simple_exe, build_dir, lib_dir)
     if result.returncode != 0:
         failures.append('只调 pending 的打包失败：%s' % result.stderr.strip())
         print('  ✗ 只调 pending 的打包失败')
     else:
-        # 查真实符号：这是链接器实际收到的 /INCLUDE 列表。
-        import compiler
-        program = compiler.compile_file(simple)
-        probe_out = os.path.join(scratch, 'probe.exe')
-        symbols = []
-        try:
-            link_result = link.relink(build_dir, lib_dir,
-                                      ['threading'], probe_out,
-                                      extensions=program.get('extensions'))
-            symbols = link_result.symbols
-        except link.LinkError as error:
-            failures.append('探针链接失败：%s' % error)
-            print('  ✗ 探针链接失败')
-
-        expected_symbols = ['aipy_threading_fn_pending', 'aipy_pylib_entry_threading']
-        others = ('aipy_threading_fn_start', 'aipy_threading_fn_Thread',
-                  'aipy_threading_fn_waitAll', 'aipy_threading_fn_poll',
-                  'aipy_threading_fn_Lock', 'aipy_threading_fn_Event')
-        unexpected = [name for name in symbols if name in others]
-        if unexpected:
-            failures.append('只调 pending，链接器却收到 %s' % ', '.join(unexpected))
-            print('  ✗ 函数级按需失效：多点了 %s' % ', '.join(unexpected))
-        elif sorted(symbols) != sorted(expected_symbols):
-            failures.append('点名的符号不对：%s（期望 %s）'
-                            % (symbols, expected_symbols))
-            print('  ✗ 点名的符号不对：%s' % symbols)
+        # 查产物里真实的注册项：这是链接器实际合并进 `.aipyfn` 的数据，
+        # 也是 VM 运行时看到的同一份——比打包器自己打印的摘要可信。
+        linked = linked_functions(pcc, simple_exe)
+        others = [entry for entry in linked if entry != ('threading', 'pending')]
+        if others:
+            failures.append('只调 pending，产物里却还有 %r' % (others,))
+            print('  ✗ 函数级按需失效：多链了 %r' % (others,))
+        elif linked != [('threading', 'pending')]:
+            failures.append('产物里的函数不对：%r（期望只有 threading.pending）'
+                            % (linked,))
+            print('  ✗ 产物里的函数不对：%r' % (linked,))
         else:
             code, out, err = run(simple_exe)
             if code != 0 or out.strip() != '0':
                 failures.append('只调 pending 的运行不对：rc=%d out=%r' % (code, out))
                 print('  ✗ 只调 pending 的运行不对')
             else:
-                print('  ✓ 函数级按需：链接器只收到 %s' % ', '.join(symbols))
+                print('  ✓ 函数级按需：产物里只有 threading.pending')
 
     # ── 3. 提交时校验：函数不存在必须立刻返回 0，不能静默排队 ──
     build_and_run('函数不存在返回 0', BAD_FUNCTION, 'bad_function', '0\n')
@@ -309,7 +308,7 @@ def main(argv):
     # ── 5. current_thread：主线程与 worker 的名字 ──
     name_script = write('current_thread.py', CURRENT_THREAD)
     name_exe = os.path.join(scratch, 'current_thread.exe')
-    result = build_exe(aipyic, name_script, name_exe, build_dir, lib_dir, python)
+    result = build_exe(pcc, name_script, name_exe, build_dir, lib_dir)
     if result.returncode != 0:
         failures.append('current_thread 打包失败：%s' % result.stderr.strip())
         print('  ✗ current_thread 打包失败')

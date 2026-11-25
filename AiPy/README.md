@@ -29,9 +29,12 @@ Python 语义的 C++ 运行时。**独立项目，不认识任何界面。**
 它要能被**单独拿走**。宿主不一定是 GUI——命令行工具、测试、将来的服务端
 都可能需要「Python 语义 + C++ 速度」，而它们不该被迫带一个窗口系统。
 
-编译器（`tools/aipyic/`）也在这里，而且只依赖标准库 `ast`。理由和 CPython
-把 `compile` 放解释器里一样：换宿主不该意味着重写编译器；AiPy 被单独拿去
-用时，它必须还能往自己肚子里送程序。
+编译器（`tools/pcc/`，C++）也在这里，只依赖标准库——用户机器上不该有
+解释器。理由和 CPython 把 `compile` 放解释器里一样：换宿主不该意味着重写
+编译器；AiPy 被单独拿去用时，它必须还能往自己肚子里送程序。
+
+Python 版编译器（`tools/aipyic/`）留着当测试 oracle：`aipy_compiler_parity`
+拿它守着「C++ 版产出的字节码逐字节相同」，但它不进发布件。
 
 这条边界有自动化验证：把同级目录里的 PyUI 整个移开，本项目照样配置、
 编译、跑测试全过。
@@ -53,8 +56,8 @@ cd build && ctest --output-on-failure
 ## 编译并运行一个脚本
 
 ```bat
-python tools\aipyic\aipyic.py app.py            :: 生成 app.bc
-python tools\aipyic\aipyic.py --disasm app.bc   :: 反汇编看指令流
+build\pcc.exe app.py                            :: 生成 app.bc
+build\pcc.exe --disasm app.bc                   :: 反汇编看指令流
 build\aipy_run.exe app.bc                       :: 跑一遍，看脚本输出
 build\aipy_vm_dump.exe app.bc                   :: 跑一遍，打印全部状态（JSON）
 ```
@@ -81,7 +84,7 @@ cmake --build build
 单个脚本打包是一行：
 
 ```bat
-python tools\aipyic\aipyic.py --exe app.py app.exe
+build\pcc.exe --exe app.py app.exe
 ```
 
 产物是**单文件**：用户机器上不需要 Python、不需要 MSVC、不需要链接器，
@@ -93,86 +96,232 @@ python tools\aipyic\aipyic.py --exe app.py app.exe
 
 ```
 dist/
-  aipy_app.exe        launcher（纯脚本走这条路，纯文件复制）
-  launcher.obj        重链接入口（带扩展的脚本走这条路）
-  link_recipe.json    构建期录下的链接器 / obj / 库清单
-  aipyic/             编译器与打包器（aipyic.py + compiler/pack/bundle/link/toolchain）
-  lib/aipy.lib        语言运行时
-  lib/aipy_base.lib
-  lib/<模块>_pylib.lib 按需链接的 pylib
+  pcc.exe             编译器 + 打包器（脚本 → 字节码 / exe / 按需链接）
+  lib/core.pylib      语言运行时（runtime / base / launcher 三件套）
+  lib/<模块>.pylib    扩展库，每个模块一个实体归档
 ```
 
-`dist/` 的持有者不需要 CMake、不需要源码树：
+**`dist/` 里没有任何配置文件，只有一个 exe 加一个归档目录。** 这点是踩过
+才定下来的：早先有一个 `link_recipe.json` 记录「链接器在哪、链哪些系统库」，
+三项逐一实测后都不该存在。
+
+| 曾经的字段 | 为什么删 |
+|---|---|
+| `linker` | 是**打包那台机器**的事实，不是构建机的。写进发布件后换台机器就失效，而对方明明装着链接器（实测过这种误报）。现在 pcc 自己找：PATH → vswhere |
+| `libraries` | MSVC 的 `.obj` 自带 `/DEFAULTLIB`，链接器自己会引入。实测四份示例（含最需要 kernel32 的线程库）去掉清单后打包与运行都正常 |
+| `core` | 固定是 `lib/core.pylib`，每个 dist 都同一个值——直接写进代码 |
+
+实测确认了最关键的一条：**把 PATH 清到只剩 `C:\Windows\system32`**，pcc 仍能
+打包并运行。说明链接器是 vswhere 找到的，不依赖 `vcvars64.bat` 设好的环境。
+这正是「拷到任何机器都能用」成立的前提。
+
+**根目录只有编译器，其余全进 `lib/`。** 判据是「这个东西会不会被人直接
+执行、或被程序直接打开」——是就放根，不是就进 `lib/`。
+
+**打包一律走重链接，没有「复制现成 launcher」的旁路。** 早先还有第二个
+exe（`aipy_app.exe`）供纯脚本直接复制——那条路不用链接器、快约 1 秒，但
+代价是要维护第二份同源的入口代码。取消它的理由是**第三方库必然要链接**：
+交付目录里既然一定有一份能链的语言运行时，就不该再有两个基座。
+
+代价：打包一定需要 `link.exe`，纯脚本也一样。收益：`dist/` 里只有一个
+可执行文件，没有「哪份入口在生效」这个问题。
+
+**`lib/` 里没有裸 `.lib`，只有 `.pylib`。** 语言运行时（`aipy.lib`、
+`aipy_base.lib`、重链接入口 `launcher.lib`）也在 `core.pylib` 里——那三件套
+是每一份产物都必须包含的东西，但它们不是能力、是语言本身，所以单独成一个
+归档，而不是散放在目录里。
+
+规则因此只有一句：**`.pylib` 都是库，`core` 是语言、其余是可插拔能力。**
+
+归档里按**角色**存（`runtime` / `base` / `launcher`），不按原始文件名：
+读取端按角色取，于是「哪个是运行时、哪个是入口」是显式的，不必猜。
+
+**`dist/` 里没有任何 `.py`，也没有任何 `.obj`。** 前者因为编译器本身已经是
+二进制；后者因为它只是编译中间产物，出现就意味着把构建目录当发布目录用了。
+
+**测试夹具不进 dist。** `tests/pylib/text` 是验证按需链接的样板库（三个函数
+`upper`/`repeat`/`shout`），不是 CPython 标准库的一部分。它在构建目录里产出
+`text.pylib` 供 `aipy_pylib` 测试使用，但发布清单里没有它——出现在 dist 里
+等于告诉用户「这个库可以用」。
+
+拿到 dist 的人不需要装 Python，也不需要 CMake 或源码树：
 
 ```bat
-python dist\aipyic\aipyic.py --exe app.py app.exe ^
-    --launcher dist\aipy_app.exe --lib-dir dist
+dist\pcc.exe --exe app.py app.exe --lib-dir dist
 ```
 
-带扩展的脚本会自动读 `link_recipe.json` 重链接（不需要 `--build-dir`）。
-**唯一的外部依赖是链接器 `link.exe`**（约 15 MB 的 kit，不是整套 MSVC）；
-换了机器要重新构建一次 `dist/`，因为配方里记的是本机链接器路径。`dist/`
-是派生目录，不入库。
+`--lib-dir` 指向含 `lib/core.pylib` 的目录，重链接就从那里取运行时，不需要
+`--build-dir`。
+
+**外部依赖只剩链接器本身**（`link.exe` 与它那批 DLL 实测 5.2 MB，不是整套
+MSVC）。系统导入库与 `/MT` 的 CRT 仍来自链接器套件——把 CRT 也一起打包是
+另一件事，体积大头在 CRT 静态库（`libucrt.lib` 一个就 41 MB），所以先记着
+TODO、不混进这一轮。`dist/` 是派生目录，不入库。
+
+### `.pylib` 是实体归档，不是一个散落的 `.lib`
+
+交付出去的扩展库是**一个 ZIP 文件**，而不是「一个 `.lib` + 若干口头约定」：
+
+```
+text.pylib  (ZIP, deflate)
+  manifest.json         module / formatVersion / version / platforms
+                        / functions / 可选 bytecode
+  lib/win-x64/text.lib  真正的静态库（按平台分目录）
+  bytecode/text.bc      可选：这个库的 Python 层实现
+```
+
+三件事因此成为「文件里写着的事实」，而不是需要人去遵守的约定：
+
+- **它提供哪些函数** —— `manifest.json` 的 `functions`。打包器据此点名
+  `/INCLUDE`，不必去解析链接器的文本输出。
+- **它是哪个模块** —— `module` 字段，与 `AIPY_PYLIB_MODULE(text)` 一致。
+- **它带不带 Python 层** —— `bytecode` 字段。
+
+**静态库按平台分目录，扩展名也随平台变**（Windows `.lib`、Linux/macOS
+`.a`）。这个布局本身就是答案：「这个库支持哪些平台」看目录名或 `platforms`
+表即可，不必解包探测。一个包可以同时带两份实现：
+
+```
+lib/win-x64/text.lib
+lib/linux-x64/text.a
+```
+
+`manifest.json` 的 `platforms` 把这件事写成显式字段，读取端据此挑当前平台
+那份、并按本平台扩展名落盘（链接器靠扩展名判断它是不是库）。挑不到时**明确
+报错**而不是退回别的平台：
+
+```
+text.pylib: this module has no native library for win-x64 (available: linux-x64)
+```
+
+**库只有 `.pylib` 一种形态，没有裸 `.lib` 兜底。** 构建目录也产出 `.pylib`，
+所以 `--lib-dir build` 与 `--lib-dir dist` 走完全相同的代码路径。允许裸
+`.lib` 的话，那条路只会在测试里活着——测试通过不代表 dist 能用。
+
+**函数清单只信 manifest。** 不从库里反推（既不解析 `link.exe /dump`，也不
+解析 COFF/ELF 符号表）：那两条路失败时都会静默退化成整库链接，产物变大却
+不报错。脚本调了 manifest 里没有的函数就当场报错，指出库里有哪个：
+
+```
+the script calls text.upper but the library in text.pylib does not provide it
+(available: shout); the script and the library are out of sync
+```
+
+**写包用 Python，读包用 C++**。这不是偷懒：写包只发生在构建期，那时一定有
+Python，`zipfile` 直接可用；读包发生在用户机器上（打包脚本时），那里不能有
+解释器。所以 inflate 解压直接复用 7-Zip 的 `DeflateDecoder`
+（`third_party/7z/`，35 个文件、220 KB），不自己写。
+
+为什么用 ZIP 而不是自定义容器：ZIP 的中央目录与 CRC32 是现成的完整性检查，
+而且任何解压工具都能打开——`dist/text.pylib` 出问题时，用资源管理器双击就
+能看见里面到底有什么。
 
 ### 用到扩展时（pylib）
 
-脚本 `import` 了某个扩展并真的调用了它，打包时会自动把对应的 `.lib` 链进去：
+脚本 `import` 了某个扩展并真的调用了它，打包时会自动把对应的库链进去：
 
 ```bat
-python tools\aipyic\aipyic.py --exe app.py app.exe ^
+build\pcc.exe --exe app.py app.exe ^
     --build-dir build --lib-dir build
 ```
 
 - `--build-dir`：CMake 的构建目录。打包器从里面读 `CMakeCache.txt` 与
-  `build.ninja`，拿到 `link.exe` 路径和 launcher 的 obj/库清单——不硬编码
+  `build.ninja`，拿到 `link.exe` 路径和 launcher 的入口/库清单——不硬编码
   任何路径，换 MSVC 版本也不用改代码。
-- `--lib-dir`：`.lib` 所在目录。按 `<模块名>_pylib.lib`（或 `<模块名>.lib`）
-  查找。
+- `--lib-dir`：库所在目录。按 `<模块>.pylib` 查找（也认它的 `lib/` 子目录）。
+  构建目录里产出的就是同一个文件，所以构建与发布走同一条代码路径。
 
 **按需，精确到函数**：判据是字节码里的**扩展表**（真的调用到的「模块.函数」），
 不是 `import` 列表。
 
-- 脚本 `import text` 但一个 `text` 函数都没用 → `text_pylib.lib` 不进产物。
-- 脚本只调 `threading.pending()` → `threading_pylib.lib` 会进，但只抽出
+- 脚本 `import text` 但一个 `text` 函数都没用 → `text.pylib` 不进产物。
+- 脚本只调 `threading.pending()` → `threading.pylib` 会进，但只抽出
   `pending` 所在的 obj；`Thread`/`start`/`waitAll` 的 obj 不会被抽出。
 
-函数级靠 `/INCLUDE:<符号>` 逐个点名。前提是 pylib 侧把每个对外函数做成
-独立编译单元——静态库的抽取粒度是 `.obj`，一个 `.obj` 里塞几个函数就会
-一起被拉进来。`libs/threading/src/fn_*.cpp` 就是这么分的。
+函数级靠 `/INCLUDE:<符号>` 逐个点名，清单来自 `.pylib` 的 manifest。前提是
+pylib 侧把每个对外函数做成独立编译单元——静态库的抽取粒度是 `.obj`，一个
+`.obj` 里塞几个函数就会一起被拉进来。`libs/threading/src/fn_*.cpp` 就是这么
+分的。
+
+想知道某个产物里**实际**链进了哪些函数，不要看打包器打印的摘要（那是它
+自己说点了什么），直接读产物：
+
+```bat
+pcc --linked-info app.exe
+```
+
+它读产物 exe 的 `.aipyfn` 节——链接器合并出来的结果，也是 VM 启动时扫的
+同一份内存。测试用的就是这条路径：摘要不可信这件事踩过一次（故意注入「全
+点名」后摘要照旧、测试仍报通过）。
 
 ### 内置的系统库
 
 `libs/` 下每个目录是一个独立 pylib，模块名与 CPython 标准库同名。
-四个已实现：
+五个已实现：
 
 | 库 | 对标 | 函数 |
 |---|---|---|
 | `threading` | `threading` | `Thread` / `Lock` / `Event` / `current_thread` / `active_count` + `start`/`waitAll`/`poll`/`pending` |
-| `fs` | `open` / `os.path` | `read_text` `write_text` `append_text` `exists` `is_dir` `is_file` `size` `listdir` `mkdir` `remove` `open` |
+| `fs` | 内建 `open` | `open`（**注册为裸名**，见下） |
+| `os` | `os` | `listdir` `makedirs` `remove` |
+| `os.path` | `os.path` | `exists` `isfile` `isdir` `getsize` |
 | `time` | `time` | `time` `monotonic` `sleep` `localtime` `strftime` |
 | `json` | `json` | `dumps` `loads` |
 
 ```python
-import fs
+import os
+import os.path
 import json
 
 path = "data/records.txt"
-fs.mkdir("data")
-fs.write_text(path, "alpha\nbeta\n")
-print(fs.exists(path))                  # True
+os.makedirs("data")
+
+# open 是内建，不是模块函数——和 CPython 一样直接写
+with open(path, "w") as handle:
+    handle.write("alpha\nbeta\n")
+
+print(os.path.exists(path))             # True
+print(os.path.getsize(path))            # 11
+print(os.listdir("data"))               # ['records.txt']
 
 encoded = json.dumps({"names": ["alpha", "beta"], "count": 2})
 print(encoded)                          # {"names":["alpha","beta"],"count":2}
 print(json.loads(encoded)["count"])     # 2
+```
 
-# 文件对象：with 退出必关（包括 return / break / continue）
-with fs.open("out.txt", "w") as handle:
+**`fs` 只提供 `open`。** 原先堆在 `fs` 里的 `read_text` / `write_text` /
+`append_text` 已删除——标准 Python 没有这些（`pathlib` 才有），留着就等于
+发明一套与 CPython 不一致的接口。
+
+### `open` 是裸名：库提供实现，脚本当内建用
+
+`open` 在 CPython 里是**内建**，不是 `os` 的函数。所以 AiPy 也让它这样用：
+
+```python
+with open("a.txt", "w") as handle:   # 不需要 import 任何东西
     handle.write("hello")
 ```
 
-### `fs.open` 对齐 CPython 的文件对象
+实现方式：`fs.pylib` 提供 `fs.open`，再用一条宏把它注册成裸名。
 
-`fs.open(path, mode, encoding)` 按 CPython 解析模式串（`r w a x`、`+`、
+```cpp
+AIPY_PYLIB_FUNCTION(fs, open, openImpl);   // 模块里的函数
+AIPY_PYLIB_BUILTIN(fs, open, open);        // 给它起个短名
+```
+
+这样核心 VM 里一行文件代码都没有——`open` 的实现仍是个库，只是调用方式
+像内建。**代价是拼写错误从编译期推迟到打包期**：编译器不认识具体能力，
+由链接期判断「有没有库声明这个名字」。
+
+```bat
+> pcc --exe app.py app.exe --lib-dir dist
+'not_a_real_builtin' is not a builtin, and no library in dist/lib declares it
+as a bare name
+```
+
+### `open` 对齐 CPython 的文件对象
+
+`open(path, mode, encoding)` 按 CPython 解析模式串（`r w a x`、`+`、
 `b`、`t`），方法名与返回值也一致：
 
 | 方法 | 说明 |
@@ -208,9 +357,10 @@ UTF-8，别的编码要整体转码，那是另一件事。
 
 | 函数 | 失败时返回 |
 |---|---|
-| `fs.read_text` / `fs.open` / `fs.listdir` | `None` |
-| `fs.write_text` / `fs.mkdir` / `fs.remove` | `False` |
-| `fs.size` | `-1` |
+| `open` / `os.listdir` | `None` |
+| `os.makedirs` / `os.remove` | `False` |
+| `os.path.getsize` | `-1` |
+| `os.path.exists` / `isfile` / `isdir` | `False` |
 | `json.dumps` / `json.loads` | `None` |
 
 失败原因走**诊断通道**（默认 stderr），不与 `print` 混在一起——`print` 是
@@ -358,8 +508,8 @@ C++ 只是那个 325 KB 的 launcher，写一次、编译一次，之后所有�
 调试用的两条：
 
 ```bat
-python tools\aipyic\aipyic.py --unbundle app.exe app.bc  :: 取回字节码
-python tools\aipyic\aipyic.py --disasm app.bc            :: 反汇编
+build\pcc.exe --unbundle app.exe app.bc  :: 取回字节码
+build\pcc.exe --disasm app.bc            :: 反汇编
 ```
 
 `examples/` 下有四份纯 Python 示例，全部会打包成 exe 并实跑验证。见
@@ -402,23 +552,35 @@ libs/threading/src/fn_active_count.cpp
 libs/threading/src/fn_current_thread.cpp
 libs/threading/src/module.cpp                      模块级注册（AIPY_PYLIB_MODULE）
 
-libs/fs/src/io.cpp                                路径（UTF-8 ↔ 宽字符）、读写、换行、错误描述
-libs/fs/src/fn_open.cpp                           文件对象（对齐 CPython 的方法表）
-libs/fs/src/fn_*.cpp                              其余 9 个编译单元、10 个导出函数
-libs/time/src/fn_*.cpp                            time/monotonic/sleep/localtime/strftime
-libs/json/src/codec.cpp                           序列化与解析
-libs/json/src/fn_*.cpp                            dumps / loads
+libs/io/src/paths.cpp                       路径（UTF-8 ↔ 宽字符）、存在性、换行、错误描述
+libs/io/include/aipy/io/paths.h             上面那层的公开接口（fs / os / os.path 共用）
 
-tools/aipyic/compiler.py 脚本 → 字节码（只用标准库 ast）
-tools/aipyic/pack.py     .bc 二进制格式（权威定义在其头部）
-tools/aipyic/bundle.py   把字节码接到 launcher 尾部（打包成 exe 的格式）
-tools/aipyic/link.py     按需链接 pylib（读 CMake 配方，调 link.exe）
-tools/aipyic/aipyic.py   命令行入口：编译 / 反汇编 / 打包
+libs/fs/src/io.cpp                          打开文件、读全部、写全部
+libs/fs/src/fn_open.cpp                     文件对象（对齐 CPython 的方法表）
+libs/fs/src/bare_open.cpp                   把 open 注册成裸名（AIPY_PYLIB_BUILTIN）
+
+libs/os/src/fn_listdir.cpp                  os.listdir
+libs/os/src/fn_makedirs.cpp                 os.makedirs
+libs/os/src/fn_remove.cpp                   os.remove
+
+libs/os_path/src/module.cpp                 点分模块名（AIPY_PYLIB_MODULE_NAMED）
+libs/os_path/src/fn_*.cpp                   exists / isfile / isdir / getsize
+
+libs/time/src/fn_*.cpp                      time/monotonic/sleep/localtime/strftime
+libs/json/src/codec.cpp                     序列化与解析
+libs/json/src/fn_*.cpp                      dumps / loads
+
+tools/pcc/src/frontend/   词法 / 语法 / AST（脚本 → 树）
+tools/pcc/src/codegen/    代码生成（树 → 字节码，逐段直译 compiler.py）
+tools/pcc/src/backend/    二进制格式 / ZIP 归档 / 打包 / 按需链接 / 子进程
+tools/pcc/src/shell/      命令行与反汇编
+tools/pcc/pack_pylib.py   构建期打 `.pylib`（ZIP：manifest + 静态库 + 字节码）
+tools/aipyic/                 Python 版编译器，**只当测试 oracle**，不进 dist/
 tools/aipy_app/          打包成 exe 的执行端（launcher）
 tools/aipy_run/          跑脚本、print 打到 stdout
 tools/aipy_vm_dump/      跑字节码、把全局状态打成 JSON
 tools/check_no_ui.py     边界守护（CTest: aipy_layers）
-examples/                五份纯 Python 示例（每份都打包成 exe）
+examples/                六份纯 Python 示例（每份都打包成 exe）
 tests/test_standalone.cpp 只链 aipy 的程序（独立性的活证据）
 tests/test_value.cpp     41 个语义用例，每条对应一句 CPython 行为
 tests/test_vm.cpp        VM 端到端：加载字节码、执行、断言结果与行号
@@ -426,6 +588,7 @@ tests/scripts/           端到端用例的 Python 源码
 tests/build_bytecode.py  生成测试字节码，同时校验两边操作码表一致
 tests/check_vm_semantics.py 与 CPython 逐变量对拍
 tests/check_examples.py  示例与 CPython 比对 + 打包产物实跑
+tests/check_compiler_parity.py C++ 版与 Python 版编译器逐字节对拍
 tests/probe_syntax.py    语言支持清单的实测探针（186 条）
 LANGUAGE.md              支持哪些 Python 语法，逐条实测（186 条）
 ```
@@ -447,23 +610,30 @@ LANGUAGE.md              支持哪些 Python 语法，逐条实测（186 条）
 `internal.h` 里的 `Frame` 刻意不放进 `aipy/vm.h`：它是执行循环的私有数据，
 让宿主看见就等于承诺永不变，而这个结构会随指令集调整。
 
-## 十三条测试
+## 十五条测试
 
 | 测试 | 作用 |
 |---|---|
 | `aipy_tests` | 41 个 Value 语义用例，对着 CPython 行为 |
 | `aipy_standalone` | 只链 `aipy`，同时是独立性的回归测试 |
 | `aipy_vm_tests` | 字节码端到端：算术、循环、函数、方法、切片、错误行号、热加载搬运 |
+| `aipy_compiler_parity` | C++ 版与 Python 版编译器产出逐字节相同的字节码，拒绝原因也一致 |
 | `aipy_disasm` | 反汇编器与 C++ 加载器各自解码同一份 `.bc` |
 | `aipy_examples` | 示例与 CPython 逐行比对；六份示例全部打包成 exe 实跑 |
 | `aipy_activity` | `class X(Activity)` 展开路径：字段、增强赋值、方法前向调用 |
-| `aipy_pylib` | 按需链接：链了能调、没链报错、不用扩展的产物里无 pylib 符号 |
+| `aipy_pylib` | 按需链接：链了能调、没链报错、产物注册节里只有真的调用到的函数 |
 | `aipy_threading` | 线程库：`Thread`/`Event` 对齐、函数级按需、`with` 完整语义、提交时校验 |
-| `aipy_system_libs` | `fs`/`time`/`json` 三库：功能、错误返回值约定、各自的函数级按需 |
+| `aipy_system_libs` | `fs`/`os`/`os.path`/`time`/`json` 五库：功能、错误返回值约定、各自的函数级按需 |
 | `aipy_fs_open` | `fs.open` 与 CPython `open` 逐行 + 逐字节对拍（期望值现场跑出来） |
 | `aipy_vm_semantics` | VM 结果与 CPython 逐变量一致 |
 | `aipy_layers` | 边界守护：无界面符号、`Host` 是不透明 `void*` |
-| `aipy_standard` | Design.md 第 4 节：系统库与用户库同一套宏、平台细节集中在 `toolchain.py` |
+| `aipy_standard` | Design.md 第 4 节：系统库与用户库同一套宏、平台细节集中在 `tools/pcc` |
+| `aipy_dist` | `dist/` 发布契约：只有 `.pylib`、`core` 带齐三角色、只用它就能打包 |
+
+`aipy_pylib`、`aipy_threading`、`aipy_system_libs` 里那条「函数级按需」不看
+打包器打印的摘要，而是用 `pcc --linked-info` 读产物 exe 的 `.aipyfn` 节
+——摘要只是打包器自己说点了什么，而节内容是链接器实际合并的结果。这个区别
+踩过：故意注入「全点名」后摘要照旧、测试仍然报通过。
 
 字节码是**构建期生成**的派生物，不入库。曾经手动放在源码树里，结果改完
 脚本忘了重新生成，测试对着旧字节码报了两次假失败。
@@ -491,19 +661,20 @@ LANGUAGE.md              支持哪些 Python 语法，逐条实测（186 条）
 兼容性承诺是这个项目存在的全部意义。
 
 **支持的是一个子集，不是全部 Python。** 逐条实测的清单在
-[`LANGUAGE.md`](LANGUAGE.md)：184 条写法，125 条支持、59 条被
-明确拒绝。改完编译器用 `python tests\probe_syntax.py build\final\aipy_run.exe`
+[`LANGUAGE.md`](LANGUAGE.md)：186 条写法，125 条支持、61 条被
+明确拒绝。改完编译器用
+`python tests\probe_syntax.py build\final\pcc.exe build\final\aipy_run.exe`
 重跑，别靠记忆判断。
 
 ## 操作码与内建表是两份实现之间的契约
 
-操作码编号在 `vm.h` 的 `enum class` 与 `compiler.py` 的 `OPCODES` 里各有一
-份；内建顺序在 `builtins.cpp` 的 `kBuiltinTable` 与 `compiler.py` 的
-`BUILTINS` 里各有一份。错一位的后果不是崩溃，而是「所有指令集体错位、
+操作码编号在 `vm.h` 的 `enum class` 与 `tools/pcc/src/codegen/tables.cpp`
+里各有一份；内建顺序在 `builtins.cpp` 的 `kBuiltinTable` 与同一份
+`tables.cpp` 里各有一份。错一位的后果不是崩溃，而是「所有指令集体错位、
 结果莫名其妙」。
 
 所以 `tests/build_bytecode.py` 每次构建都解析 `vm.h` 与 `builtins.cpp`，
-和 Python 侧逐条对拍，不一致就构建失败并指名第几条。
+和编译器侧逐条对拍，不一致就构建失败并指名第几条。
 
 ## 跨平台：哪些是平台细节，哪些不是
 
@@ -513,7 +684,7 @@ VM、字节码、编译器、`Value` 语义都与操作系统无关。与平台�
 | 层 | 位置 | 目前实现 | 换平台要做什么 |
 |---|---|---|---|
 | pylib 注册 | `include/aipy/pylib.h` + `src/pylib.cpp` | MSVC 节合并 | GNU ld 用 `__attribute__((section))` + `__start_/__stop_` |
-| 链接器调用 | `tools/aipyic/toolchain.py` | `msvc`（`link.exe /INCLUDE:`） | 实现一个新的 `Toolchain` |
+| 链接器调用 | `tools/pcc/src/backend/toolchain.cpp` | `msvc`（`link.exe /INCLUDE:`） | 实现一个新的 `Toolchain` |
 | launcher 读自身 | `tools/aipy_app/main.cpp` 的 `readSelf` | `GetModuleFileNameW` | `readlink("/proc/self/exe")` |
 
 `pylib.cpp` 在非 MSVC 上提供**同一组函数**（返回空表），所以核心库能编、

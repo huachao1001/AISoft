@@ -30,20 +30,18 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 AIPY = os.path.normpath(os.path.join(HERE, '..'))
-AIPYIC = os.path.join(AIPY, 'tools', 'aipyic')
-sys.path.insert(0, AIPYIC)
-
-import compiler as vm_compiler
-import pack
 
 
-def run_vm(aipy_run, script, out_dir):
+def run_vm(pcc, aipy_run, script, out_dir):
     """编译脚本、用 AiPy 跑，返回 stdout。"""
-    program = vm_compiler.compile_file(script)
     os.makedirs(out_dir, exist_ok=True)
     stem = os.path.splitext(os.path.basename(script))[0]
     path = os.path.join(out_dir, stem + '.bc')
-    pack.write_file(program, path)
+    compiled = subprocess.run([pcc, script, path], capture_output=True,
+                              text=True, encoding='utf-8', errors='replace')
+    if compiled.returncode != 0:
+        raise SystemExit('%s 编译失败：%s'
+                         % (os.path.basename(script), compiled.stderr.strip()))
 
     completed = subprocess.run([aipy_run, path], capture_output=True, text=True,
                                encoding='utf-8')
@@ -62,10 +60,10 @@ def run_cpython(script):
     return completed.stdout
 
 
-def compare_with_cpython(aipy_run, script, out_dir):
+def compare_with_cpython(pcc, aipy_run, script, out_dir):
     """逐行比对：两个实现的输出必须完全一致。"""
     expected = run_cpython(script)
-    actual = run_vm(aipy_run, script, out_dir)
+    actual = run_vm(pcc, aipy_run, script, out_dir)
     if expected == actual:
         return None
 
@@ -83,9 +81,9 @@ def compare_with_cpython(aipy_run, script, out_dir):
     return problems
 
 
-def check_only_aipy(aipy_run, script, out_dir, required):
+def check_only_aipy(pcc, aipy_run, script, out_dir, required):
     """CPython 跑不了（用了独有内建）时，只校验关键行存在。"""
-    actual = run_vm(aipy_run, script, out_dir)
+    actual = run_vm(pcc, aipy_run, script, out_dir)
     missing = [line for line in required if line not in actual]
     if not missing:
         return None
@@ -93,7 +91,7 @@ def check_only_aipy(aipy_run, script, out_dir, required):
            ['  未找到: %r' % line for line in missing]
 
 
-def check_bundle(script, launcher_exe, out_dir, build_dir=None, lib_dir=None):
+def check_bundle(pcc, script, out_dir, build_dir=None, lib_dir=None):
     """打包成 exe：产物直接运行必须与脚本文本输出完全一致。
 
     ── 这一步在验什么 ──
@@ -106,14 +104,13 @@ def check_bundle(script, launcher_exe, out_dir, build_dir=None, lib_dir=None):
 
     这三类错误都不会影响 `.bc` 文件本身，所以只能靠「真的跑一次 exe」发现。
 
-    `build_dir` / `lib_dir` 给用到扩展的示例（线程）：打包时要调 link.exe
-    把 pylib 链进去，那两个目录告诉它去哪找构建配方与 `.lib`。
+    `build_dir` / `lib_dir` 告诉打包器去哪找构建配方与 `.pylib`。所有打包
+    都走重链接（见 pcc 的 bundleMain），所以这两个参数是必需的。
     """
     os.makedirs(out_dir, exist_ok=True)
     stem = os.path.splitext(os.path.basename(script))[0]
     app = os.path.join(out_dir, stem + '.exe')
-    command = [sys.executable, os.path.join(AIPYIC, 'aipyic.py'), '--exe', script, app,
-               '--launcher', launcher_exe]
+    command = [pcc, '--exe', script, app]
     if build_dir:
         command += ['--build-dir', build_dir]
     if lib_dir:
@@ -132,9 +129,9 @@ def check_bundle(script, launcher_exe, out_dir, build_dir=None, lib_dir=None):
     return ran
 
 
-def check_bundle_matches(script, launcher_exe, out_dir, expected):
+def check_bundle_matches(pcc, script, out_dir, expected, build_dir, lib_dir):
     """打包后的 exe 输出必须与给定期望一致。"""
-    result = check_bundle(script, launcher_exe, out_dir)
+    result = check_bundle(pcc, script, out_dir, build_dir, lib_dir)
     if isinstance(result, list):
         return result
     if result.stdout != expected:
@@ -154,11 +151,18 @@ def check_bundle_matches(script, launcher_exe, out_dir, expected):
 
 
 def main(argv):
-    if len(argv) < 2:
-        print('用法: check_examples.py <aipy_run.exe> [aipy_app.exe]', file=sys.stderr)
+    if len(argv) < 4:
+        print('用法: check_examples.py <pcc.exe> <aipy_run.exe> '
+              '<build目录> [lib目录]', file=sys.stderr)
         return 2
-    aipy_run = argv[1]
-    launcher_exe = argv[2] if len(argv) > 2 else None
+    pcc = argv[1]
+    aipy_run = argv[2]
+    build_dir = os.path.abspath(argv[3])
+    lib_dir = os.path.abspath(argv[4]) if len(argv) > 4 else build_dir
+    for path in (pcc, aipy_run):
+        if not os.path.isfile(path):
+            print('找不到 %s' % path, file=sys.stderr)
+            return 2
     out_dir = os.path.join(os.environ.get('TEMP', '.'), 'aipy_examples')
 
     examples = os.path.join(AIPY, 'examples')
@@ -168,7 +172,7 @@ def main(argv):
     cpython_examples = ('01_basics.py', '02_wordcount.py', '04_tool.py')
     for name in cpython_examples:
         script = os.path.join(examples, name)
-        problems = compare_with_cpython(aipy_run, script, out_dir)
+        problems = compare_with_cpython(pcc, aipy_run, script, out_dir)
         if problems:
             failures.extend(problems)
         else:
@@ -183,7 +187,8 @@ def main(argv):
         '自检通过: 5 / 5',
         '注意 round(2.5) = 2 （银行家舍入）',
     ]
-    problems = check_only_aipy(aipy_run, builtins_script, out_dir, required)
+    problems = check_only_aipy(pcc, aipy_run, builtins_script, out_dir,
+                               required)
     if problems:
         failures.extend(problems)
     else:
@@ -201,39 +206,37 @@ def main(argv):
         '主线程仍能拿到锁',
         '线程名: MainThread',
     ]
-    if launcher_exe:
-        result = check_bundle(threads_script, launcher_exe, out_dir,
-                              build_dir=os.path.dirname(os.path.abspath(launcher_exe)),
-                              lib_dir=os.path.dirname(os.path.abspath(launcher_exe)))
-        if isinstance(result, list):
-            failures.extend(result)
+    result = check_bundle(pcc, threads_script, out_dir,
+                          build_dir=build_dir, lib_dir=lib_dir)
+    if isinstance(result, list):
+        failures.extend(result)
+    else:
+        missing = [line for line in thread_required if line not in result.stdout]
+        if missing:
+            failures.extend(['05_threads.exe 缺少预期输出：'] +
+                            ['  未找到: %r' % line for line in missing])
+            print('  ✗ 05_threads.exe 输出不符')
         else:
-            missing = [line for line in thread_required if line not in result.stdout]
-            if missing:
-                failures.extend(['05_threads.exe 缺少预期输出：'] +
-                                ['  未找到: %r' % line for line in missing])
-                print('  ✗ 05_threads.exe 输出不符')
-            else:
-                print('ok   %-17s %d 条关键输出（打包产物）'
-                      % ('05_threads.exe', len(thread_required)))
+            print('ok   %-17s %d 条关键输出（打包产物）'
+                  % ('05_threads.exe', len(thread_required)))
 
     # ── 每个示例都打包成 exe 实跑 ──
     #
     # 这是交付形态，只验字节码等价不够：尾部索引写错时字节码本身完全正确，
     # 坏的是「怎么读回来」。每份示例都要过，因为漏掉一个就可能漏掉只有
     # 那份脚本才会踩到的路径（比如 03 用了独有内建，内建名表要走一遍）。
-    if launcher_exe:
-        # 这几份：产物输出必须与 VM 跑脚本时一致。
-        for name in cpython_examples + ('03_builtins.py',):
-            script = os.path.join(examples, name)
-            expected = run_cpython(script) if name in cpython_examples \
-                else run_vm(aipy_run, script, out_dir)
-            problems = check_bundle_matches(script, launcher_exe, out_dir, expected)
-            if problems:
-                failures.extend(problems)
-            else:
-                print('ok   %-17s 打包成 exe 后输出一致'
-                      % (os.path.splitext(name)[0] + '.exe'))
+    # 这几份：产物输出必须与 VM 跑脚本时一致。
+    for name in cpython_examples + ('03_builtins.py',):
+        script = os.path.join(examples, name)
+        expected = run_cpython(script) if name in cpython_examples \
+            else run_vm(pcc, aipy_run, script, out_dir)
+        problems = check_bundle_matches(pcc, script, out_dir, expected,
+                                       build_dir, lib_dir)
+        if problems:
+            failures.extend(problems)
+        else:
+            print('ok   %-17s 打包成 exe 后输出一致'
+                  % (os.path.splitext(name)[0] + '.exe'))
 
     # 06 用 fs/time/json 三个系统库，会在**当前目录**建工作区（并自己清理）。
     # 所以给它一个空目录，并断言关键输出——其中「目录内容」依赖它自己
@@ -251,22 +254,20 @@ def main(argv):
         "目录内容: ['lines.txt', 'records.txt']",
         '清理后存在: False',
     ]
-    if launcher_exe:
-        work = tempfile.mkdtemp(prefix='aipy_06_')
-        result = check_bundle(files_script, launcher_exe, work,
-                              build_dir=os.path.dirname(os.path.abspath(launcher_exe)),
-                              lib_dir=os.path.dirname(os.path.abspath(launcher_exe)))
-        if isinstance(result, list):
-            failures.extend(result)
+    work = tempfile.mkdtemp(prefix='aipy_06_')
+    result = check_bundle(pcc, files_script, work,
+                          build_dir=build_dir, lib_dir=lib_dir)
+    if isinstance(result, list):
+        failures.extend(result)
+    else:
+        missing = [line for line in files_required if line not in result.stdout]
+        if missing:
+            failures.extend(['06_files.exe 缺少预期输出：'] +
+                            ['  未找到: %r' % line for line in missing])
+            print('  ✗ 06_files.exe 输出不符')
         else:
-            missing = [line for line in files_required if line not in result.stdout]
-            if missing:
-                failures.extend(['06_files.exe 缺少预期输出：'] +
-                                ['  未找到: %r' % line for line in missing])
-                print('  ✗ 06_files.exe 输出不符')
-            else:
-                print('ok   %-17s %d 条关键输出（打包产物）'
-                      % ('06_files.exe', len(files_required)))
+            print('ok   %-17s %d 条关键输出（打包产物）'
+                  % ('06_files.exe', len(files_required)))
 
     if failures:
         for line in failures:

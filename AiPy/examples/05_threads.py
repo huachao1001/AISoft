@@ -5,7 +5,7 @@
 # `threading.Thread` 和 `threading.Lock` 时，`Event`/`waitAll` 的代码
 # 一个字节都不会被链进来。
 #
-#   python tools\aipyic\aipyic.py --exe examples\05_threads.py threads.exe ^
+#   dist\pcc.exe --exe examples\05_threads.py threads.exe ^
 #       --build-dir build --lib-dir build
 #
 # ── 与标准库的写法对照 ──

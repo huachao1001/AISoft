@@ -37,6 +37,7 @@
 //
 // 代价是大文件占内存，这在注释里说清比藏着好。
 #include "aipy/fs/io.h"
+#include "aipy/io/paths.h"
 #include "aipy/pylib.h"
 #include "aipy/utf8.h"
 
@@ -448,11 +449,11 @@ aipy::Value openImpl(const aipy::Value* args, int count) {
   Mode mode;
   std::string error;
   if (!parseMode(modeText, &mode, &error)) {
-    aipy::diagnose(aipy::fs::describeError(path, error));
+    aipy::diagnose(aipy::io::describeError(path, error));
     return aipy::Value();
   }
   if (!acceptEncoding(encoding, &error)) {
-    aipy::diagnose(aipy::fs::describeError(path, error));
+    aipy::diagnose(aipy::io::describeError(path, error));
     return aipy::Value();
   }
 
@@ -474,13 +475,13 @@ aipy::Value openImpl(const aipy::Value* args, int count) {
       break;
     case 'a': {
       bool isDirectory = false;
-      if (aipy::fs::pathExists(path, &isDirectory) && isDirectory) {
-        error = aipy::fs::describeError(path, "那是一个目录");
+      if (aipy::io::pathExists(path, &isDirectory) && isDirectory) {
+        error = aipy::io::describeError(path, "那是一个目录");
         loaded = false;
         break;
       }
       // 不存在就创建空文件（CPython 的 "a" 会创建）。
-      if (!aipy::fs::pathExists(path, nullptr)) {
+      if (!aipy::io::pathExists(path, nullptr)) {
         loaded = aipy::fs::writeAll(path, std::string(), true, &error, text);
       } else {
         loaded = aipy::fs::readAll(path, &state->content, &error, text);
@@ -495,7 +496,7 @@ aipy::Value openImpl(const aipy::Value* args, int count) {
     case 'x': {
       void* handle = aipy::fs::openExclusive(path, mode.plus);
       if (handle == nullptr) {
-        error = aipy::fs::describeError(
+        error = aipy::io::describeError(
             path, "文件已存在，x 模式不覆盖（要覆盖请用 w）");
         loaded = false;
         break;

@@ -220,9 +220,15 @@ Result load(const std::uint8_t* data, std::size_t size) {
   // 链进来（按需的代价）。此时把 nullptr 填进去，等到真的调用那一行再报
   // 「扩展函数 text.upper 没有链接进来」——那比启动就失败更有用：可能整个
   // 应用只有某个菜单用到它。
+  //
+  // 名字里没有点号的是**裸名**（`open`）：它由某个库用 AIPY_PYLIB_BUILTIN
+  // 注册成「像内建一样可调用」。带点的走模块查找，不带点的走裸名表——
+  // 名字形态本身就区分了两者，不需要额外的标志位。
   program.extensions.reserve(program.extensionNames.size());
   for (const std::string& name : program.extensionNames) {
-    program.extensions.push_back(pylib::resolve(name.c_str()));
+    const bool bare = name.find('.') == std::string::npos;
+    program.extensions.push_back(bare ? pylib::resolveBare(name.c_str())
+                                      : pylib::resolve(name.c_str()));
   }
 
   if (reader.failed()) {

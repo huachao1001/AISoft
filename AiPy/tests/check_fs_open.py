@@ -20,7 +20,7 @@
 文本模式下 Windows 的 CPython 会把 `\\n` 写成 `\\r\\n`，AiPy 也照做，
 所以两边的输出与磁盘字节都应当一致。
 
-用法：check_fs_open.py <aipyic.py> <build> <libdir> <python>
+用法：check_fs_open.py <pcc.exe> <build> <libdir>
 """
 
 import os
@@ -184,22 +184,24 @@ with OPEN(path13, "rb") as f:
 '''
 
 
-def build_exe(aipyic, script, output, build_dir, lib_dir, python):
-    command = [python, aipyic, '--exe', script, output, '--build-dir', build_dir]
+def build_exe(pcc, script, output, build_dir, lib_dir):
+    command = [pcc, '--exe', script, output, '--build-dir', build_dir]
     if lib_dir:
         command += ['--lib-dir', lib_dir]
     return subprocess.run(command, capture_output=True, text=True, encoding='utf-8')
 
 
 def main(argv):
-    if len(argv) < 5:
-        print('用法: check_fs_open.py <aipyic.py> <build> <libdir> <python>',
+    if len(argv) < 4:
+        print('用法: check_fs_open.py <pcc.exe> <build> <libdir>',
               file=sys.stderr)
         return 2
-    aipyic = os.path.abspath(argv[1])
+    pcc = os.path.abspath(argv[1])
     build_dir = os.path.abspath(argv[2])
     lib_dir = os.path.abspath(argv[3])
-    python = argv[4]
+    if not os.path.isfile(pcc):
+        print('找不到 %s' % pcc, file=sys.stderr)
+        return 2
 
     scratch = tempfile.mkdtemp(prefix='aipy_fsopen_')
     failures = []
@@ -240,8 +242,8 @@ def main(argv):
     cpython_work = os.path.join(scratch, 'cpython_work')
     aipy_work = os.path.join(scratch, 'aipy_work')
 
-    # 目录由驱动建好：探针要同时能在 CPython 与 AiPy 里跑，而两边的建目录
-    # 接口不同（os.makedirs vs fs.mkdir），放进去就破坏「只差三处」的前提。
+    # 目录由驱动建好：探针要同时能在 CPython 与 AiPy 里跑，目标路径也不该
+    # 混进脚本主体——放进去就破坏「只差三处」的前提。
     os.makedirs(os.path.join(cpython_work, 'probe_work'), exist_ok=True)
     os.makedirs(os.path.join(aipy_work, 'probe_work'), exist_ok=True)
 
@@ -269,8 +271,8 @@ with fs.open("probe_work/ts.txt") as f:
     print("read_from3 " + f.read(1))
 ''')
     text_seek_exe = os.path.join(scratch, 'text_seek.exe')
-    built = build_exe(aipyic, text_seek_script, text_seek_exe, build_dir,
-                      lib_dir, python)
+    built = build_exe(pcc, text_seek_script, text_seek_exe, build_dir,
+                      lib_dir)
     if built.returncode != 0:
         print('文本模式 seek 探针打包失败：', file=sys.stderr)
         print(built.stderr or built.stdout, file=sys.stderr)
@@ -283,11 +285,11 @@ with fs.open("probe_work/ts.txt") as f:
                          expected_text_seek.splitlines(),
                          seek_result.stdout.splitlines()))
 
-    # 目录由驱动建好：探针要同时能在 CPython 与 AiPy 里跑，而两边的建目录
-    # 接口不同（os.makedirs vs fs.mkdir），放进去就破坏「只差三处」的前提。
+    # 目录由驱动建好：探针要同时能在 CPython 与 AiPy 里跑，目标路径也不该
+    # 混进脚本主体——放进去就破坏「只差三处」的前提。
     os.makedirs(os.path.join(cpython_work, 'probe_work'), exist_ok=True)
 
-    baseline = subprocess.run([python, cpython_script], capture_output=True,
+    baseline = subprocess.run([sys.executable, cpython_script], capture_output=True,
                               text=True, encoding='utf-8', cwd=cpython_work)
     if baseline.returncode != 0:
         print('CPython 基准自己就失败了，无法对拍：', file=sys.stderr)
@@ -295,7 +297,7 @@ with fs.open("probe_work/ts.txt") as f:
         return 2
 
     exe = os.path.join(scratch, 'aipy_probe.exe')
-    built = build_exe(aipyic, aipy_script, exe, build_dir, lib_dir, python)
+    built = build_exe(pcc, aipy_script, exe, build_dir, lib_dir)
     if built.returncode != 0:
         print('打包失败：', file=sys.stderr)
         print(built.stderr or built.stdout, file=sys.stderr)

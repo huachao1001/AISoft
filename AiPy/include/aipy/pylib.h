@@ -43,14 +43,16 @@
 #include "aipy/vm.h"
 
 #include <cstddef>
+#include <string>
 #include <vector>
 
 // 节名布局：链接器把同名节按 `$` 后的字母序合并，所以扫描区间必然被
 // 两个哨兵夹住。`$a` 在最前、`$z` 在最后是 MSVC 的约定。
 //
-// 两对节，各管一层：
-//   .aipyreg  模块级（AIPY_PYLIB_MODULE）——「这个模块参不参与本次链接」
-//   .aipyfn   函数级（AIPY_PYLIB_FUNCTION）——「这个模块的哪个函数进产物」
+// 三对节，各管一层：
+//   .aipyreg   模块级（AIPY_PYLIB_MODULE）——「这个模块参不参与本次链接」
+//   .aipyfn    函数级（AIPY_PYLIB_FUNCTION）——「这个模块的哪个函数进产物」
+//   .aipybare  裸名级（AIPY_PYLIB_BUILTIN）——「这个模块给谁起了短名」
 //
 // 这段 `#pragma section` 必须出现在头里：pylib 作者只 include 本头、用下面
 // 的宏，不该还需要自己写一遍节声明。
@@ -61,6 +63,9 @@
 #pragma section(".aipyfn$a", read)
 #pragma section(".aipyfn$k", read)
 #pragma section(".aipyfn$z", read)
+#pragma section(".aipybare$a", read)
+#pragma section(".aipybare$k", read)
+#pragma section(".aipybare$z", read)
 #endif
 
 namespace aipy {
@@ -82,11 +87,51 @@ struct Function {
   vm::ExtensionFn fn;   // 实现
 };
 
+// 一条裸名注册：某个模块的函数在脚本里可以用短名直接调用。
+//
+//   AIPY_PYLIB_BUILTIN(fs, open, open);   → 脚本里 `open(...)` 就是 `fs.open(...)`
+//
+// ── 为什么内建表要允许第三方注册 ──
+//
+// 语言的**内建**（`len` / `print` / `range`）与**扩展**（`text.upper`）在脚本
+// 作者看来没有区别：都是「不用 import 就能用的函数」。区别只在实现归属——
+// 内建编在 VM 里，扩展由库提供。而 `open` 这类东西的位置本来就在两者之间：
+// 它是 Python 的内建，实现却必然依赖平台文件 API，放进核心会让「核心不含
+// 平台代码」这条断掉。
+//
+// 所以让它**以扩展的方式实现、以内建的方式调用**：库提供实现，注册一个裸名，
+// 脚本里写 `open(...)` 即可。核心 VM 仍然一行文件代码都没有。
+//
+// ── 与 builtin 的区别 ──
+//
+// `len` 永远在；裸名只在这个模块被链接进产物时才在。没链进来时脚本调用它
+// 报「扩展函数 open 没有链接进来」——与 `text.upper` 完全一样的措辞，
+// 因为对使用者和打包器来说，它们是同一类东西。
+struct BuiltinName {
+  const char* module;  // 提供实现的模块
+  const char* name;    // 该模块里的函数名
+  const char* bare;    // 脚本里可以直接写的短名
+};
+
 // 按「模块名.函数名」解析。找不到返回 nullptr。
 //
 // 传入的限定名形如 "text.upper"。为什么用限定名而不是两张表：
 // CALL_EXT 只要一个下标，名字里自带模块信息就不用再存一份模块号。
 vm::ExtensionFn resolve(const char* qualified);
+
+// 按**裸名**解析：`resolveBare("open")` 找那条声明了「open 就是某个模块
+// 函数」的注册项。找不到返回 nullptr。
+//
+// 与 resolve 分开而不是让 resolve 猜：`open` 里没有点号，而 resolve 的
+// 语义是「限定名」。把两种查找混在一个函数里，调用方就得先判断名字形态，
+// 而那正是我们希望编译器不必知道的事。
+vm::ExtensionFn resolveBare(const char* bare);
+
+// 裸名是否存在（`open` 有没有被任何已链接的库注册）。给启动自检与测试用。
+bool bareRegistered(const char* bare);
+
+// 已注册的裸名清单，每条形如 "open <- fs.open"。报错时列「实际有什么」用。
+std::vector<std::string> linkedBareNames();
 
 // 已链接进来的模块名，用于启动自检和报错。「扩展函数 text.upper 没有
 // 链接进来」比「扩展号越界」有用得多，所以出错时要能列出实际有什么。
@@ -108,10 +153,21 @@ int linkedModuleCount();
 // 变量加 external 链接。
 #if defined(_MSC_VER)
 #define AIPY_PYLIB_MODULE(module_id)                                      \
+  AIPY_PYLIB_MODULE_NAMED(module_id, #module_id)
+
+// 符号前缀与对外模块名可以不同。
+//
+// 需要它是因为 `os.path` 这类点分模块名：对外要叫 `os.path`（脚本里就这么
+// 写），而 C++ 标识符里不能有点。规则固定为「符号前缀 = 模块名把点换成
+// 下划线」，打包器与链接器用同一条规则，不额外记字段。
+#define AIPY_PYLIB_MODULE_NAMED(module_id, module_name)                   \
   extern "C" __declspec(allocate(".aipyreg$k"))                           \
-      ::aipy::pylib::Module aipy_pylib_entry_##module_id = {#module_id}
+      ::aipy::pylib::Module aipy_pylib_entry_##module_id = {module_name}
 #else
 #define AIPY_PYLIB_MODULE(module_id)                                      \
+  static_assert(false, "pylib 注册目前只实现了 MSVC 的节合并；"           \
+                       "其他平台需要各自的分节机制")
+#define AIPY_PYLIB_MODULE_NAMED(module_id, module_name)                   \
   static_assert(false, "pylib 注册目前只实现了 MSVC 的节合并；"           \
                        "其他平台需要各自的分节机制")
 #endif
@@ -131,8 +187,41 @@ int linkedModuleCount();
   extern "C" __declspec(allocate(".aipyfn$k"))                            \
       ::aipy::pylib::Function aipy_##module_id##_fn_##function_name = {   \
           #module_id, #function_name, &(impl)}
+
+// 点分模块名（`os.path`）用这个：注册项里的模块名是带点的对外名，
+// 符号前缀用下划线版本（`aipy_os_path_fn_exists`）。
+#define AIPY_PYLIB_FUNCTION_NAMED(module_id, module_name, function_name,   \
+                                  impl)                                   \
+  extern "C" __declspec(allocate(".aipyfn$k"))                            \
+      ::aipy::pylib::Function aipy_##module_id##_fn_##function_name = {   \
+          module_name, #function_name, &(impl)}
 #else
 #define AIPY_PYLIB_FUNCTION(module_id, function_name, impl)               \
   static_assert(false, "pylib 函数注册目前只实现了 MSVC 的节合并；"       \
+                       "其他平台需要各自的分节机制")
+#define AIPY_PYLIB_FUNCTION_NAMED(module_id, module_name, function_name,   \
+                                  impl)                                   \
+  static_assert(false, "pylib 函数注册目前只实现了 MSVC 的节合并；"       \
+                       "其他平台需要各自的分节机制")
+#endif
+
+// 给一个导出函数起**裸名**，让脚本像用内建一样直接调用。
+//
+//   AIPY_PYLIB_BUILTIN(fs, open, open);   →  脚本里 `open(p)` == `fs.open(p)`
+//
+// 三个参数是「模块、模块里的函数名、脚本里写的短名」。前两个必须已经有对应
+// 的 AIPY_PYLIB_FUNCTION，否则运行时会注册一条指向空函数指针的裸名。
+//
+// **必须与对应的 AIPY_PYLIB_FUNCTION 分处不同 .cpp。** 理由和函数注册一样：
+// 同一个 .obj 里的符号会被一起抽出。裸名项若与被调用函数同处一个 .obj，
+// 「只点名裸名」就会把整个 .obj 拖进来，按需链接在函数粒度上就失效了。
+#if defined(_MSC_VER)
+#define AIPY_PYLIB_BUILTIN(module_id, function_name, bare_name)           \
+  extern "C" __declspec(allocate(".aipybare$k"))                          \
+      ::aipy::pylib::BuiltinName aipy_##module_id##_bare_##bare_name = {  \
+          #module_id, #function_name, #bare_name}
+#else
+#define AIPY_PYLIB_BUILTIN(module_id, function_name, bare_name)           \
+  static_assert(false, "pylib 裸名注册目前只实现了 MSVC 的节合并；"       \
                        "其他平台需要各自的分节机制")
 #endif

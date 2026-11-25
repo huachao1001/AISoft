@@ -26,14 +26,67 @@
 
 namespace {
 
+// UTF-8 → UTF-16。`std::wstring(utf8.begin(), utf8.end())` 是**错的**：
+// 它把每个字节当成一个 wchar_t，一个汉字（3 字节）会被拆成 3 个无意义
+// 字符，弹窗里显示成日文一样的乱码。这个坑踩过。
+std::wstring toWide(const std::string& utf8) {
+#if defined(_WIN32)
+  if (utf8.empty()) return std::wstring();
+  const int needed = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(),
+                                         static_cast<int>(utf8.size()),
+                                         nullptr, 0);
+  if (needed <= 0) return std::wstring();
+  std::wstring wide(static_cast<std::size_t>(needed), L'\0');
+  MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(),
+                      static_cast<int>(utf8.size()), &wide[0], needed);
+  return wide;
+#else
+  (void)utf8;
+  return std::wstring();
+#endif
+}
+
+// 控制台归属：决定「这个进程是不是被双击起来的」。
+//
+// 实测三种情况（GetConsoleProcessList 的返回值）：
+//
+//   0  没有控制台          → GUI 子系统产物（双击图形程序）
+//   1  独占一个控制台      → 双击控制台程序，控制台是系统为它新建的
+//   2+ 与别的进程共用      → 从 cmd / PowerShell 里调用
+//
+// 这是唯一可靠的判据。`_isatty` 不行：双击时 stdout 也是 tty；看 argv[0]
+// 更不行：从快捷方式启动时它可能是别的东西。
+enum class ConsoleOwnership { None, Exclusive, Shared };
+
+ConsoleOwnership consoleOwnership() {
+#if defined(_WIN32)
+  DWORD pids[2];
+  const DWORD count = GetConsoleProcessList(pids, 2);
+  if (count == 0) return ConsoleOwnership::None;
+  if (count == 1) return ConsoleOwnership::Exclusive;
+  return ConsoleOwnership::Shared;
+#else
+  return ConsoleOwnership::Shared;
+#endif
+}
+
 // Windows 上不带控制台的 GUI 子系统产物没有 stderr 可写；统一走
 // OutputDebugString，命令行下 attach 到父控制台才看得见。
+//
+// 完全没有控制台时（双击 GUI 程序）再弹一个消息框：否则脚本报错后窗口
+// 什么都不显示，用户只知道「点了没反应」。
 void report(const std::string& text) {
 #if defined(_WIN32)
-  const std::wstring wide(text.begin(), text.end());
-  OutputDebugStringW((wide + L"\n").c_str());
+  const std::wstring wide = toWide(text);
+  if (!wide.empty()) {
+    OutputDebugStringW((wide + L"\n").c_str());
+    if (consoleOwnership() == ConsoleOwnership::None) {
+      MessageBoxW(nullptr, wide.c_str(), L"AiPy", MB_OK | MB_ICONERROR);
+    }
+  }
 #endif
   std::fprintf(stderr, "%s\n", text.c_str());
+  std::fflush(stderr);
 }
 
 // 用 C 文件 API 而不是 `std::ifstream` + `istreambuf_iterator`。
@@ -107,9 +160,37 @@ int runProgram(const aipy::vm::Program& program, const char* name) {
   return 0;
 }
 
+// 双击启动的控制台程序，跑完窗口会立刻消失——用户只看到一闪，什么也读不到。
+//
+// 只在**独占**控制台时等：从 cmd / PowerShell 里调用是共用控制台，等一次
+// 回车会把批处理和脚本卡住，那是最讨厌的那类副作用。
+void holdIfLaunchedByDoubleClick() {
+  if (consoleOwnership() != ConsoleOwnership::Exclusive) return;
+  std::fputs("\nPress Enter to exit...", stdout);
+  std::fflush(stdout);
+  // 读到 EOF 就直接返回：某些环境下 stdin 已经关了，不该在这死等。
+  while (std::fgetc(stdin) != '\n' && !std::feof(stdin)) {
+  }
+}
+
+// 让控制台按 UTF-8 解释输出。
+//
+// 双击时那个控制台是系统新建的，代码页是系统默认（中文 Windows 是 936），
+// 而脚本的字符串在内存里是 UTF-8——不切代码页，中文输出全是乱码。
+//
+// 只改输出代码页，不改输入：输入代码页影响 `std::fgetc` 的字节含义，
+// 改了会让「按回车」这类交互在非 UTF-8 键盘布局下行为不确定。
+void useUtf8Console() {
+#if defined(_WIN32)
+  SetConsoleOutputCP(CP_UTF8);
+#endif
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
+  useUtf8Console();
+
   // 脚本的 `print` 走 log sink。语言层默认写 stderr 并加 `[aipy]` 前缀
   // （调试诊断的口径）；应用产物要和 `python script.py` 一样只看程序输出，
   // 所以这里换成写 stdout、不加前缀。
@@ -148,7 +229,11 @@ int main(int argc, char** argv) {
   if (loaded.failed) {
     report(loaded.error);
     report("用法: aipy_app <script.bc>（或把它打包成 exe 后直接运行）");
+    holdIfLaunchedByDoubleClick();
     return 2;
   }
-  return runProgram(loaded.program, "app");
+  const int status = runProgram(loaded.program, "app");
+  // 出错时也等：双击的程序报错后窗口立刻消失，等于什么也没说。
+  holdIfLaunchedByDoubleClick();
+  return status;
 }

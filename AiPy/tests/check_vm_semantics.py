@@ -20,11 +20,6 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 AIPY = os.path.normpath(os.path.join(HERE, '..'))
-AIPYIC = os.path.normpath(os.path.join(AIPY, 'tools', 'aipyic'))
-sys.path.insert(0, AIPYIC)
-
-import pack as bytecode_pack
-import compiler as vm_compiler
 
 # 只比这几类值。容器与字典要「归一化后」比，因为 CPython 的 dict_keys
 # 之类的视图类型在 AiPy 里是列表——这是 SUPPORT.md B6 写明的差异。
@@ -62,13 +57,28 @@ def cpython_globals(script):
     return out
 
 
-def run_vm(script, dump_exe, out_dir):
-    """编译后交给 C++ 侧跑，读回它打印的 JSON。"""
-    program = vm_compiler.compile_file(script)
+def run_vm(script, dump_exe, pcc, out_dir):
+    """编译后交给 C++ 侧跑，读回它打印的 JSON。
+
+    编译用发布件 pcc.exe（而不是 Python 版编译器）：这样这条测试同时
+    验证「C++ 编译器产出的字节码 VM 能正确执行」。
+    """
     os.makedirs(out_dir, exist_ok=True)
     stem = os.path.splitext(os.path.basename(script))[0]
     path = os.path.join(out_dir, stem + '.bc')
-    bytecode_pack.write_file(program, path)
+    if os.path.isfile(path):
+        os.remove(path)
+    compiled = subprocess.run([pcc, script, path], capture_output=True,
+                              text=True, encoding='utf-8', errors='replace')
+    if compiled.returncode != 0:
+        raise SystemExit('%s 编译失败：%s'
+                         % (os.path.basename(script), compiled.stderr.strip()))
+
+    info = subprocess.run([pcc, '--info', path], capture_output=True,
+                          text=True, encoding='utf-8')
+    if info.returncode != 0:
+        raise SystemExit('读不到字节码结构：%s' % info.stderr.strip())
+    program = json.loads(info.stdout)
 
     completed = subprocess.run([dump_exe, path], capture_output=True, text=True,
                                encoding='utf-8')
@@ -77,9 +87,9 @@ def run_vm(script, dump_exe, out_dir):
     return json.loads(completed.stdout)['globals'], program
 
 
-def compare(script, dump_exe, out_dir):
+def compare(script, dump_exe, pcc, out_dir):
     expected = cpython_globals(script)
-    actual, program = run_vm(script, dump_exe, out_dir)
+    actual, program = run_vm(script, dump_exe, pcc, out_dir)
     problems = []
     for name, want in sorted(expected.items()):
         # 只比脚本真正用到的全局变量（vm 的产物里有名字表）。
@@ -92,12 +102,17 @@ def compare(script, dump_exe, out_dir):
 
 
 def main(argv):
-    if len(argv) < 2:
-        print('用法: check_vm_semantics.py <aipy_vm_dump.exe> [script.py...]',
-              file=sys.stderr)
+    if len(argv) < 3:
+        print('用法: check_vm_semantics.py <pcc.exe> <aipy_vm_dump.exe> '
+              '[script.py...]', file=sys.stderr)
         return 2
-    dump_exe = argv[1]
-    scripts = argv[2:]
+    pcc = argv[1]
+    dump_exe = argv[2]
+    scripts = argv[3:]
+    for path in (pcc, dump_exe):
+        if not os.path.isfile(path):
+            print('找不到 %s' % path, file=sys.stderr)
+            return 2
     if not scripts:
         scripts_dir = os.path.join(HERE, 'scripts')
         scripts = [os.path.join(scripts_dir, name)
@@ -109,7 +124,7 @@ def main(argv):
     out_dir = os.path.join(tempfile.gettempdir(), 'aipy_semantics')
     failures = 0
     for script in scripts:
-        problems, compared = compare(script, dump_exe, out_dir)
+        problems, compared = compare(script, dump_exe, pcc, out_dir)
         name = os.path.basename(script)
         if problems:
             failures += 1

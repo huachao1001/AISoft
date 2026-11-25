@@ -2,7 +2,7 @@
 #
 # 这份脚本演示的是**交付形态**：写完之后执行
 #
-#   python tools\aipyic\aipyic.py --exe examples\04_tool.py build\invoice.exe
+#   dist\pcc.exe --exe examples\04_tool.py build\invoice.exe
 #
 # 就得到一个独立 exe。用户机器上不需要 Python、不需要 MSVC、不需要链接器。
 #

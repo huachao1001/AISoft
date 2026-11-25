@@ -20,7 +20,7 @@
 Python 子集」的证据）。这条路径只能在 AiPy 里验，期望值只能手写——
 手写有风险，所以用例刻意写得短，每条的期望值一眼能核对。
 
-用法：check_activity.py <aipy_run.exe>
+用法：check_activity.py <pcc.exe> <aipy_run.exe>
 """
 
 import os
@@ -30,16 +30,27 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 AIPY = os.path.normpath(os.path.join(HERE, '..'))
-sys.path.insert(0, os.path.join(AIPY, 'tools', 'aipyic'))
-
-import compiler
-import pack
 
 
-def run(aipy_run, source, scratch, name):
-    program = compiler.compile_source(source, name + '.py')
+def compile_script(pcc, source, scratch, name):
+    """用发布件编译器编一份脚本，返回 (字节码路径, 错误文本 或 None)。"""
+    script = os.path.join(scratch, name + '.py')
+    with open(script, 'w', encoding='utf-8', newline='\n') as handle:
+        handle.write(source)
     path = os.path.join(scratch, name + '.bc')
-    pack.write_file(program, path)
+    if os.path.isfile(path):
+        os.remove(path)
+    completed = subprocess.run([pcc, script, path], capture_output=True,
+                               text=True, encoding='utf-8', errors='replace')
+    if completed.returncode != 0:
+        return (None, completed.stderr.strip())
+    return (path, None)
+
+
+def run(pcc, aipy_run, source, scratch, name):
+    path, error = compile_script(pcc, source, scratch, name)
+    if error is not None:
+        raise SystemExit('%s 编译失败：%s' % (name, error))
     completed = subprocess.run([aipy_run, path], capture_output=True, text=True,
                                encoding='utf-8')
     if completed.returncode != 0:
@@ -47,12 +58,11 @@ def run(aipy_run, source, scratch, name):
     return completed.stdout
 
 
-def reject(source, name):
+def reject(pcc, source, scratch, name):
     """期望被编译期拒绝，返回错误文本。"""
-    try:
-        compiler.compile_source(source, name + '.py')
-    except compiler.CompileError as error:
-        return str(error)
+    path, error = compile_script(pcc, source, scratch, name)
+    if error is not None:
+        return error
     raise SystemExit('%s 本该被拒绝，却编译通过了' % name)
 
 
@@ -184,22 +194,25 @@ CASES = [
 
 
 def main(argv):
-    if len(argv) < 2:
-        print('用法: check_activity.py <aipy_run.exe>', file=sys.stderr)
+    if len(argv) < 3:
+        print('用法: check_activity.py <pcc.exe> <aipy_run.exe>',
+              file=sys.stderr)
         return 2
-    aipy_run = argv[1]
-    if not os.path.isfile(aipy_run):
-        print('找不到 %s' % aipy_run, file=sys.stderr)
-        return 2
+    pcc = os.path.abspath(argv[1])
+    aipy_run = os.path.abspath(argv[2])
+    for path in (pcc, aipy_run):
+        if not os.path.isfile(path):
+            print('找不到 %s' % path, file=sys.stderr)
+            return 2
 
     failures = []
     scratch = tempfile.mkdtemp(prefix='aipy_activity_')
     for index, (name, source, expected) in enumerate(CASES):
         if expected is None:
-            error = reject(source, 'reject_%d' % index)
+            error = reject(pcc, source, scratch, 'reject_%d' % index)
             print('  ✓ %-28s 被拒绝（%s）' % (name, error.split('error: ')[-1][:34]))
             continue
-        actual = run(aipy_run, source, scratch, 'case_%d' % index)
+        actual = run(pcc, aipy_run, source, scratch, 'case_%d' % index)
         if actual != expected:
             failures.append('%s：期望 %r，实际 %r' % (name, expected, actual))
             print('  ✗ %-28s 输出不符' % name)
