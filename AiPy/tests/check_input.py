@@ -105,13 +105,50 @@ def main(argv):
             ok('提示语不换行、返回值不带行尾')
 
         # ── CRLF 输入 ──
-        # Windows 的管道与文件都常用 \r\n，只剥 \n 会留下一个不可见的 \r，
-        # 症状是「字符串比较总是不相等」。
+        #
+        # 这条曾经是假的：MSVC 的 CRT 文本模式会把 `\r\n` 折成 `\n`，
+        # `fgetc` 根本看不到 `\r`，于是「剥不剥」测试都通过——实测把
+        # pop_back 删掉，这条依然绿。
+        #
+        # 真正的判据是**行尾单独的 `\r`**（不是 `\r\n`）：那不会被 CRT 折叠，
+        # 只有剥除逻辑能去掉它。用 O_BINARY 语义喂 `Bob\r` 再加 `\n`结束，
+        # CRT 看不到连续的 `\r\n`，`\r` 就会留在行内。
+        #
+        # 同时验证「行中间的 `\r` 不许动」——剥除只作用于行尾。
         done = run([exe], stdin_data=b'Bob\r\n7\r\n', cwd=scratch)
         if b'got [Bob]' not in done.stdout:
             fail('CRLF 输入没剥掉 \\r：%r' % done.stdout)
         else:
             ok('CRLF 输入剥干净')
+
+        # 行尾孤立的 \r（模拟从 Windows 文本文件喂进来的内容）。
+        # 用独立脚本读一行并回显字节，才能看清 \r 是否被剥掉。
+        cr_script = os.path.join(scratch, 'cr.py')
+        with io.open(cr_script, 'w', encoding='utf-8', newline='\n') as handle:
+            # 长度用于区分「剥了」与「没剥」。
+            handle.write('line = input()\nprint("len = " + str(len(line)))\n'
+                         'print("mid = " + str("a" in line))\n')
+        cr_exe = os.path.join(scratch, 'cr.exe')
+        built = build_exe(pcc, cr_script, cr_exe, build_dir, lib_dir)
+        if built.returncode != 0:
+            fail('行尾 \\r 用例打包失败：%s'
+                 % (built.stderr.strip() or built.stdout.strip()))
+        else:
+            # "abc\r\n" 经 CRT 折叠成 "abc\n"，剥不剥都是 3 —— 这条不区分。
+            # "abc\r" 后直接 EOF：CRT 不折叠（不是 \r\n），剥掉才是 3。
+            done = run([cr_exe], stdin_data=b'abc\r', cwd=scratch)
+            if b'len = 3' not in done.stdout:
+                fail('行尾孤立的 \\r 没剥掉（期望 len = 3，实际 %r）'
+                     % done.stdout)
+            else:
+                ok('行尾孤立的 \\r 剥掉')
+
+            # 行中间的 \r 必须保留：只剥行尾。
+            done = run([cr_exe], stdin_data=b'a\rb\n', cwd=scratch)
+            if b'len = 3' not in done.stdout or b'mid = True' not in done.stdout:
+                fail('行中间的 \\r 被误删了：%r' % done.stdout)
+            else:
+                ok('行中间的 \\r 保留')
 
         # ── 中文 ──
         done = run([exe], stdin_data='张三\n20\n'.encode('utf-8'), cwd=scratch)
@@ -137,18 +174,23 @@ def main(argv):
                 ok('EOF 返回 None（CPython 抛 EOFError，这里没有异常通道）')
 
         # ── 与 CPython 逐字节对拍 ──
-        python = os.environ.get('AIPY_PYTHON')
-        if python is None:
-            print('  - 跳过 CPython 对拍（没有 AIPY_PYTHON）')
+        #
+        # 用 `sys.executable` 而不是环境变量：这条测试本来就要靠 Python 跑
+        # （它自己就是 Python 脚本），再要求外部设一个 AIPY_PYTHON 才会做
+        # 最关键的那条断言，等于让它在 CTest 里默默跳过还报通过——实测踩过
+        # （CTest 不传 AIPY_PYTHON，于是这条一直没跑）。
+        python = sys.executable
+        cp = run([python, script], stdin_data=b'Alice\n42\n', cwd=scratch)
+        if cp.returncode != 0:
+            # 跑不起来是环境问题（比如 sys.executable 不可用），不是被测
+            # 代码的问题。这种情况下明确说「没验」，不冒充通过。
+            fail('CPython 跑不了对拍脚本（%s），这条断言未验证：%s'
+                 % (python, cp.stderr.decode('utf-8', 'replace').strip()[:200]))
+        elif cp.stdout != out:
+            fail('与 CPython 不一致：\n      CPython %r\n      AiPy    %r'
+                 % (cp.stdout, out))
         else:
-            cp = run([python, script], stdin_data=b'Alice\n42\n', cwd=scratch)
-            if cp.returncode != 0:
-                print('  - 跳过 CPython 对拍（它跑不了这份脚本）')
-            elif cp.stdout != out:
-                fail('与 CPython 不一致：\n      CPython %r\n      AiPy    %r'
-                     % (cp.stdout, out))
-            else:
-                ok('与 CPython 逐字节一致')
+            ok('与 CPython 逐字节一致')
 
         if FAILURES:
             print('\ninput() 有 %d 项不符：' % len(FAILURES), file=sys.stderr)
