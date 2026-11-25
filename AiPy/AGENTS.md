@@ -109,6 +109,12 @@ PyUI 将来就是这样一个 `pylib`：它自带 `pyui_core`/`pyui_script`，�
 交换）。它们与用户自定义库用的是**同一套** `AIPY_PYLIB_MODULE` /
 `AIPY_PYLIB_FUNCTION`，没有私有注册代码——加第五个库只需要新目录 + 两条宏。
 
+`fs.open` 刻意对齐 CPython 的文件对象（`read/readline/readlines/write/
+writelines/seek/tell/flush/close` + `for line in f`），因为文件对象是脚本
+最常用的东西，接口形状不一致的迁移成本最高。两处差异由语言决定：属性变
+方法（`f.closed()`）、失败返回 `None` 而非抛异常。文本模式的 `tell()` 数值
+与 CPython 不同（这里是字符下标），由 `aipy_fs_open` 钉住。
+
 线程刻意只提供**按名字跑脚本函数**：AiPy 里函数不是值（`Value` 没有
 函数类型，`g = f` 编译不过），所以没有 `Thread(target=worker)` 这种写法
 可选，只能写 `Thread("worker", 参数...)`。这是语言事实，不是 API 取舍。
@@ -130,6 +136,11 @@ pylib——这不是限制，是「一切皆是第三方库」的直接推论。
 方法签名收 `const Value& self` 而不是 `ObjectData*`：用 host 重新包一个 Value
 会造出第二份堆载荷，两份各自 `delete` 同一个 host，结果是 double free。
 这个坑踩过。
+
+迭代同理：`for line in f` 走的还是 Python 的迭代协议——`iterate()` 在
+`kObject` 上按名字找 `__iter__` 并调它，VM 依然不认识「文件」这个概念。
+返回的仍然物化成列表（`kIterInit` 本来就是这么建栈的），所以文件对象
+遍历到的是「剩余的全部行」，不是流式读取。
 
 ## 铁律一：不认识界面
 
@@ -279,7 +290,7 @@ cmake --build build
 cd build && ctest --output-on-failure
 ```
 
-十二条测试：
+十三条测试：
 
 | 测试 | 作用 |
 |---|---|
@@ -292,8 +303,10 @@ cd build && ctest --output-on-failure
 | `aipy_pylib` | 按需链接：链了能调、没链报错、不用扩展的产物里无 pylib 符号 |
 | `aipy_threading` | 线程库：`Thread`/`Event` 对齐、函数级按需、`with` 完整语义、提交时校验 |
 | `aipy_system_libs` | `fs`/`time`/`json` 三库：功能、错误返回值约定、各自的函数级按需 |
+| `aipy_fs_open` | `fs.open` 与 CPython `open` 逐行 + 逐字节对拍 |
 | `aipy_vm_semantics` | VM 结果与 CPython 逐变量一致 |
 | `aipy_layers` | 边界守护：无界面符号、`Host` 是不透明 `void*` |
+| `aipy_standard` | Design.md 第 4 节：系统库与用户库同一套宏、平台细节集中在 `toolchain.py` |
 
 `aipy_standalone` 不只是演示：它断言了算术、字符串内建、容器引用语义、
 UTF-8 字符下标等行为。哪天某个内建悄悄改了行为，它会红。

@@ -976,6 +976,23 @@ std::vector<Value> iterate(const Value& container) {
     return out;
   }
   if (container.isDict()) return container.dictKeys();
+  if (container.type() == Value::Type::kObject) {
+    // Python 的迭代协议：对象自己提供 `__iter__`。VM 仍然不知道「文件」是
+    // 什么——它只按名字转发，表由 pylib 提供（与 callMethod 同一条原则）。
+    // 返回的仍然物化成列表：kIterInit 本来就是这么建的栈（见 machine.cpp）。
+    const ObjectData* data = container.asObject();
+    if (data == nullptr || data->table == nullptr) return out;
+    for (const MethodEntry* entry = data->table->methods;
+         entry != nullptr && entry->name != nullptr; ++entry) {
+      if (std::string(entry->name) != "__iter__") continue;
+      const Value produced = entry->fn(container, nullptr, 0);
+      if (produced.isList()) return produced.asList();
+      if (produced.isDict()) return produced.dictKeys();
+      if (produced.type() == Value::Type::kString) return iterate(produced);
+      return out;
+    }
+    return out;
+  }
   return container.asList();
 }
 

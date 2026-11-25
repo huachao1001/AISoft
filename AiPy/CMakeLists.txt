@@ -465,6 +465,19 @@ if(AIPY_BUILD_TESTS)
                      ${CMAKE_BINARY_DIR}
                      $<TARGET_FILE_DIR:aipy_pylib_fs>
                      ${AIPY_PYTHON})
+
+    # fs.open 与 CPython open 逐行 + 逐字节对拍。
+    #
+    # 单列一条而不是塞进 check_system_libs：那样一份脚本要同时验「库能跑」
+    # 和「语义与 CPython 一致」，失败时分不清是哪一类。期望值由 CPython
+    # 现场跑出来，不是手写的。
+    add_test(NAME aipy_fs_open
+             COMMAND ${AIPY_PYTHON}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_fs_open.py
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tools/aipyic/aipyic.py
+                     ${CMAKE_BINARY_DIR}
+                     $<TARGET_FILE_DIR:aipy_pylib_fs>
+                     ${AIPY_PYTHON})
   endif()
 
   # 语义对拍：同一份脚本，CPython 跑一遍、VM 跑一遍，逐变量比较。

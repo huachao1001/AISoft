@@ -247,6 +247,7 @@ def main(argv):
         '还原 count: 3',
         '计时有效: True',
         'with 写完: True',
+        '逐行读完共 8 字',
         "目录内容: ['lines.txt', 'records.txt']",
         '清理后存在: False',
     ]

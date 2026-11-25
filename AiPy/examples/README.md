@@ -78,7 +78,7 @@ python tools\aipyic\aipyic.py --disasm build\back.bc
 | `03_builtins.py` | 18 个内建里的实用部分，含 AiPy 独有的三个 | 不能（用了独有内建） |
 | `04_tool.py` | 可交付的小工具：满减/折扣/税额/运费，**打包成 exe 的示例** | 能，输出逐字节一致 |
 | `05_threads.py` | `Thread`/`join` + `with lock:` 保护共享状态，**用到 pylib** | 不能（`Thread` 第一个参数是函数名） |
-| `06_files.py` | `fs` 读写文件、`json` 存取结构、`time` 计时，含 `with fs.open` | 不能（`fs` 不是标准库） |
+| `06_files.py` | `fs` 读写文件、`json` 存取结构、`time` 计时，含 `with fs.open` 与 `for line in f` | 不能（`fs` 不是标准库） |
 
 前三份能在 CPython 里跑，这件事本身是「AiPy 实现的是 Python 子集」的证据。
 `tests/check_examples.py` 每次构建都拿 CPython 的输出逐行比对，跑题了就构建

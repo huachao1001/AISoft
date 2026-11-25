@@ -170,6 +170,40 @@ with fs.open("out.txt", "w") as handle:
     handle.write("hello")
 ```
 
+### `fs.open` 对齐 CPython 的文件对象
+
+`fs.open(path, mode, encoding)` 按 CPython 解析模式串（`r w a x`、`+`、
+`b`、`t`），方法名与返回值也一致：
+
+| 方法 | 说明 |
+|---|---|
+| `read(size=-1)` | 文本模式按**字符**取，二进制按字节；EOF 返回 `""` |
+| `readline(size=-1)` | 保留行尾 `\n`（与 CPython 一致） |
+| `readlines()` | 剩余全部行 |
+| `write(text)` | 返回**字符数**（不是字节数） |
+| `writelines(lines)` | 逐行写入，**不自动加换行** |
+| `seek(offset, whence=0)` / `tell()` | 位置是解码后文本的字符下标 |
+| `flush()` / `close()` | 落盘 / 关闭；`with` 退出自动 `close` |
+| `readable()` / `writable()` / `seekable()` / `closed()` | 状态查询 |
+| `__iter__` | `for line in f` 逐行 |
+
+文本模式做 universal newlines：读时 `\r\n` 与孤立的 `\r` 都归一成 `\n`，
+写时 `\n` 换成本平台换行（Windows 是 `\r\n`）。这与 CPython 的
+`newline=None` 默认行为一致。`encoding` 只接受 `utf-8`——AiPy 的字符串就是
+UTF-8，别的编码要整体转码，那是另一件事。
+
+**与 CPython 的两处差异，都是语言层面的：**
+
+- **属性变成了方法**：`f.closed()` 而不是 `f.closed`，`f.name()` 同理。
+  AiPy 没有属性访问（`a.b` 只认 `self.x` 与 `模块.函数`）。
+- **失败返回 `None` 而不是抛异常**：`x` 模式遇到已存在的文件、
+  对已关闭的文件读写，都是返回 `None` 并在诊断通道说明原因。
+
+还有一处**语义差异值得单独知道**：文本模式的 `tell()` 返回的是解码后文本的
+字符下标，而 CPython 返回的是把换行转换算进去的不透明 cookie（写 `a\n`
+之后是 3，而内容是 2 个字符）。可预测、可算，但数值与 CPython 不对应。
+`aipy_fs_open` 里有一条断言把它钉住。
+
 **失败用返回值表示，不抛异常**（语言没有异常通道）：
 
 | 函数 | 失败时返回 |
@@ -368,8 +402,9 @@ libs/threading/src/fn_active_count.cpp
 libs/threading/src/fn_current_thread.cpp
 libs/threading/src/module.cpp                      模块级注册（AIPY_PYLIB_MODULE）
 
-libs/fs/src/io.cpp                                路径（UTF-8 ↔ 宽字符）、读写、错误描述
-libs/fs/src/fn_*.cpp                              11 个导出函数，各一个编译单元
+libs/fs/src/io.cpp                                路径（UTF-8 ↔ 宽字符）、读写、换行、错误描述
+libs/fs/src/fn_open.cpp                           文件对象（对齐 CPython 的方法表）
+libs/fs/src/fn_*.cpp                              其余 9 个编译单元、10 个导出函数
 libs/time/src/fn_*.cpp                            time/monotonic/sleep/localtime/strftime
 libs/json/src/codec.cpp                           序列化与解析
 libs/json/src/fn_*.cpp                            dumps / loads
@@ -412,7 +447,7 @@ LANGUAGE.md              支持哪些 Python 语法，逐条实测（186 条）
 `internal.h` 里的 `Frame` 刻意不放进 `aipy/vm.h`：它是执行循环的私有数据，
 让宿主看见就等于承诺永不变，而这个结构会随指令集调整。
 
-## 十二条测试
+## 十三条测试
 
 | 测试 | 作用 |
 |---|---|
@@ -420,11 +455,12 @@ LANGUAGE.md              支持哪些 Python 语法，逐条实测（186 条）
 | `aipy_standalone` | 只链 `aipy`，同时是独立性的回归测试 |
 | `aipy_vm_tests` | 字节码端到端：算术、循环、函数、方法、切片、错误行号、热加载搬运 |
 | `aipy_disasm` | 反汇编器与 C++ 加载器各自解码同一份 `.bc` |
-| `aipy_examples` | 示例与 CPython 逐行比对；五份示例全部打包成 exe 实跑 |
+| `aipy_examples` | 示例与 CPython 逐行比对；六份示例全部打包成 exe 实跑 |
 | `aipy_activity` | `class X(Activity)` 展开路径：字段、增强赋值、方法前向调用 |
 | `aipy_pylib` | 按需链接：链了能调、没链报错、不用扩展的产物里无 pylib 符号 |
 | `aipy_threading` | 线程库：`Thread`/`Event` 对齐、函数级按需、`with` 完整语义、提交时校验 |
 | `aipy_system_libs` | `fs`/`time`/`json` 三库：功能、错误返回值约定、各自的函数级按需 |
+| `aipy_fs_open` | `fs.open` 与 CPython `open` 逐行 + 逐字节对拍（期望值现场跑出来） |
 | `aipy_vm_semantics` | VM 结果与 CPython 逐变量一致 |
 | `aipy_layers` | 边界守护：无界面符号、`Host` 是不透明 `void*` |
 | `aipy_standard` | Design.md 第 4 节：系统库与用户库同一套宏、平台细节集中在 `toolchain.py` |

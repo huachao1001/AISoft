@@ -95,6 +95,17 @@ with fs.open(lines_path, "w") as handle:
 
 print("with 写完: " + str(fs.size(lines_path) > 0))
 
+# `open` 对齐 CPython 的文件对象：read/readline/readlines/write/writelines/
+# seek/tell/flush/close 同名同义，`for line in f` 也能用。
+# 两处语言层面的差异：属性变方法（f.closed() 而不是 f.closed），
+# 失败返回 None 而不是抛异常。
+with fs.open(lines_path) as handle:
+    total = 0
+    for line in handle:
+        total += len(line)
+
+print("逐行读完共 " + str(total) + " 字")
+
 # 只读文本文件，不发明「精确字节数」这种机器相关的断言。
 back = fs.read_text(lines_path)
 print("with 读回行数: " + str(len(back.split("\n")) - 1))
