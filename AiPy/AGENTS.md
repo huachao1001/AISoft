@@ -416,15 +416,22 @@ Python 的内建与标准库里的名字，归属按 CPython 划：
 | 脚本里写的 | 谁提供 | 是 CPython 的 |
 |---|---|---|
 | `open(p)` | `fs.pylib`（裸名） | 内建 |
+| `input()` | `fs.pylib`（裸名） | 内建 |
 | `os.listdir` | `os.pylib` | `os` |
 | `os.makedirs` | `os.pylib` | `os.makedirs` |
 | `os.remove` | `os.pylib` | `os` |
 | `os.path.exists` | `os.path.pylib` | `os.path` |
 | `os.path.isfile` / `isdir` / `getsize` | `os.path.pylib` | `os.path` |
 
-**`fs` 只提供 `open`。** 原先堆在 `fs` 里的 `read_text` / `write_text` /
-`append_text` 已删除——标准 Python 没有这些（`pathlib` 才有），留着就等于
-发明一套与 CPython 不一致的接口，迁移时必然踩坑。
+**`fs` 只提供 `open` 与 `input`。** 原先堆在 `fs` 里的 `read_text` /
+`write_text` / `append_text` 已删除——标准 Python 没有这些（`pathlib` 才有），
+留着就等于发明一套与 CPython 不一致的接口，迁移时必然踩坑。
+
+**`input` 也在 `fs`，不在 VM。** 它是 CPython 的内建，但读 stdin 是平台
+能力（铁律一）。「内建」说的是脚本里不用 import，与「必须编进解释器」是
+两件事——用 `AIPY_PYLIB_BUILTIN` 注册成裸名就同时满足了这两点，与 `open`
+完全同构。`aipy_input` 拿 CPython 逐字节对拍守着提示语位置、行尾剥除与
+EOF 行为。
 
 **`os` 与 `os.path` 分开打包**：只判存在性的脚本不该把 `listdir` 的目录遍历
 拖进产物。实测 `os.path.exists` 产物比 `os.listdir` 小约 12 KB。

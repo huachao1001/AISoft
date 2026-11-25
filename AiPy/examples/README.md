@@ -100,5 +100,8 @@ build\pcc.exe --disasm build\back.bc
 - 默认参数、关键字传参、`*args`
 - 嵌套函数、`class`、`import`
 - 异常 —— `parse_number` 这类转换函数失败时返回 `None`
-- `input()` —— 数据写在脚本里，要交互就用 PyUI 做宿主
 - `dict.keys()` 返回列表而不是 `dict_keys`（B6 类差异，`01_basics.py` 里注明了）
+
+`input()` **可以用**（`07_interactive.py` 演示），实现来自 `fs.pylib` 的裸名
+注册——与 `open` 同构。一处差异由语言决定：stdin 到底时返回 `None` 而不是
+抛 `EOFError`。

@@ -24,6 +24,7 @@
 
 import io
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -91,7 +92,8 @@ def check_only_aipy(pcc, aipy_run, script, out_dir, required):
            ['  未找到: %r' % line for line in missing]
 
 
-def check_bundle(pcc, script, out_dir, build_dir=None, lib_dir=None):
+def check_bundle(pcc, script, out_dir, build_dir=None, lib_dir=None,
+                 stdin_data=''):
     """打包成 exe：产物直接运行必须与脚本文本输出完全一致。
 
     ── 这一步在验什么 ──
@@ -122,8 +124,13 @@ def check_bundle(pcc, script, out_dir, build_dir=None, lib_dir=None):
 
     # 从产物所在的目录启动：验证它靠 GetModuleFileName 而不是 argv[0]
     # 找自己（不同目录下的 argv[0] 形态不一样）。
-    ran = subprocess.run([app], capture_output=True, text=True, encoding='utf-8',
-                         cwd=out_dir)
+    #
+    # stdin 一律接一个空管道：示例里可能调 input()，不给管道的话它会去读
+    # 测试进程自己的控制台，在这就跑挂了（等键盘 = 永久挂住）。
+    # 这两个参数一起出现：text=True 时 stdin 要是 str，所以 stdin_data
+    # 是文本；编码由 subprocess 负责（它用 utf-8，与脚本源文件一致）。
+    ran = subprocess.run([app], input=stdin_data, capture_output=True,
+                         text=True, encoding='utf-8', cwd=out_dir)
     if ran.returncode != 0:
         return ['%s.exe 执行失败：%s' % (stem, ran.stderr.strip())]
     return ran
@@ -268,6 +275,38 @@ def main(argv):
         else:
             print('ok   %-17s %d 条关键输出（打包产物）'
                   % ('06_files.exe', len(files_required)))
+
+    # 07 是唯一需要 stdin 的示例：它调 input()。给它喂固定的输入，
+    # 断言算出来的结果——这份示例的价值就在于「打包产物能交互」。
+    #
+    # 不走 VM 那条路（aipy_run 没链 fs.pylib），只验打包产物，这与
+    # 05_threads 同理：交付形态才是它想证明的东西。
+    interactive_script = os.path.join(examples, '07_interactive.py')
+    interactive_input = '张三\n15000\n13\n\n'
+    interactive_required = [
+        '=== 个税试算 ===',
+        '张三 的年收入 195000.00 元',
+        '应纳税所得额 130000.00 元',
+        '简化个税     13000.00 元',
+        '到手         182000.00 元',
+    ]
+    work = tempfile.mkdtemp(prefix='aipy_07_')
+    result = check_bundle(pcc, interactive_script, work,
+                          build_dir=build_dir, lib_dir=lib_dir,
+                          stdin_data=interactive_input)
+    if isinstance(result, list):
+        failures.extend(result)
+    else:
+        missing = [line for line in interactive_required
+                   if line not in result.stdout]
+        if missing:
+            failures.extend(['07_interactive.exe 缺少预期输出：'] +
+                            ['  未找到: %r' % line for line in missing])
+            print('  ✗ 07_interactive.exe 输出不符')
+        else:
+            print('ok   %-17s %d 条关键输出（打包产物 + stdin）'
+                  % ('07_interactive.exe', len(interactive_required)))
+    shutil.rmtree(work, ignore_errors=True)
 
     if failures:
         for line in failures:

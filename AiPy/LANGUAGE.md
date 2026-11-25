@@ -249,12 +249,17 @@ class App(Activity):
 ### 内建函数
 
 `sorted` `enumerate` `zip` `map` `filter` `any` `all` `reversed`
-`isinstance` `type` `input` `help` `dir` `id` `hash` `repr`
+`isinstance` `type` `help` `dir` `id` `hash` `repr`
 `chr` `ord` `bin` `hex` `oct` `divmod` `pow` `sum(生成器)` 全部不支持。
 
-`open` **支持**，但它的实现来自 `fs.pylib`：库用 `AIPY_PYLIB_BUILTIN` 把它
-注册成裸名，所以脚本里写 `open(p)` 不用 import。这是「库能注册内建」的机制，
-不是编译器内置了 `open`。
+`open` 与 `input` **支持**，但它们的实现来自 `fs.pylib`：库用
+`AIPY_PYLIB_BUILTIN` 把它们注册成裸名，所以脚本里写 `open(p)` / `input()`
+不用 import。这是「库能注册内建」的机制，不是编译器内置了它们。
+
+`input` 的语义对齐 CPython（提示语不换行、返回值剥掉行尾、`\r\n` 也剥），
+一处差异由语言决定：**stdin 到底时返回 `None` 而不是抛 `EOFError`**——
+这个语言没有异常通道，失败一律靠返回值。`aipy_input` 拿 CPython 逐字节对拍
+守着这几点。
 
 上表那些名字现在**编译期不再报错**（它们被编成按名字的扩展调用），而是在
 **打包期**报「没有任何库声明这个名字」。原因：编译器不认识具体能力，而库

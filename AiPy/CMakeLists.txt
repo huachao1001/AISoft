@@ -276,18 +276,21 @@ endif()
 # （实测：两个库各带一份 shared.obj 链接零警告）。所以这里不需要把共用
 # 代码塞进核心库——核心库仍然零平台代码。
 
-# ── fs：只有 `open` ──
+# ── fs：`open` 与 `input` ──
 #
-# `open` 是 Python 的**内建**，其余原先在 fs 里的东西都是 `os` / `os.path`
-# 的能力。所以这个库现在只做一件事：提供文件对象。
+# 两者都是 Python 的**内建**，其余原先在 fs 里的东西都是 `os` / `os.path`
+# 的能力。所以这个库现在做两件事：提供文件对象、读标准输入。
 #
-# 它同时用 AIPY_PYLIB_BUILTIN 把 `open` 注册成裸名（见 bare_open.cpp），
-# 于是脚本里写 `open(p)` 与 `len(p)` 一样自然，而实现仍在库里。
+# 它们同时用 AIPY_PYLIB_BUILTIN 注册成裸名（见 bare_open.cpp / bare_input.cpp），
+# 于是脚本里写 `open(p)` / `input()` 与 `len(p)` 一样自然，而实现仍在库里：
+# 核心 VM 一行文件代码、一行 stdio 代码都没有。
 add_library(aipy_pylib_fs STATIC
   libs/fs/src/module.cpp
   libs/fs/src/io.cpp
   libs/fs/src/fn_open.cpp
+  libs/fs/src/fn_input.cpp
   libs/fs/src/bare_open.cpp
+  libs/fs/src/bare_input.cpp
 )
 target_include_directories(aipy_pylib_fs PUBLIC libs/fs/include)
 # \$<TARGET_OBJECTS:...> 把共用 obj 直接编进这个归档：静态库之间不传递。
@@ -701,6 +704,17 @@ if(AIPY_BUILD_TESTS)
     add_test(NAME aipy_fs_open
              COMMAND ${AIPY_PYTHON}
                      ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_fs_open.py
+                     $<TARGET_FILE:pcc>
+                     ${CMAKE_BINARY_DIR}
+                     $<TARGET_FILE_DIR:aipy_pylib_fs>)
+
+    # input() 与 CPython 逐字节对拍。
+    #
+    # 单列一条的理由与 fs_open 相同：交互语义有三处独立的坑（提示语换行、
+    # 行尾 \r、EOF 行为），混进别的测试里失败时分不清是哪一类。
+    add_test(NAME aipy_input
+             COMMAND ${AIPY_PYTHON}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_input.py
                      $<TARGET_FILE:pcc>
                      ${CMAKE_BINARY_DIR}
                      $<TARGET_FILE_DIR:aipy_pylib_fs>)
