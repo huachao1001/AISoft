@@ -1,0 +1,154 @@
+// 把内嵌脚本跑起来——「打包成 exe」的执行端。
+//
+// ── 两种用法 ──
+//
+//   1. 裸 launcher：`aipy_app.exe some.bc`，跑指定的字节码
+//   2. 打包后的应用：`app.exe`，跑**自己文件尾部**的字节码
+//
+// 第二种才是交付形态。打包不需要 C++ 编译器：`aipyic.py --exe` 把字节码
+// 追加到这个 exe 的尾部再写一个索引，产物就能直接双击运行。用户机器上
+// 既不需要 MSVC，也不需要 Python——需要的只有这个 exe 本身。
+//
+// ── 为什么先看参数，再退回内嵌 ──
+//
+// 保留「裸 launcher 带文件参数」这一条，是因为开发和排错时不想每次都
+// 重新打包一遍（打一次要拷 400 KB）。正式产物不带参数，走内嵌路径。
+#include "aipy/bytecode.h"
+#include "aipy/vm.h"
+
+#include <cstdio>
+#include <string>
+#include <vector>
+
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
+namespace {
+
+// Windows 上不带控制台的 GUI 子系统产物没有 stderr 可写；统一走
+// OutputDebugString，命令行下 attach 到父控制台才看得见。
+void report(const std::string& text) {
+#if defined(_WIN32)
+  const std::wstring wide(text.begin(), text.end());
+  OutputDebugStringW((wide + L"\n").c_str());
+#endif
+  std::fprintf(stderr, "%s\n", text.c_str());
+}
+
+// 用 C 文件 API 而不是 `std::ifstream` + `istreambuf_iterator`。
+//
+// 这不是风格偏好：那套 iostream 代码会把 `basic_ifstream`、`codecvt`、
+// `use_facet` 与整套格式化机器一起拖进产物，实测多出 66 KB（.text 里
+// 一个叫 `i` 的模块）。launcher 只需要「读一个文件到内存」，用不到
+// locale、用不到格式化。
+std::vector<std::uint8_t> readWhole(const char* path) {
+  std::FILE* file = std::fopen(path, "rb");
+  if (file == nullptr) return {};
+
+  std::vector<std::uint8_t> data;
+  std::uint8_t chunk[16 * 1024];
+  for (;;) {
+    const std::size_t got = std::fread(chunk, 1, sizeof(chunk), file);
+    if (got == 0) break;
+    data.insert(data.end(), chunk, chunk + got);
+  }
+  const bool failed = std::ferror(file) != 0;
+  std::fclose(file);
+  if (failed) return {};
+  return data;
+}
+
+// 读自己。不能靠 argv[0]：Windows 上它可能是相对路径、可能没有扩展名，
+// 而且从快捷方式启动时还可能是别的东西。`GetModuleFileNameW` 给的是
+// 内核记录的真实映像路径，这是唯一可靠来源。
+std::vector<std::uint8_t> readSelf(const char* argv0) {
+#if defined(_WIN32)
+  // Windows 上 argv[0] 可能是相对路径、可能没有扩展名、从快捷方式启动时
+  // 还可能是别的东西。GetModuleFileNameW 给的是内核记录的真实映像路径，
+  // 这是唯一可靠来源，所以这里刻意不用参数（见上面的定义）。
+  (void)argv0;
+  std::vector<wchar_t> buffer(MAX_PATH);
+  for (;;) {
+    const DWORD length = GetModuleFileNameW(nullptr, buffer.data(),
+                                            static_cast<DWORD>(buffer.size()));
+    if (length == 0) return {};
+    // 返回值等于缓冲区大小说明路径被截断了，需要更大的缓冲区。
+    if (static_cast<std::size_t>(length) < buffer.size()) {
+      // 必须走 UTF-8 转换：直接按宽字节迭代器构造窄串在中文用户名、
+      // 中文目录下会得到乱码路径，读文件直接失败。
+      const int needed = WideCharToMultiByte(CP_UTF8, 0, buffer.data(),
+                                             static_cast<int>(length), nullptr, 0,
+                                             nullptr, nullptr);
+      if (needed <= 0) return {};
+      std::string narrow(static_cast<std::size_t>(needed), '\0');
+      WideCharToMultiByte(CP_UTF8, 0, buffer.data(), static_cast<int>(length),
+                          &narrow[0], needed, nullptr, nullptr);
+      return readWhole(narrow.c_str());
+    }
+    buffer.resize(buffer.size() * 2);
+  }
+#else
+  return readWhole(argv0);
+#endif
+}
+
+int runProgram(const aipy::vm::Program& program, const char* name) {
+  aipy::vm::Machine machine;
+  const aipy::vm::Result result = machine.run(program);
+  if (result.failed) {
+    if (result.line > 0) {
+      report(std::string(name) + ":" + std::to_string(result.line) + ": " + result.error);
+    } else {
+      report(std::string(name) + ": " + result.error);
+    }
+    return 1;
+  }
+  return 0;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  // 脚本的 `print` 走 log sink。语言层默认写 stderr 并加 `[aipy]` 前缀
+  // （调试诊断的口径）；应用产物要和 `python script.py` 一样只看程序输出，
+  // 所以这里换成写 stdout、不加前缀。
+  //
+  // 必须 flush：一旦脚本用了 threading.start，进程退出时后台线程还在跑，
+  // stdout 的缓冲有可能来不及丢出去——症状是「程序有输出但重定向到文件
+  // 是空的」。`python script.py` 是行缓冲，这里对齐它。
+  aipy::setLogSink([](const std::string& text) {
+    std::fwrite(text.data(), 1, text.size(), stdout);
+    std::fputc('\n', stdout);
+    std::fflush(stdout);
+  });
+
+  // 给了参数就按「裸 launcher」跑指定文件，方便开发期不重打包。
+  if (argc >= 2) {
+    const std::vector<std::uint8_t> data = readWhole(argv[1]);
+    if (data.empty()) {
+      report(std::string("读不到 ") + argv[1]);
+      return 2;
+    }
+    const aipy::bytecode::Result loaded = aipy::bytecode::load(data);
+    if (loaded.failed) {
+      report(std::string(argv[1]) + ": " + loaded.error);
+      return 1;
+    }
+    return runProgram(loaded.program, argv[1]);
+  }
+
+  // 没参数：这是打包产物，跑自己尾部的字节码。
+  const std::vector<std::uint8_t> self = readSelf(argv[0]);
+  if (self.empty()) {
+    report("读不到自己的映像文件");
+    return 2;
+  }
+  const aipy::bytecode::Result loaded = aipy::bytecode::loadAttached(self.data(), self.size());
+  if (loaded.failed) {
+    report(loaded.error);
+    report("用法: aipy_app <script.bc>（或把它打包成 exe 后直接运行）");
+    return 2;
+  }
+  return runProgram(loaded.program, "app");
+}

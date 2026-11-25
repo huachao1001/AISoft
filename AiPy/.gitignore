@@ -1,0 +1,16 @@
+# 构建产物不入库
+build/
+out/
+# 版本发布目录：每次编译后由 aipy_dist 目标拷贝进去，是派生目录
+dist/
+*.obj
+*.pdb
+*.ilk
+# 打包产物：在源码树里直接 --exe 会留下 exe，它只是 launcher + 字节码
+*.exe
+# 字节码是派生物，由构建期从 tests/scripts/*.py 生成（见 CMakeLists.txt）
+tests/data/
+*.bc
+# Python 字节码缓存：跑一次 aipyic 就会生成，不属于源码
+__pycache__/
+*.pyc
