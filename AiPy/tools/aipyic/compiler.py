@@ -53,7 +53,7 @@ OPCODES = [
     'CALL', 'CALL_BUILTIN', 'CALL_METHOD', 'CALL_EXT',
     'RETURN',
     'BUILD_LIST', 'BUILD_DICT',
-    'GET_ITEM', 'SET_ITEM', 'SLICE',
+    'GET_ITEM', 'SET_ITEM', 'SLICE', 'SET_SLICE',
     'ITER_INIT', 'ITER_NEXT', 'ITER_BREAK',
     'INPLACE',
     'WITH_ENTER', 'WITH_EXIT',
@@ -1048,6 +1048,14 @@ class Compiler:
             self.block.emit('STORE_LOCAL', node)
             self.block.emit_u16(temp)
             self.expr(target.value)
+            if isinstance(target.slice, ast.Slice):
+                # 切片赋值：压 [容器, start?, stop?, step?, 值]，再 SET_SLICE。
+                self.slice_expr(target.slice, node, emit_slice=False)
+                self.block.emit('LOAD_LOCAL', node)
+                self.block.emit_u16(temp)
+                self.block.emit('SET_SLICE', node)
+                self.block.emit_u8(self.slice_flags(target.slice))
+                return
             self.expr(target.slice)
             self.block.emit('LOAD_LOCAL', node)
             self.block.emit_u16(temp)
@@ -1332,26 +1340,32 @@ class Compiler:
 
         raise CompileError('不支持表达式 %s' % type(node).__name__, self.filename, node)
 
-    def slice_expr(self, node, parent):
-        """切片 x[a:b:c]。位标记 1=start 2=stop 4=step，压栈顺序 容器,start,stop,step。"""
+    def slice_flags(self, node):
+        """位标记 1=start 2=stop 4=step，与 SLICE / SET_SLICE 指令一致。"""
         flags = 0
-        # 容器已经在栈上，接下来的操作数直接压上去。
         if node.lower is not None:
             flags |= 1
         if node.upper is not None:
             flags |= 2
         if node.step is not None:
             flags |= 4
-        # 重新排列：容器已在栈底，但 SLICE 需要 容器 在下、操作数在上；
-        # 这恰好就是当前顺序，直接依次压入。
+        return flags
+
+    def slice_expr(self, node, parent, emit_slice=True):
+        """切片 x[a:b:c]。压栈顺序 容器,start,stop,step。
+
+        emit_slice=False 时只压操作数，供切片赋值拼 SET_SLICE 用。
+        """
+        # 容器已经在栈上，接下来的操作数直接压上去。
         if node.lower is not None:
             self.expr(node.lower)
         if node.upper is not None:
             self.expr(node.upper)
         if node.step is not None:
             self.expr(node.step)
-        self.block.emit('SLICE', parent)
-        self.block.emit_u8(flags)
+        if emit_slice:
+            self.block.emit('SLICE', parent)
+            self.block.emit_u8(self.slice_flags(node))
 
     def call(self, node):
         # 内建：len/str/range… 编译成 CALL_BUILTIN + 下标。

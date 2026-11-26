@@ -271,6 +271,31 @@ bool CodeGen::assignTarget(const Node& target, const Node& node) {
     emit("STORE_LOCAL", node);
     emitU16(temp);
     if (!expr(*target.children[0])) return false;
+    if (target.children[1]->kind == Kind::Slice) {
+      // 切片赋值：压 [容器, start?, stop?, step?, 值]，再 SET_SLICE。
+      // 位标记与读取时一致（1=start 2=stop 4=step）；值排在最后，
+      // 因为 SET_SLICE 先弹值再弹边界。
+      const Node& slice = *target.children[1];
+      int flags = 0;
+      std::size_t child = 0;
+      if (slice.sliceFlags & 1) {
+        flags |= 1;
+        if (!expr(*slice.children[child++])) return false;
+      }
+      if (slice.sliceFlags & 2) {
+        flags |= 2;
+        if (!expr(*slice.children[child++])) return false;
+      }
+      if (slice.sliceFlags & 4) {
+        flags |= 4;
+        if (!expr(*slice.children[child++])) return false;
+      }
+      emit("LOAD_LOCAL", node);
+      emitU16(temp);
+      emit("SET_SLICE", node);
+      emitU8(flags);
+      return true;
+    }
     if (!expr(*target.children[1])) return false;
     emit("LOAD_LOCAL", node);
     emitU16(temp);

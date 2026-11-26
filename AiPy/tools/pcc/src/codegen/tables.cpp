@@ -16,7 +16,7 @@ const char* const kOpNames[] = {
     "CALL", "CALL_BUILTIN", "CALL_METHOD", "CALL_EXT",
     "RETURN",
     "BUILD_LIST", "BUILD_DICT",
-    "GET_ITEM", "SET_ITEM", "SLICE",
+    "GET_ITEM", "SET_ITEM", "SLICE", "SET_SLICE",
     "ITER_INIT", "ITER_NEXT", "ITER_BREAK",
     "INPLACE",
     "WITH_ENTER", "WITH_EXIT",

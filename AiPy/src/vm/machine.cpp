@@ -620,6 +620,20 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         break;
       }
 
+      case Op::kSetSlice: {
+        const std::uint8_t flags = code[frame.pc++];
+        const Value items = stack[--sp];
+        Value step;
+        Value stop;
+        Value start;
+        if (flags & 4) step = stack[--sp];
+        if (flags & 2) stop = stack[--sp];
+        if (flags & 1) start = stack[--sp];
+        const Value container = stack[--sp];
+        assignSlice(container, start, stop, step, items);
+        break;
+      }
+
       case Op::kIterInit: {
         // 把容器物化成一个列表再按下标走。
         //

@@ -72,6 +72,8 @@ enum class Op : std::uint8_t {
   kSetItem,
   // 切片：u8 位标记，低三位表示 start/stop/step 是否压栈。
   kSlice,
+  // 切片赋值：u8 位标记（同 kSlice）。栈上是 [容器, start?, stop?, step?, 值]。
+  kSetSlice,
   // 迭代：栈上是 [list, index] 两槽。
   kIterInit,        // 弹容器 → 压「物化后的列表」「0」
   kIterNext,        // u16 退出目标；还有元素就压一个并前进

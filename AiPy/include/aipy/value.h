@@ -404,6 +404,10 @@ Value slice(const Value& container, const Value& start, const Value& end);
 // 带步长的切片（支持负步长反向）。AOT 路线不用它，VM 的 SLICE 用它。
 Value sliceStep(const Value& container, const Value& start, const Value& end,
                 const Value& step);
+// `x[start:end] = items` / `x[start:end:step] = items`。原地改列表，
+// 没有返回值（失败时经 raiseException 旁路通知 VM）。
+void assignSlice(const Value& container, const Value& start, const Value& end,
+                 const Value& step, const Value& items);
 
 // x ** y
 Value power(const Value& a, const Value& b);

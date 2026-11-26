@@ -1337,6 +1337,91 @@ Value slice(const Value& container, const Value& start, const Value& end) {
                              : Value::list(std::move(sliced));
 }
 
+void assignSlice(const Value& container, const Value& start, const Value& end,
+                 const Value& step, const Value& items) {
+  List* target = container.mutableList();
+  if (target == nullptr) {
+    // CPython 对字符串/元组/数字一律抛这句。
+    raiseException("TypeError", "'" + typeName(container) +
+                                   "' object does not support item assignment");
+    return;
+  }
+
+  const List values = iterate(items);
+  // CPython 对非可迭代的右值报这句（3.11 对普通切片与扩展切片同一文案）。
+  const bool iterable = items.type() == Value::Type::kString ||
+                        items.type() == Value::Type::kBytes || items.isList() ||
+                        items.isTuple() || items.isSet() || items.isDict() ||
+                        items.type() == Value::Type::kObject;
+  if (!iterable) {
+    raiseException("TypeError", "must assign iterable to extended slice");
+    return;
+  }
+  const long long count = static_cast<long long>(target->size());
+  const bool extended = !step.isNone() && step.toInt() != 1;
+
+  if (!extended) {
+    // 普通切片：新内容可以比旧片段长或短，列表整体伸缩。
+    long long from = start.isNone() ? 0 : start.toInt();
+    long long to = end.isNone() ? count : end.toInt();
+    if (from < 0) from += count;
+    if (to < 0) to += count;
+    if (from < 0) from = 0;
+    if (from > count) from = count;
+    if (to > count) to = count;
+    if (to < from) to = from;
+    List rebuilt(target->begin(), target->begin() + from);
+    rebuilt.insert(rebuilt.end(), values.begin(), values.end());
+    rebuilt.insert(rebuilt.end(), target->begin() + to, target->end());
+    *target = std::move(rebuilt);
+    return;
+  }
+
+  // 扩展切片：长度必须正好对上，否则 CPython 抛 ValueError。
+  const long long stride = step.toInt();
+  if (stride == 0) {
+    raiseException("ValueError", "slice step cannot be zero");
+    return;
+  }
+  long long from = start.isNone() ? (stride > 0 ? 0 : count - 1) : start.toInt();
+  long long to = end.isNone() ? (stride > 0 ? count : -1) : end.toInt();
+  if (!start.isNone() && from < 0) from += count;
+  if (!end.isNone() && to < 0) to += count;
+  if (stride > 0) {
+    if (from < 0) from = 0;
+    if (to > count) to = count;
+  } else {
+    if (from >= count) from = count - 1;
+    if (to < -1) to = -1;
+  }
+
+  long long slots = 0;
+  if (stride > 0) {
+    for (long long i = from; i < to; i += stride) ++slots;
+  } else {
+    for (long long i = from; i > to; i += stride) ++slots;
+  }
+  if (slots != static_cast<long long>(values.size())) {
+    raiseException("ValueError",
+                   "attempt to assign sequence of size " +
+                       std::to_string(values.size()) + " to extended slice of size " +
+                       std::to_string(slots));
+    return;
+  }
+
+  std::size_t next = 0;
+  if (stride > 0) {
+    for (long long i = from; i < to; i += stride) {
+      (*target)[static_cast<std::size_t>(i)] = values[next++];
+    }
+  } else {
+    for (long long i = from; i > to; i += stride) {
+      if (i < 0) break;
+      (*target)[static_cast<std::size_t>(i)] = values[next++];
+    }
+  }
+}
+
 // 带步长的切片。Python 的 `x[a:b:c]` 里 c 可以是负数（反向），
 // 而默认的 slice() 只处理正向、步长 1。
 //

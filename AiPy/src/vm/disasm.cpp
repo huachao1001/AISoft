@@ -114,6 +114,10 @@ std::vector<std::string> disassemble(const Program& program) {
         std::snprintf(text, sizeof(text), "slice flags=%u", code[pc]);
         pc += 1;
         break;
+      case Op::kSetSlice:
+        std::snprintf(text, sizeof(text), "set_slice flags=%u", code[pc]);
+        pc += 1;
+        break;
       case Op::kSetupExc:
         std::snprintf(text, sizeof(text), "setup_exc %u", read16(code, pc));
         pc += 2;

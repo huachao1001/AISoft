@@ -163,7 +163,7 @@ bool shapesOf(const std::string& name, std::vector<char>* shapes,
       "SETUP_EXC", "BUILD_TUPLE", "BUILD_SET",
       nullptr};
   static const char* const kU8[] = {"BIN", "CMP", "UNARY", "INPLACE", "SLICE",
-                                    nullptr};
+                                    "SET_SLICE", nullptr};
   static const char* const kNone[] = {
       "NONE", "TRUE", "FALSE", "POP", "DUP", "RETURN", "GET_ITEM", "SET_ITEM",
       "ITER_INIT", "ITER_BREAK", "POP_EXC", "RAISE", "RERAISE", "CURRENT_EXC",

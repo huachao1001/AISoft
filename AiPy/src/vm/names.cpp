@@ -39,6 +39,7 @@ const char* opName(Op op) {
     case Op::kGetItem: return "get_item";
     case Op::kSetItem: return "set_item";
     case Op::kSlice: return "slice";
+    case Op::kSetSlice: return "set_slice";
     case Op::kIterInit: return "iter_init";
     case Op::kIterNext: return "iter_next";
     case Op::kIterBreak: return "iter_break";
