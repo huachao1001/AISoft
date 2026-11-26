@@ -54,13 +54,17 @@ std::string dottedName(const Node& node) {
 }  // namespace
 
 bool CodeGen::nameRead(const std::string& name, const Node& node) {
-  // `len` 作为值出现时没有意义（没有一等函数），但 `len(x)` 走 call。
+  // `len` 作为值出现时没有意义：内建不是可传递的值，只有调用形式。
   if (Tables::isBuiltin(name)) {
     return failAt(diag::builtinAsValue(name), node);
   }
-  // `g = f` 会编译成「读一个叫 f 的全局变量」，而 f 从没被存进去过。
-  if (functionIndex(name) >= 0) {
-    return failAt(diag::functionAsValue(name), node);
+  // 脚本函数出现在值的位置（`g = f`、`f(func)` 的实参）就是取函数值。
+  // 编译成一条 MAKE_FUNCTION：函数号进载荷，运行期得到一个 kObject。
+  if (const int index = functionIndex(name); index >= 0) {
+    emit("MAKE_FUNCTION", node);
+    emitU16(index);
+    emitU16(0);  // 捕获个数。顶层函数不捕获，名字全在模块级全局槽里。
+    return true;
   }
   nameTarget(name, node);
   return true;
@@ -271,8 +275,30 @@ bool CodeGen::expr(const Node& node) {
       // 切片只能出现在下标里；单独出现是 `x[0:1] = v` 这类被拒的写法。
       return failAt(diag::unsupportedExpression("Slice"), node);
 
-    case Kind::Lambda:
-      return failAt(diag::unsupportedExpression("Lambda"), node);
+    case Kind::Lambda: {
+      // lambda 是一个值：登记隐藏函数，在这里求值它要捕获的外层变量，
+      // 再 MAKE_FUNCTION 造出函数值。捕获必须在**这句的位置**求值，
+      // 与默认参数同理——否则闭包看到的是定义之后才改的值。
+      const int index = registerLambda(node);
+      if (index < 0) return false;
+      const Block& callee = blocks_[static_cast<std::size_t>(
+          functions_[static_cast<std::size_t>(index)].blockIndex)];
+
+      // 默认值在**定义处**求值（CPython 语义），与 def 完全一致：
+      // 存进隐藏全局槽，调用时按掩码取。
+      if (callee.defaultSlot >= 0) {
+        if (!emitLambdaDefaults(node, callee)) return false;
+      }
+
+      std::vector<std::string> captures = callee.captures;
+      for (const std::string& name : captures) {
+        if (!nameRead(name, node)) return false;
+      }
+      emit("MAKE_FUNCTION", node);
+      emitU16(index);
+      emitU16(static_cast<int>(captures.size()));
+      return true;
+    }
 
     case Kind::NamedExpr:
       return failAt(diag::unsupportedExpression("NamedExpr"), node);
@@ -519,6 +545,26 @@ bool CodeGen::call(const Node& node) {
     }
   }
 
+  // ── 调用一个变量：`g(1)`，其中 g 是存着函数值的变量 ──
+  //
+  // 名字既不是内建也不是脚本函数，但它是**已知的变量**（局部或全局槽），
+  // 那就只可能是运行期存进去的函数值。编成「先读值、再按值调用」。
+  // 放在裸名分支之前：否则会被当成扩展函数，运行期报「没有链接进来」。
+  if (func.kind == Kind::Name || selfCall) {
+    if (isLocal(calleeName) || globalsSet_.count(calleeName) != 0) {
+      if (total != node.argsCount) {
+        return failAt(diag::keywordArguments(), node);
+      }
+      nameTarget(calleeName, func);
+      for (std::size_t i = 0; i < total; ++i) {
+        if (!expr(*node.children[1 + i])) return false;
+      }
+      emit("CALL_VALUE", node);
+      emitU8(static_cast<int>(total));
+      return true;
+    }
+  }
+
   // ── 裸名调用：可能是库注册的内建（`open`）──
   //
   // 走到这里说明这个名字既不是语言内建、也不是脚本内函数。它可能是一个
@@ -598,7 +644,18 @@ bool CodeGen::call(const Node& node) {
     return true;
   }
 
-  return failAt(diag::unsupportedCallTarget(), node);
+  // 其它任何表达式当调用目标：`f()(1)`、`(lambda x: x)(1)`。
+  // 先求值拿到函数值，再按值调用——与「调用变量」同一套指令。
+  if (total != node.argsCount) {
+    return failAt(diag::keywordArguments(), node);
+  }
+  if (!expr(func)) return false;
+  for (std::size_t i = 0; i < total; ++i) {
+    if (!expr(*node.children[1 + i])) return false;
+  }
+  emit("CALL_VALUE", node);
+  emitU8(static_cast<int>(total));
+  return true;
 }
 
 bool CodeGen::constant(const Node& node) {

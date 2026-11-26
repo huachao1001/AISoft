@@ -23,6 +23,7 @@
 #include <set>
 #include <string>
 #include <utility>
+#include <deque>
 #include <vector>
 
 namespace pcc {
@@ -53,6 +54,8 @@ struct CompiledBlock {
   int kwonlyStart = -1;
   // 具名参数的名字，按槽号排列（*args / **kwargs 不在其中）。
   std::vector<std::string> paramNames;
+  // 闭包捕获值的起始局部槽；-1 表示不捕获。
+  int captureStart = -1;
 };
 
 // 常量。类型与值分开存，写二进制时按类型序列化。
@@ -111,6 +114,10 @@ class CodeGen {
     int varargSlot = -1;
     int kwargSlot = -1;
     int kwonlyStart = -1;
+    // 闭包捕获值的起始局部槽；-1 表示不捕获。
+    int captureStart = -1;
+    // lambda 捕获的外层名字，顺序与 MAKE_FUNCTION 压栈一致。
+    std::vector<std::string> captures;
     std::vector<std::string> localNames;  // 槽号 → 名字
   };
 
@@ -170,9 +177,22 @@ class CodeGen {
   bool compileModule(const Node& module);
   bool expandActivity(const Node& classNode, std::vector<const Node*>* body);
   bool registerFunction(const Node& node);
+  // 把 Arguments 节点变成函数的槽布局（参数、默认值、vararg/kwarg）。
+  bool buildSignature(const Node& node, const std::string& name, bool isMethod,
+                      Block* out, std::uint64_t* mask, int* defaultTotal);
+  // lambda 体里引用的外层名字（按首次出现去重）。
+  void collectLambdaCaptures(const Node& body,
+                             const std::vector<std::string>& params,
+                             std::vector<std::string>* out) const;
   bool compileFunctionBody(const Node& node);
   // 把默认参数值在定义处求值，存进函数自己的隐藏全局槽。
   bool emitDefaultValues(const Node& node, Block& block);
+  // lambda 表达式：登记一个隐藏函数，返回函数下标；函数体进待编译队列。
+  int registerLambda(const Node& node);
+  // lambda 的默认值在定义处求值，与 def 同构（节点形状不同）。
+  bool emitLambdaDefaults(const Node& node, const Block& callee);
+  // 编译所有待编译的 lambda 函数体（在模块级语句之前做完）。
+  bool compilePendingLambdas();
 
   // ── 语句（statements.cpp）──
   bool statement(const Node& node);
@@ -217,9 +237,15 @@ class CodeGen {
   Block module_;
   Block* block_ = &module_;
 
-  std::vector<Block> blocks_;
-  std::vector<FunctionEntry> functions_;
-  std::vector<std::string> functionNames_;
+  // deque 而不是 vector：registerLambda 会在**编译某个函数体的中途**
+  // 追加新函数，而 block_ 正指向 blocks_ 里的元素。vector 扩容会让那个
+  // 指针悬空，后续指令写进已释放内存——症状是函数体变成空的。
+  std::deque<Block> blocks_;
+  std::deque<FunctionEntry> functions_;  std::vector<std::string> functionNames_;
+  // 等待编译函数体的 lambda：登记时只知道签名，函数体要等模块级代码
+  // 编到那一句时才编（与 def 一样，函数名与全局槽必须先就位）。
+  std::vector<int> pendingLambdas_;
+  int lambdaCounter_ = 0;
 
   std::vector<std::string> globalOrder_;
   std::set<std::string> globalsSet_;

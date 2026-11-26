@@ -671,6 +671,86 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         break;
       }
 
+      case Op::kMakeFunction: {
+        const std::uint16_t index = read16(code, frame.pc);
+        const std::uint16_t captureCount = read16(code, frame.pc + 2);
+        frame.pc += 4;
+        if (index >= program.functions.size()) return fail("函数号越界（编译器 bug）");
+        List captures;
+        captures.reserve(captureCount);
+        for (int i = captureCount; i > 0; --i) {
+          captures.push_back(stack[sp - static_cast<std::size_t>(i)]);
+        }
+        sp -= captureCount;
+        stack[sp++] = makeFunction(index, std::move(captures));
+        break;
+      }
+
+      case Op::kCallValue: {
+        // 栈上是 [可调用值, 位置实参...]。值到运行期才知道指向哪个函数，
+        // 所以不能像 kCall 那样把函数号写进指令。
+        const std::uint8_t argc = code[frame.pc];
+        frame.pc += 1;
+        const std::size_t base = sp - static_cast<std::size_t>(argc) - 1;
+        const Value callable = stack[base];
+        const int index = functionIndexOf(callable);
+        if (index < 0) {
+          raiseException("TypeError", "'" + typeName(callable) +
+                                          "' object is not callable");
+          break;
+        }
+        if (index >= static_cast<int>(program.functions.size())) {
+          return fail("函数号越界（编译器 bug）");
+        }
+        if (frames.size() >= static_cast<std::size_t>(Machine::kMaxCallDepth)) {
+          return fail("调用层数超过 " + std::to_string(Machine::kMaxCallDepth) +
+                      "，脚本里可能有无限递归");
+        }
+        const Function& fn = program.functions[static_cast<std::size_t>(index)];
+
+        std::vector<Value> positional(static_cast<std::size_t>(argc));
+        for (int i = 0; i < argc; ++i) {
+          positional[static_cast<std::size_t>(i)] =
+              stack[base + 1 + static_cast<std::size_t>(i)];
+        }
+
+        std::vector<Value> locals(static_cast<std::size_t>(fn.localCount), Value());
+        const Value defaults =
+            fn.defaultSlot >= 0 && fn.defaultSlot < static_cast<int>(globals.size())
+                ? globals[static_cast<std::size_t>(fn.defaultSlot)]
+                : Value();
+        std::string bindError;
+        if (!bindArguments(fn, defaults, positional, List{}, List{}, &locals,
+                           &bindError)) {
+          raiseException("TypeError", fn.name + "() " + bindError);
+          break;
+        }
+
+        // 闭包捕获：函数的那句 def/lambda 在外层求值时记下的值，按顺序
+        // 填进 captureStart 起的槽。这些槽是编译器分配好的具名局部槽
+        // （lambda 体里 `LOAD_LOCAL` 直接按名字读它们）。
+        const List& captures = functionCaptures(callable);
+        if (!captures.empty() && fn.captureStart >= 0) {
+          for (std::size_t i = 0; i < captures.size(); ++i) {
+            const std::size_t slot =
+                static_cast<std::size_t>(fn.captureStart) + i;
+            if (slot < locals.size()) locals[slot] = captures[i];
+          }
+        }
+
+        sp = base;
+
+        Frame callee;
+        callee.code = &fn.code;
+        callee.lines = &fn.lines;
+        callee.function = &fn;
+        callee.pc = 0;
+        callee.stackBase = sp;
+        callee.locals = std::move(locals);
+        frames.push_back(std::move(callee));
+        break;
+      }
+
       case Op::kCallBuiltin: {
         const std::uint16_t index = read16(code, frame.pc);
         const std::uint8_t argc = code[frame.pc + 2];

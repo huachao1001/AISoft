@@ -62,7 +62,7 @@ OPCODES = [
     'DEL_LOCAL', 'DEL_GLOBAL', 'BUILD_TUPLE', 'BUILD_SET',
     # 追加在末尾：Op 的数值就是字节码里的操作码，插到中间会让已生成的
     # .bc 被执行成别的指令。
-    'CALL_DYN', 'DICT_MERGE',
+    'CALL_DYN', 'DICT_MERGE', 'MAKE_FUNCTION', 'CALL_VALUE',
 ]
 
 # 二元算子编号，与 vm.h 的 BinOp 一致。
@@ -135,6 +135,7 @@ class Block:
         self.vararg_slot = -1
         self.kwarg_slot = -1
         self.kwonly_start = -1
+        self.capture_start = -1
 
     def emit(self, op, node):
         self.lines.append((len(self.code), getattr(node, 'lineno', 0)))
@@ -250,6 +251,11 @@ class Compiler:
         self.consts = []
         self.functions = []            # [Function dict]
         self.function_by_name = {}
+        # lambda 没有名字，函数表里用 <lambda>N 做唯一标识（只用于报错）。
+        self.lambda_counter = 0
+        # 等待编译函数体的 lambda 下标：登记发生在编译某个函数体/模块语句
+        # 的中途，函数体要等所有全局槽就位后再编。
+        self.pending_lambdas = []
         self.globals = {}              # 模块级变量名 → 全局槽
         self.global_count = 0
         self.module = Block('<module>')
@@ -411,6 +417,9 @@ class Compiler:
         # `g = f`（读函数名）与 `f = 3`（覆盖函数）都能被拒绝。
         for node in body:
             self.statement(node)
+
+        # lambda 的函数体在模块级语句编完之后才编：登记发生在语句内部。
+        self.compile_pending_lambdas()
 
         # 模块级最后一条语句结束 → 隐式 return None
         self.module.emit('NONE', tree)
@@ -628,6 +637,129 @@ class Compiler:
         index = len(self.functions)
         self.function_by_name[node.name] = index
         self.functions.append({'block': block, 'node': node})
+
+    def register_lambda(self, node):
+        """lambda 也登记成函数表里的一项，只是没有名字。
+
+        与 register_function 的槽位规则逐条对齐，否则字节码对不上。
+        """
+        name = '<lambda>%d' % self.lambda_counter
+        self.lambda_counter += 1
+
+        args = node.args
+        params = [arg.arg for arg in args.args]
+        kwonly = [arg.arg for arg in args.kwonlyargs]
+
+        block = Block(name, len(params))
+        for index, parameter in enumerate(params):
+            block.locals[parameter] = index
+        block.local_count = block.param_count
+        if kwonly:
+            block.kwonly_start = block.param_count
+            for _offset, parameter in enumerate(kwonly):
+                block.locals[parameter] = block.param_count
+                block.param_count += 1
+            block.local_count = block.param_count
+        if args.vararg is not None:
+            block.vararg_slot = block.local_count
+            block.locals[args.vararg.arg] = block.local_count
+            block.local_count += 1
+        if args.kwarg is not None:
+            block.kwarg_slot = block.local_count
+            block.locals[args.kwarg.arg] = block.local_count
+            block.local_count += 1
+
+        mask = 0
+        base = len(params) - len(args.defaults)
+        for offset, _default in enumerate(args.defaults):
+            mask |= 1 << (base + offset)
+        kwonly_defaults = {}
+        for offset, kwarg in enumerate(args.kwonlyargs):
+            default = args.kw_defaults[offset] if args.kw_defaults else None
+            if default is not None:
+                kwonly_defaults[kwarg.arg] = default
+                mask |= 1 << (block.kwonly_start + offset)
+        block.default_mask = mask
+        block.kwonly_defaults = kwonly_defaults
+        if mask:
+            block.default_count = bin(mask).count('1')
+            block.default_slot = self.global_slot('\x01defaults:' + name)
+
+        captures = self.lambda_captures(node.body, params)
+        block.captures = captures
+        if captures:
+            block.capture_start = block.local_count
+            for captured in captures:
+                block.slot_of(captured)
+
+        index = len(self.functions)
+        self.functions.append({'block': block, 'node': node, 'is_lambda': True})
+        self.pending_lambdas.append(index)
+        return index
+
+    def lambda_captures(self, body, params):
+        """lambda 体里引用的外层名字，顺序与 C++ 版的 BFS 一致。"""
+        out = []
+        queue = [body]
+        while queue:
+            current = queue.pop(0)
+            if isinstance(current, ast.Name):
+                name = current.id
+                if name in BUILTIN_INDEX:
+                    pass
+                elif name in self.function_by_name:
+                    pass
+                elif name in params:
+                    pass
+                elif name not in out:
+                    out.append(name)
+                continue
+            queue.extend(ast.iter_child_nodes(current))
+        return out
+
+    def emit_lambda_defaults(self, node, block):
+        """lambda 的默认值在定义处求值，与 def 同构。"""
+        args = node.args
+        for _ in range(block.param_count):
+            self.module.emit('NONE', node)
+        self.module.emit('BUILD_LIST', node)
+        self.module.emit_u16(block.param_count)
+        base = len(args.args) - len(args.defaults)
+        for offset, default in enumerate(args.defaults):
+            self.module.emit('DUP', node)
+            self.module.emit('CONST', node)
+            self.module.emit_u16(self.const_index(base + offset))
+            self.expr(default)
+            self.module.emit('SET_ITEM', node)
+        for offset, kwarg in enumerate(args.kwonlyargs):
+            if kwarg.arg not in block.kwonly_defaults:
+                continue
+            self.module.emit('DUP', node)
+            self.module.emit('CONST', node)
+            self.module.emit_u16(self.const_index(
+                block.kwonly_start + offset))
+            self.expr(block.kwonly_defaults[kwarg.arg])
+            self.module.emit('SET_ITEM', node)
+        self.module.emit('STORE_GLOBAL', node)
+        self.module.emit_u16(block.default_slot)
+
+    def compile_pending_lambdas(self):
+        """lambda 的函数体就是一个表达式，编完直接 RETURN。"""
+        for index in self.pending_lambdas:
+            entry = self.functions[index]
+            block = entry['block']
+            node = entry['node']
+            saved = self.block
+            saved_loops = self.loop_stack
+            saved_withs = self.with_stack
+            self.block = block
+            self.loop_stack = []
+            self.with_stack = []
+            self.expr(node.body)
+            block.emit('RETURN', node)
+            self.with_stack = saved_withs
+            self.loop_stack = saved_loops
+            self.block = saved
 
     def compile_function_body(self, node):
         """编译已经登记过的函数体。
@@ -1245,13 +1377,12 @@ class Compiler:
                 # 走 call 分支。这里只处理它被当成普通名字读的情况。
                 raise CompileError('内建函数 %s 不能当值使用' % node.id,
                                    self.filename, node)
-            # 脚本函数同理：`g = f` 在这里会编译成「读一个叫 f 的全局变量」，
-            # 而 f 从来没有被存进去过，运行期静默得到 None，直到调用 g() 才崩。
-            # 报错比让它跑过去好——「函数是一等值」这件事本就不在子集里。
+            # 脚本函数出现在值的位置（`g = f`、`f(func)` 的实参）就是取函数值。
             if node.id in self.function_by_name:
-                raise CompileError(
-                    '函数 %s 不能当值使用（没有一等函数）；请直接调用它' % node.id,
-                    self.filename, node)
+                self.block.emit('MAKE_FUNCTION', node)
+                self.block.emit_u16(self.function_by_name[node.id])
+                self.block.emit_u16(0)
+                return
             self.name_target(node.id, node)
             return
 
@@ -1443,6 +1574,18 @@ class Compiler:
             self.block.emit_u16(len(node.elts))
             return
 
+        if isinstance(node, ast.Lambda):
+            index = self.register_lambda(node)
+            block = self.functions[index]['block']
+            if block.default_slot >= 0:
+                self.emit_lambda_defaults(node, block)
+            for name in block.captures:
+                self.name_target(name, node)
+            self.block.emit('MAKE_FUNCTION', node)
+            self.block.emit_u16(index)
+            self.block.emit_u16(len(block.captures))
+            return
+
         raise CompileError('不支持表达式 %s' % type(node).__name__, self.filename, node)
 
     def slice_flags(self, node):
@@ -1593,6 +1736,21 @@ class Compiler:
             self.block.emit_u8(highest)
             return
 
+        # 调用一个变量：`g(1)`，其中 g 是存着函数值的变量。
+        # 与 C++ 版同序：放在裸名分支之前，否则会被当成扩展函数。
+        if isinstance(node.func, ast.Name):
+            is_variable = (self.is_local(node.func.id) or
+                           node.func.id in self.globals)
+            if is_variable:
+                if node.keywords:
+                    raise CompileError('不支持关键字传参；按位置传', self.filename, node)
+                self.name_target(node.func.id, node.func)
+                for argument in node.args:
+                    self.expr(argument)
+                self.block.emit('CALL_VALUE', node)
+                self.block.emit_u8(len(node.args))
+                return
+
         # 裸名：可能是库注册的内建（`open`）
         #
         # 走到这里说明这个名字既不是语言内建、也不是脚本内函数。它可能是一个
@@ -1642,7 +1800,16 @@ class Compiler:
             self.block.emit_u8(len(node.args))
             return
 
-        raise CompileError('不支持这种调用目标', self.filename, node)
+        # 其它任何表达式当调用目标：`f()(1)`、`(lambda x: x)(1)`。
+        # 先求值拿到函数值，再按值调用——与「调用变量」同一套指令。
+        if node.keywords:
+            raise CompileError('不支持关键字传参；按位置传', self.filename, node)
+        self.expr(node.func)
+        for argument in node.args:
+            self.expr(argument)
+        self.block.emit('CALL_VALUE', node)
+        self.block.emit_u8(len(node.args))
+        return
 
     def constant(self, node):
         value = node.value
@@ -1722,6 +1889,7 @@ class Compiler:
                 'varargSlot': block.vararg_slot,
                 'kwargSlot': block.kwarg_slot,
                 'kwonlyStart': block.kwonly_start,
+                'captureStart': block.capture_start,
                 'paramNames': block.param_names(),
             }
 

@@ -78,7 +78,8 @@ MAGIC = b'AIPYBC01'
 # 4：函数表新增 vararg / kwarg / kwonly / 参数名。
 # 5：函数表新增 defaultMask（默认值可能不连续），defaultCount 语义变为
 #    「有默认值的参数个数」，不再能由「尾部个数」推出。
-VERSION = 5
+# 6：函数表新增 captureStart（闭包捕获值落在哪些局部槽）。
+VERSION = 6
 
 # 常量类型标记，与 cpp 侧 ConstType 一致。
 CONST_NONE = 0
@@ -188,6 +189,8 @@ def pack(program):
         out.u16(0xFFFF if kwarg < 0 else kwarg)
         kwonly = function.get('kwonlyStart', -1)
         out.u16(0xFFFF if kwonly < 0 else kwonly)
+        capture = function.get('captureStart', -1)
+        out.u16(0xFFFF if capture < 0 else capture)
         names = function.get('paramNames', [])
         out.u16(len(names))
         for name in names:

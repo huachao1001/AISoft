@@ -27,6 +27,8 @@ const char* const kOpNames[] = {
     // .bc 与 .pylib 内的字节码被执行成别的指令。
     "CALL_DYN",
     "DICT_MERGE",
+    "MAKE_FUNCTION",
+    "CALL_VALUE",
 };
 
 constexpr int kOpCount = static_cast<int>(sizeof(kOpNames) / sizeof(kOpNames[0]));

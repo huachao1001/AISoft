@@ -197,6 +197,10 @@ class Value {
   friend Value makeException(const std::string& type, const std::string& message);
   friend std::string exceptionType(const Value& value);
   friend std::string exceptionMessage(const Value& value);
+  // 函数值与异常同构：载荷是语言语义，不该成为宿主可见的 API 面。
+  friend Value makeFunction(int index, List captures);
+  friend int functionIndexOf(const Value& value);
+  friend const List& functionCaptures(const Value& value);
 
  private:
   // ── 紧凑表示 ──
@@ -291,6 +295,13 @@ struct HeapData : DictData {
   // VM 要直接读写这两个字段。
   std::string exceptionType;
   std::string exceptionMessage;
+  // 函数值专用载荷（kObject 里的一种，判据是方法表指针）。同样放在这里：
+  // pylib 的 host 装不下「函数号 + 捕获的变量」这类语言语义。
+  //
+  // 函数号是 Program::functions 的下标；捕获是闭包读到的外层变量值。
+  // `Value` 仍只有 16 字节，载荷全在这块堆上。
+  int functionIndex = -1;
+  List captures;
   std::atomic<std::uint32_t> refs{1};  // 1 表示「刚创建，调用方已持有」
 };
 
@@ -307,6 +318,19 @@ Value makeException(const std::string& type, const std::string& message);
 // 是不是异常值。
 bool isException(const Value& value);
 
+// ── 函数值（一等函数 / lambda）──
+//
+// `g = f` 与 `f = lambda x: x + 1` 要求函数能存进变量。函数值走 kObject
+// 加专用方法表当标记，与异常同构——`Value` 仍是 16 字节。
+//
+// captures 是闭包捕获的外层变量值。顶层函数与不捕获的 lambda 传空列表：
+// 它们的名字全在模块级全局槽里，不需要闭包。
+Value makeFunction(int index, List captures = List());
+bool isFunction(const Value& value);
+// 函数在 Program::functions 里的下标；不是函数值时返回 -1。
+int functionIndexOf(const Value& value);
+// 捕获的变量值；不是函数值时返回空列表。
+const List& functionCaptures(const Value& value);
 // 取类型名 / 消息。不是异常时返回空串。
 std::string exceptionType(const Value& value);
 std::string exceptionMessage(const Value& value);

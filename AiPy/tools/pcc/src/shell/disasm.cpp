@@ -155,19 +155,19 @@ bool shapesOf(const std::string& name, std::vector<char>* shapes,
   static const char* const kTwoU16[] = {"CALL", "CALL_BUILTIN", "CALL_METHOD",
                                         "CALL_EXT", "RAISE_TYPE", nullptr};
   static const char* const kU16Pair[] = {"EXC_MATCH", "DEL_LOCAL", "DEL_GLOBAL",
-                                         nullptr};
+                                         "MAKE_FUNCTION", nullptr};
   static const char* const kU16[] = {
       "CONST", "LOAD_LOCAL", "STORE_LOCAL", "LOAD_GLOBAL", "STORE_GLOBAL",
       "JUMP", "JUMP_IF_FALSE", "JUMP_IF_FALSE_KEEP", "JUMP_IF_TRUE_KEEP",
       "BUILD_LIST", "BUILD_DICT", "ITER_NEXT", "WITH_ENTER", "WITH_EXIT",
-      "SETUP_EXC", "BUILD_TUPLE", "BUILD_SET",
+      "SETUP_EXC", "BUILD_TUPLE", "BUILD_SET", "CALL_DYN",
       nullptr};
   static const char* const kU8[] = {"BIN", "CMP", "UNARY", "INPLACE", "SLICE",
-                                    "SET_SLICE", nullptr};
+                                    "SET_SLICE", "CALL_VALUE", nullptr};
   static const char* const kNone[] = {
       "NONE", "TRUE", "FALSE", "POP", "DUP", "RETURN", "GET_ITEM", "SET_ITEM",
       "ITER_INIT", "ITER_BREAK", "POP_EXC", "RAISE", "RERAISE", "CURRENT_EXC",
-      "CLEAR_EXC", nullptr};
+      "CLEAR_EXC", "DICT_MERGE", nullptr};
 
   for (const char* const* it = kTwoU16; *it != nullptr; ++it) {
     if (name == *it) {
@@ -367,12 +367,14 @@ bool loadBytecodeFile(const std::string& path, LoadedProgram* program,
     std::uint16_t defaultCount = 0, defaultSlot = 0;
     std::uint32_t maskLow = 0, maskHigh = 0;
     std::uint16_t varargSlot = 0, kwargSlot = 0, kwonlyStart = 0, nameCount = 0;
+    std::uint16_t captureStart = 0;
     std::uint32_t codeLen = 0;
     if (!reader.u16(&paramCount) || !reader.u16(&localSlots) ||
         !reader.u16(&defaultCount) || !reader.u16(&defaultSlot) ||
         !reader.u32(&maskLow) || !reader.u32(&maskHigh) ||
         !reader.u16(&varargSlot) || !reader.u16(&kwargSlot) ||
-        !reader.u16(&kwonlyStart) || !reader.u16(&nameCount)) {
+        !reader.u16(&kwonlyStart) || !reader.u16(&captureStart) ||
+        !reader.u16(&nameCount)) {
       *error = "bytecode truncated in a function header";
       return false;
     }

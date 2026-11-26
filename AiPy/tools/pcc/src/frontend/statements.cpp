@@ -697,6 +697,52 @@ NodePtr Parser::parseFunctionArgs() {
   return args;
 }
 
+NodePtr Parser::lambdaArgs() {
+  auto args = make_node(Kind::Arguments, peek().line, peek().col);
+  bool seenStar = false;
+  bool seenKwonly = false;
+
+  while (!checkOp(":") && !check(TokenType::End)) {
+    if (matchOp("*")) {
+      args->hasVararg = true;
+      seenStar = true;
+      if (check(TokenType::Name)) args->varargName = advance().text;
+      if (!matchOp(",")) break;
+      continue;
+    }
+    if (matchOp("**")) {
+      args->hasKwarg = true;
+      if (check(TokenType::Name)) args->kwargName = advance().text;
+      if (!matchOp(",")) break;
+      continue;
+    }
+    if (!check(TokenType::Name)) {
+      fail(diag::nameExpected("a lambda parameter list"));
+      return nullptr;
+    }
+    const std::string name = advance().text;
+    const bool keywordOnly = seenStar || seenKwonly;
+    if (keywordOnly) {
+      args->hasKwonly = true;
+      args->kwonlyParams.push_back(name);
+    } else {
+      args->params.push_back(name);
+    }
+    NodePtr value;
+    if (matchOp("=")) {
+      value = expression();
+      if (!value) return nullptr;
+    }
+    if (keywordOnly) {
+      args->kwonlyDefaults.push_back(std::move(value));
+    } else {
+      args->paramDefaults.push_back(std::move(value));
+    }
+    if (!matchOp(",")) break;
+  }
+  return args;
+}
+
 NodePtr Parser::functionDef(bool async) {
   const Token& token = peek();
   advance();  // 'def'

@@ -127,6 +127,14 @@ enum class Op : std::uint8_t {
   // `f(**d)`：栈上是 [目标字典, 来源字典]，把来源的键值并进目标。
   // 键重复抛 TypeError，与 CPython 一致。
   kDictMerge,
+
+  // 取函数值：u16 函数号, u16 捕获个数。压上一个 kObject 函数值。
+  // `g = f` / `f = lambda ...` 都走它——函数从此是能存进变量的值。
+  kMakeFunction,
+
+  // 调用栈顶的函数值：栈上是 [可调用值, 位置实参...]，u8 是实参个数。
+  // `g(1)` 里的 g 到运行期才知道指向哪个函数，所以不能编成 CALL + 函数号。
+  kCallValue,
 };
 
 enum class BinOp : std::uint8_t {
@@ -181,6 +189,9 @@ struct Function {
   // 参数名，按槽号排列（含仅关键字参数，不含 *args / **kwargs）。
   // CALL_DYN 要按名字把关键字实参对上形参。
   std::vector<std::string> paramNames;
+  // 闭包捕获值的起始局部槽。捕获槽紧跟在参数/vararg/kwarg 之后，按
+  // MAKE_FUNCTION 压栈的顺序排列；-1 表示这个函数不捕获。
+  int captureStart = -1;
 };
 // 编译好的程序：模块级代码 + 函数表 + 常量池 + 两张调用表。
 struct Program {

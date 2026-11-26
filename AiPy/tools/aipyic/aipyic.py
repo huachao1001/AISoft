@@ -85,6 +85,8 @@ OPERANDS = {
     # 末尾追加的指令
     'CALL_DYN': ('u16',),
     'DICT_MERGE': (),
+    'MAKE_FUNCTION': ('u16', 'u16'),
+    'CALL_VALUE': ('u8',),
     'BUILD_TUPLE': ('u16',),
     'BUILD_SET': ('u16',),
     'DEL_LOCAL': ('u16',),

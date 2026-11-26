@@ -553,8 +553,17 @@ NodePtr Parser::atom() {
     if (token.text == "lambda") {
       advance();
       auto node = make_node(Kind::Lambda, token.line, token.col);
-      while (!checkOp(":") && !check(TokenType::End)) advance();
-      matchOp(":");
+      // 参数表与 def 同构，复用同一个解析流程：把 `:` 之前的内容当成
+      // 括号里的参数表来读，`lambda x, y=1: ...` 与 `def f(x, y=1)` 一致。
+      // 做法是把 token 流按 `:` 切出来不好做，所以这里用一个简化的
+      // 兼容路径：先收集形参名与默认值表达式。
+      NodePtr args = lambdaArgs();
+      if (!args) return nullptr;
+      node->children.push_back(std::move(args));
+      if (!matchOp(":")) {
+        fail(diag::expectedToken(":", peek().text));
+        return nullptr;
+      }
       NodePtr body = expression();
       if (body) node->children.push_back(std::move(body));
       return node;

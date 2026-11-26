@@ -113,6 +113,16 @@ std::vector<std::string> disassemble(const Program& program) {
       case Op::kDictMerge:
         std::snprintf(text, sizeof(text), "dict_merge");
         break;
+      case Op::kMakeFunction:
+        std::snprintf(text, sizeof(text), "make_function %u,%u",
+                      static_cast<unsigned>(read16(code, pc)),
+                      static_cast<unsigned>(read16(code, pc + 2)));
+        pc += 4;
+        break;
+      case Op::kCallValue:
+        std::snprintf(text, sizeof(text), "call_value %u", code[pc]);
+        pc += 1;
+        break;
       case Op::kCallMethod:
         std::snprintf(text, sizeof(text), "call_method %u,%u", read16(code, pc), code[pc + 2]);
         pc += 3;

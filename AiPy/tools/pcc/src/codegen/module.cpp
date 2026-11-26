@@ -44,6 +44,7 @@ bool CodeGen::compile(const Node& module) {
     out.varargSlot = block.varargSlot;
     out.kwargSlot = block.kwargSlot;
     out.kwonlyStart = block.kwonlyStart;
+    out.captureStart = block.captureStart;
     out.paramNames.assign(block.localNames.begin(),
                           block.localNames.begin() +
                               static_cast<std::ptrdiff_t>(block.paramCount));
@@ -127,6 +128,10 @@ bool CodeGen::compileModule(const Node& module) {
     if (!statement(*node)) return false;
   }
 
+  // lambda 的函数体在模块级语句编完之后才编：它们的登记发生在语句内部，
+  // 而函数体里引用的名字要等所有全局槽都占好。
+  if (!compilePendingLambdas()) return false;
+
   // 模块级最后一条语句结束 → 隐式 return None。
   // 行号 0：Python 版这里传的是 ast.Module，它没有 lineno。
   emitOpNoLine("NONE");
@@ -179,22 +184,15 @@ bool CodeGen::expandActivity(const Node& classNode,
   return true;
 }
 
-bool CodeGen::registerFunction(const Node& node) {
-  if (functionIndex(node.text) >= 0) {
-    return failAt(diag::duplicateFunction(node.text), node);
-  }
-  if (node.decoratorCount > 0) {
-    return failAt(diag::decoratorUnsupported(), node);
-  }
-
+bool CodeGen::buildSignature(const Node& node, const std::string& name,
+                             bool isMethod, Block* out,
+                             std::uint64_t* mask, int* defaultTotal) {
   const Node& args = *node.children[0];
   if (args.hasPosonly) {
     return fail(diag::positionalOnlyParams(), args.posonlyLine,
                 args.posonlyCol + 1);
   }
 
-  // 方法（在 Activity 里）去掉第一个 self 参数。
-  const bool isMethod = !args.params.empty() && args.params[0] == "self";
   const std::size_t firstParam = isMethod ? 1 : 0;
 
   // 槽序：位置参数 → 仅关键字参数 → *args → **kwargs。
@@ -204,7 +202,7 @@ bool CodeGen::registerFunction(const Node& node) {
   // 只能排在它们后面——这一点与 CPython 的 co_varnames 顺序不同，但脚本
   // 观察不到槽号，只有「名字能读到正确值」这一条约束。
   Block block;
-  block.name = node.text;
+  block.name = name;
   for (std::size_t i = firstParam; i < args.params.size(); ++i) {
     block.localNames.push_back(args.params[i]);
   }
@@ -212,8 +210,8 @@ bool CodeGen::registerFunction(const Node& node) {
   block.localCount = block.paramCount;
   if (!args.kwonlyParams.empty()) {
     block.kwonlyStart = block.paramCount;
-    for (const std::string& name : args.kwonlyParams) {
-      block.localNames.push_back(name);
+    for (const std::string& parameter : args.kwonlyParams) {
+      block.localNames.push_back(parameter);
       ++block.paramCount;
       ++block.localCount;
     }
@@ -229,23 +227,49 @@ bool CodeGen::registerFunction(const Node& node) {
 
   // 默认值：每个具名参数一位，位在参数下标上。这样 `def f(*, a=1, b)`
   // 这种默认值不连续的情况也能精确表达；列表本身与 paramCount 等长，
-  // 没有默认值的位置放 kDeleted 哨兵（None 是合法默认值，不能拿它占位）。
-  std::uint64_t mask = 0;
-  int defaultTotal = 0;
+  // 没有默认值的位置留占位（None 是合法默认值，不能拿它表示「没有」，
+  // 真正的判据是掩码位）。
+  std::uint64_t bits = 0;
+  int total = 0;
   for (std::size_t i = firstParam; i < args.paramDefaults.size(); ++i) {
     if (!args.paramDefaults[i]) continue;
     const std::size_t slot = i - firstParam;
-    if (slot < 64) mask |= (std::uint64_t(1) << slot);
-    ++defaultTotal;
+    if (slot < 64) bits |= (std::uint64_t(1) << slot);
+    ++total;
   }
   for (std::size_t i = 0; i < args.kwonlyDefaults.size(); ++i) {
     if (!args.kwonlyDefaults[i]) continue;
     const std::size_t slot = static_cast<std::size_t>(block.kwonlyStart) + i;
-    if (slot < 64) mask |= (std::uint64_t(1) << slot);
-    ++defaultTotal;
+    if (slot < 64) bits |= (std::uint64_t(1) << slot);
+    ++total;
   }
-  block.defaultMask = mask;
-  block.defaultCount = defaultTotal;
+  block.defaultMask = bits;
+  block.defaultCount = total;
+  *out = std::move(block);
+  *mask = bits;
+  *defaultTotal = total;
+  return true;
+}
+
+bool CodeGen::registerFunction(const Node& node) {
+  if (functionIndex(node.text) >= 0) {
+    return failAt(diag::duplicateFunction(node.text), node);
+  }
+  if (node.decoratorCount > 0) {
+    return failAt(diag::decoratorUnsupported(), node);
+  }
+
+  // 方法（在 Activity 里）去掉第一个 self 参数。
+  const Node& args = *node.children[0];
+  const bool isMethod = !args.params.empty() && args.params[0] == "self";
+
+  Block block;
+  std::uint64_t mask = 0;
+  int defaultTotal = 0;
+  if (!buildSignature(node, node.text, isMethod, &block, &mask,
+                      &defaultTotal)) {
+    return false;
+  }
   if (defaultTotal > 0) {
     // 默认值在定义处求值后存进这个隐藏全局槽。名字带前缀，避免与脚本变量
     // 撞名；它同时出现在 globalNames 里，热加载会把值一并搬过去。
@@ -279,6 +303,118 @@ bool CodeGen::registerFunction(const Node& node) {
   functionNames_.push_back(node.text);
   blocks_.push_back(std::move(block));
   functions_.push_back(std::move(entry));
+  return true;
+}
+
+int CodeGen::registerLambda(const Node& node) {
+  // lambda 没有名字。函数表里需要一个唯一的名字只用于报错，用 <lambda>
+  // 加序号；脚本看不到它。
+  const std::string name =
+      "<lambda>" + std::to_string(lambdaCounter_++);
+
+  Block block;
+  std::uint64_t mask = 0;
+  int defaultTotal = 0;
+  if (!buildSignature(node, name, false, &block, &mask, &defaultTotal)) {
+    return -1;
+  }
+  if (defaultTotal > 0) {
+    block.defaultSlot = globalSlot(std::string("\x01", 1) + "defaults:" + name);
+  }
+
+  // lambda 的体是一个表达式，里面的名字都是**捕获**：它们要么来自外层
+  // 函数（闭包），要么来自模块级。这里没法静态分出哪一种，所以统一按
+  // 捕获处理——调用时由 VM 把外层局部值填进捕获槽。
+  //
+  // 捕获顺序按首次出现排，去重。
+  std::vector<std::string> captures;
+  collectLambdaCaptures(*node.children[1], block.localNames, &captures);
+  block.captures = captures;
+  if (!captures.empty()) {
+    // 捕获槽紧跟在参数区之后，按 captures 的顺序排列。VM 靠 captureStart
+    // 把 MAKE_FUNCTION 压栈的值填进这些槽。
+    block.captureStart = block.localCount;
+    for (const std::string& captured : captures) {
+      slotOfIn(&block, captured);
+    }
+  }
+
+  FunctionEntry entry;
+  entry.node = &node;
+  entry.blockIndex = static_cast<int>(blocks_.size());
+  entry.isMethod = false;
+  functionNames_.push_back(name);
+  blocks_.push_back(std::move(block));
+  functions_.push_back(std::move(entry));
+  pendingLambdas_.push_back(static_cast<int>(functions_.size()) - 1);
+  return static_cast<int>(functions_.size()) - 1;
+}
+
+void CodeGen::collectLambdaCaptures(
+    const Node& body, const std::vector<std::string>& params,
+    std::vector<std::string>* out) const {
+  // lambda 体里出现的每个名字：不是自己的形参、不是内建、不是脚本函数，
+  // 就需要从外层捕获。用后序遍历保证嵌套表达式的顺序稳定。
+  std::deque<const Node*> queue;
+  queue.push_back(&body);
+  while (!queue.empty()) {
+    const Node* current = queue.front();
+    queue.pop_front();
+    if (current->kind == Kind::Name) {
+      const std::string& name = current->text;
+      if (Tables::isBuiltin(name)) continue;
+      if (functionIndex(name) >= 0) continue;
+      bool isParam = false;
+      for (const std::string& parameter : params) {
+        if (parameter == name) {
+          isParam = true;
+          break;
+        }
+      }
+      if (isParam) continue;
+      bool seen = false;
+      for (const std::string& existing : *out) {
+        if (existing == name) {
+          seen = true;
+          break;
+        }
+      }
+      if (!seen) out->push_back(name);
+      continue;
+    }
+    for (const auto& child : current->children) {
+      if (child) queue.push_back(child.get());
+    }
+  }
+}
+
+bool CodeGen::compilePendingLambdas() {
+  for (const int index : pendingLambdas_) {
+    FunctionEntry& entry = functions_[static_cast<std::size_t>(index)];
+    Block& block = blocks_[static_cast<std::size_t>(entry.blockIndex)];
+    const Node& node = *entry.node;
+
+    Block* savedBlock = block_;
+    std::vector<LoopFrame> savedLoops = loopStack_;
+    std::vector<int> savedWiths = withStack_;
+    const bool savedInMethod = inMethod_;
+    block_ = &block;
+    loopStack_.clear();
+    withStack_.clear();
+    inMethod_ = false;
+
+    bool ok = true;
+    if (node.children.size() > 1) ok = expr(*node.children[1]);
+    if (ok) {
+      emit("RETURN", node);
+    }
+
+    inMethod_ = savedInMethod;
+    withStack_ = savedWiths;
+    loopStack_ = savedLoops;
+    block_ = savedBlock;
+    if (!ok) return false;
+  }
   return true;
 }
 
@@ -327,6 +463,39 @@ bool CodeGen::emitDefaultValues(const Node& node, Block& block) {
   }
   emit("STORE_GLOBAL", node);
   emitU16(target.defaultSlot);
+  return true;
+}
+
+bool CodeGen::emitLambdaDefaults(const Node& node, const Block& callee) {
+  // 与 emitDefaultValues 同构，区别只是节点形状：lambda 的参数在
+  // children[0]、体在 children[1]，没有 bodyCount。
+  const Node& args = *node.children[0];
+  for (int i = 0; i < callee.paramCount; ++i) emit("NONE", node);
+  emit("BUILD_LIST", node);
+  emitU16(callee.paramCount);
+
+  const int base = static_cast<int>(args.params.size()) -
+                   static_cast<int>(args.paramDefaults.size());
+  for (std::size_t i = 0; i < args.paramDefaults.size(); ++i) {
+    if (!args.paramDefaults[i]) continue;
+    emit("DUP", node);
+    emit("CONST", node);
+    emitU16(constIndexOfInt(static_cast<long long>(base) +
+                            static_cast<long long>(i)));
+    if (!expr(*args.paramDefaults[i])) return false;
+    emit("SET_ITEM", node);
+  }
+  for (std::size_t i = 0; i < args.kwonlyDefaults.size(); ++i) {
+    if (!args.kwonlyDefaults[i]) continue;
+    emit("DUP", node);
+    emit("CONST", node);
+    emitU16(constIndexOfInt(static_cast<long long>(callee.kwonlyStart) +
+                            static_cast<long long>(i)));
+    if (!expr(*args.kwonlyDefaults[i])) return false;
+    emit("SET_ITEM", node);
+  }
+  emit("STORE_GLOBAL", node);
+  emitU16(callee.defaultSlot);
   return true;
 }
 

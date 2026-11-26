@@ -20,6 +20,8 @@ const List kEmptyList;
 // 所有用到判定的地方（isException、toString）之前可见。
 const MethodEntry kNoMethods[] = {{nullptr, nullptr}};
 const MethodTable kExceptionTable = {kNoMethods};
+// 函数值的标记表。与异常同构：判据是「表指针是不是它」。
+const MethodTable kFunctionTable = {kNoMethods};
 
 // 数字提升：只要有一边是 float，结果就是 float。Python 的 / 永远返回 float，
 // 但 + - * % 保持 int。这里不区分来源，由调用点决定走哪个函数。
@@ -705,6 +707,32 @@ Value makeException(const std::string& type, const std::string& message) {
 bool isException(const Value& value) {
   const ObjectData* data = value.asObject();
   return data != nullptr && data->table == &kExceptionTable;
+}
+
+// ── 函数值 ──
+
+Value makeFunction(int index, List captures) {
+  Value out;
+  out.type_ = Value::Type::kObject;
+  out.heap_ = makeHeap();
+  out.heap_->object.table = &kFunctionTable;
+  out.heap_->functionIndex = index;
+  out.heap_->captures = std::move(captures);
+  return out;
+}
+
+bool isFunction(const Value& value) {
+  const ObjectData* data = value.asObject();
+  return data != nullptr && data->table == &kFunctionTable;
+}
+
+int functionIndexOf(const Value& value) {
+  if (!isFunction(value)) return -1;
+  return value.heap_->functionIndex;
+}
+
+const List& functionCaptures(const Value& value) {
+  return isFunction(value) ? value.heap_->captures : kEmptyList;
 }
 
 std::string exceptionType(const Value& value) {

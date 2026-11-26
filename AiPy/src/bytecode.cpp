@@ -169,6 +169,8 @@ Result load(const std::uint8_t* data, std::size_t size) {
     function.kwargSlot = kwargSlot == 0xFFFF ? -1 : kwargSlot;
     const std::uint16_t kwonlyStart = reader.u16();
     function.kwonlyStart = kwonlyStart == 0xFFFF ? -1 : kwonlyStart;
+    const std::uint16_t captureStart = reader.u16();
+    function.captureStart = captureStart == 0xFFFF ? -1 : captureStart;
     const std::uint16_t nameCount = reader.u16();
     function.paramNames.reserve(nameCount);
     for (int n = 0; n < nameCount; ++n) function.paramNames.push_back(reader.text());

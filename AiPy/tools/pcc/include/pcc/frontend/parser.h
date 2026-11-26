@@ -75,6 +75,8 @@ class Parser {
   NodePtr raiseStatement();
   NodePtr matchStatement();
   NodePtr parseFunctionArgs();
+  // lambda 的参数表没有括号，读到 `:` 为止；其余与 parseFunctionArgs 同构。
+  NodePtr lambdaArgs();
   bool parseBlock(std::vector<NodePtr>* body);
   NodePtr importStatement();
   NodePtr fromImportStatement();
