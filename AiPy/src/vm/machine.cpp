@@ -552,6 +552,27 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         break;
       }
 
+      case Op::kBuildSet: {
+        const std::uint16_t count = read16(code, frame.pc);
+        frame.pc += 2;
+        Value::List items;
+        for (int i = count; i > 0; --i) {
+          const Value& item = stack[sp - static_cast<std::size_t>(i)];
+          // 去重：集合字面量里重复的元素只算一个。
+          bool seen = false;
+          for (const Value& existing : items) {
+            if (eq(existing, item).toBool()) {
+              seen = true;
+              break;
+            }
+          }
+          if (!seen) items.push_back(item);
+        }
+        sp -= count;
+        stack[sp++] = Value::set(std::move(items));
+        break;
+      }
+
       case Op::kBuildDict: {
         const std::uint16_t pairs = read16(code, frame.pc);
         frame.pc += 2;

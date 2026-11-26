@@ -96,6 +96,10 @@ class Value {
     // 元组。与列表共用 HeapData::items 载荷，但类型独立：CPython 里
     // `(1,2) == [1,2]` 是 False，混成一体会在比较与打印上静默出错。
     kTuple,
+    // 集合。载荷复用 HeapData::items，保持插入序并去重。
+    // 不用哈希表：脚本里的集合通常只有几个元素，线性查重更快也更省内存；
+    // 代价是打印顺序是插入序，而 CPython 按哈希序（已在 LANGUAGE.md 记录）。
+    kSet,
     // 「这个槽没有值」——`del x` 之后的状态。CPython 里再读会 NameError，
     // 而 None 是合法的值，两者必须能区分。载荷是变量名（堆字符串），
     // 报错时要把它写进消息。
@@ -130,12 +134,14 @@ class Value {
   bool isDict() const { return type_ == Type::kDict; }
   bool isList() const { return type_ == Type::kList; }
   bool isTuple() const { return type_ == Type::kTuple; }
+  bool isSet() const { return type_ == Type::kSet; }
   // 序列：列表或元组。索引、切片、len、迭代、`+`/`*` 都按同一套处理，
   // 差别只在不支持原地修改（元组不可变）。
   bool isSequence() const { return type_ == Type::kList || type_ == Type::kTuple; }
   // 列表或字典：`for x in y` 与 `len(y)` 都接受两种容器
   bool isContainer() const {
-    return type_ == Type::kList || type_ == Type::kDict || type_ == Type::kTuple;
+    return type_ == Type::kList || type_ == Type::kDict ||
+           type_ == Type::kTuple || type_ == Type::kSet;
   }
 
   Host asHost() const { return type_ == Type::kHost ? host_ : nullptr; }
@@ -157,6 +163,8 @@ class Value {
   // ── 构造与查询 ──
   static Value list(List items);
   static Value tuple(List items);
+  // 集合：内部按加入顺序去重。
+  static Value set(List items);
   static Value dict(const List& keys, const List& values);
   // 「已删除」哨兵：`del x` 之后槽里放它，再读会抛 NameError。名字用于报错。
   static Value deleted(std::string name);

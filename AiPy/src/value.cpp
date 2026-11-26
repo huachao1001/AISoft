@@ -231,7 +231,8 @@ void release(HeapData* heap) {
 inline bool isHeapType(Value::Type type) {
   return type == Value::Type::kString || type == Value::Type::kList ||
          type == Value::Type::kDict || type == Value::Type::kObject ||
-         type == Value::Type::kDeleted || type == Value::Type::kTuple;
+         type == Value::Type::kDeleted || type == Value::Type::kTuple ||
+         type == Value::Type::kSet;
 }
 
 }  // namespace
@@ -253,6 +254,7 @@ Value::Value(const Value& other) : type_(other.type_) {
     case Type::kString:
     case Type::kList:
     case Type::kTuple:
+    case Type::kSet:
     case Type::kDict:
     case Type::kObject:
     case Type::kDeleted:
@@ -280,6 +282,7 @@ Value::Value(Value&& other) noexcept : type_(other.type_) {
     case Type::kString:
     case Type::kList:
     case Type::kTuple:
+    case Type::kSet:
     case Type::kDict:
     case Type::kObject:
     case Type::kDeleted:
@@ -319,6 +322,7 @@ Value& Value::operator=(const Value& other) {
     case Type::kString:
     case Type::kList:
     case Type::kTuple:
+    case Type::kSet:
     case Type::kDict:
     case Type::kObject:
     case Type::kDeleted:
@@ -349,6 +353,7 @@ Value& Value::operator=(Value&& other) noexcept {
     case Type::kString:
     case Type::kList:
     case Type::kTuple:
+    case Type::kSet:
     case Type::kDict:
     case Type::kObject:
     case Type::kDeleted:
@@ -404,6 +409,14 @@ Value Value::tuple(List items) {
   return out;
 }
 
+Value Value::set(List items) {
+  Value out;
+  out.type_ = Type::kSet;
+  out.heap_ = makeHeap();
+  out.heap_->items = std::move(items);
+  return out;
+}
+
 Value Value::deleted(std::string name) {
   Value out;
   out.type_ = Type::kDeleted;
@@ -445,7 +458,8 @@ ObjectData* Value::asObject() const {
 // ── 取值 ──
 
 const List& Value::asList() const {
-  if ((type_ == Type::kList || type_ == Type::kTuple) && heap_ != nullptr) {
+  if ((type_ == Type::kList || type_ == Type::kTuple || type_ == Type::kSet) &&
+      heap_ != nullptr) {
     return heap_->items;
   }
   return kEmptyList;
@@ -500,6 +514,8 @@ bool Value::toBool() const {
     case Type::kList:
       return heap_ != nullptr && !heap_->items.empty();
     case Type::kTuple:
+      return heap_ != nullptr && !heap_->items.empty();
+    case Type::kSet:
       return heap_ != nullptr && !heap_->items.empty();
     case Type::kDict:
       return heap_ != nullptr && !heap_->keys.empty();
@@ -585,6 +601,18 @@ std::string Value::toString() const {
       out += ")";
       return out;
     }
+    case Type::kSet: {
+      // 空集不能写 `{}`（那是空字典），CPython 显示成 `set()`。
+      const List& items = asList();
+      if (items.empty()) return "set()";
+      std::string out = "{";
+      for (std::size_t i = 0; i < items.size(); ++i) {
+        if (i > 0) out += ", ";
+        appendRepr(out, items[i]);
+      }
+      out += "}";
+      return out;
+    }
     case Type::kDict:
       return dictRepr(dictKeys(), dictValues());
     case Type::kHost:
@@ -657,6 +685,7 @@ std::string typeName(const Value& value) {
     case Value::Type::kString: return "str";
     case Value::Type::kList: return "list";
     case Value::Type::kTuple: return "tuple";
+    case Value::Type::kSet: return "set";
     case Value::Type::kDict: return "dict";
     case Value::Type::kHost: return "host";
     case Value::Type::kObject: return "object";
@@ -743,6 +772,21 @@ Value add(const Value& a, const Value& b) {
 }
 
 Value sub(const Value& a, const Value& b) {
+  // 集合差集：`{1,2} - {2}`。与整数减法共用同一个 opcode。
+  if (a.isSet() && b.isSet()) {
+    List out;
+    for (const Value& item : a.asList()) {
+      bool found = false;
+      for (const Value& other : b.asList()) {
+        if (eq(item, other).toBool()) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) out.push_back(item);
+    }
+    return Value::set(std::move(out));
+  }
   if (!asNumberLike(a) || !asNumberLike(b)) {
     raiseException("TypeError", "unsupported operand type(s) for -: '" +
                                     typeName(a) + "' and '" + typeName(b) + "'");
@@ -888,6 +932,23 @@ Value eq(const Value& a, const Value& b) {
     }
     return Value(true);
   }
+  if (a.isSet()) {
+    // 集合比较同样不看顺序，但必须是同一集合。
+    const List& left = a.asList();
+    const List& right = b.asList();
+    if (left.size() != right.size()) return Value(false);
+    for (const Value& item : left) {
+      bool found = false;
+      for (const Value& other : right) {
+        if (eq(item, other).toBool()) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) return Value(false);
+    }
+    return Value(true);
+  }
   return Value(compareValues(a, b) == 0);
 }
 
@@ -945,14 +1006,65 @@ Value bitError(const char* op, const Value& a, const Value& b) {
 }  // namespace
 
 Value bitAnd(const Value& a, const Value& b) {
+  if (a.isSet() && b.isSet()) {
+    List out;
+    for (const Value& item : a.asList()) {
+      for (const Value& other : b.asList()) {
+        if (eq(item, other).toBool()) {
+          out.push_back(item);
+          break;
+        }
+      }
+    }
+    return Value::set(std::move(out));
+  }
   if (!isIntegerLike(a) || !isIntegerLike(b)) return bitError("&", a, b);
   return Value(a.toInt() & b.toInt());
 }
 Value bitOr(const Value& a, const Value& b) {
+  if (a.isSet() && b.isSet()) {
+    List out = a.asList();
+    for (const Value& other : b.asList()) {
+      bool found = false;
+      for (const Value& existing : out) {
+        if (eq(existing, other).toBool()) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) out.push_back(other);
+    }
+    return Value::set(std::move(out));
+  }
   if (!isIntegerLike(a) || !isIntegerLike(b)) return bitError("|", a, b);
   return Value(a.toInt() | b.toInt());
 }
 Value bitXor(const Value& a, const Value& b) {
+  if (a.isSet() && b.isSet()) {
+    // 对称差：只在一边出现的元素。
+    List out;
+    for (const Value& item : a.asList()) {
+      bool inRight = false;
+      for (const Value& other : b.asList()) {
+        if (eq(item, other).toBool()) {
+          inRight = true;
+          break;
+        }
+      }
+      if (!inRight) out.push_back(item);
+    }
+    for (const Value& other : b.asList()) {
+      bool inLeft = false;
+      for (const Value& item : a.asList()) {
+        if (eq(item, other).toBool()) {
+          inLeft = true;
+          break;
+        }
+      }
+      if (!inLeft) out.push_back(other);
+    }
+    return Value::set(std::move(out));
+  }
   if (!isIntegerLike(a) || !isIntegerLike(b)) return bitError("^", a, b);
   return Value(a.toInt() ^ b.toInt());
 }
@@ -988,6 +1100,8 @@ Value length(const Value& v) {
     case Value::Type::kList:
       return Value(static_cast<long long>(v.asList().size()));
     case Value::Type::kTuple:
+      return Value(static_cast<long long>(v.asList().size()));
+    case Value::Type::kSet:
       return Value(static_cast<long long>(v.asList().size()));
     case Value::Type::kDict:
       return Value(static_cast<long long>(v.dictKeys().size()));

@@ -250,8 +250,14 @@ bool CodeGen::expr(const Node& node) {
     case Kind::NamedExpr:
       return failAt(diag::unsupportedExpression("NamedExpr"), node);
 
-    case Kind::SetLit:
-      return failAt(diag::unsupportedExpression("Set"), node);
+    case Kind::SetLit: {
+      for (const auto& element : node.children) {
+        if (!expr(*element)) return false;
+      }
+      emit("BUILD_SET", node);
+      emitU16(static_cast<int>(node.children.size()));
+      return true;
+    }
 
     case Kind::ListComp:
       return failAt(diag::unsupportedExpression("ListComp"), node);

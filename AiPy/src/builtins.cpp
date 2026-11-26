@@ -269,6 +269,27 @@ Value builtinFormatText(const Value* args, int count, std::string* error) {
   return formatText(args[0], args[1]);
 }
 
+Value builtinSet(const Value* args, int count, std::string* error) {
+  if (count == 0) return Value::set(Value::List{});
+  if (count != 1) {
+    *error = "set 最多 1 个参数";
+    return Value();
+  }
+  // set(iterable)：去重后建成集合。字符串按字符拆开（与 list() 一致）。
+  Value::List items;
+  for (const Value& item : iterate(args[0])) {
+    bool seen = false;
+    for (const Value& existing : items) {
+      if (eq(existing, item).toBool()) {
+        seen = true;
+        break;
+      }
+    }
+    if (!seen) items.push_back(item);
+  }
+  return Value::set(std::move(items));
+}
+
 Value builtinCharFromCode(const Value* args, int count, std::string* error) {
   if (count != 1) {
     *error = "char_from_code 需要 1 个参数";
@@ -316,6 +337,7 @@ const Entry kBuiltinTable[] = {
     {"format_text", builtinFormatText},
     {"char_from_code", builtinCharFromCode},
     {"text_of_char", builtinTextOfChar},
+    {"set", builtinSet},
 };
 
 }  // namespace builtins

@@ -22,7 +22,7 @@ const char* const kOpNames[] = {
     "WITH_ENTER", "WITH_EXIT",
     "SETUP_EXC", "POP_EXC", "RAISE", "RAISE_TYPE", "RERAISE",
     "EXC_MATCH", "CURRENT_EXC", "CLEAR_EXC",
-    "DEL_LOCAL", "DEL_GLOBAL", "BUILD_TUPLE",
+    "DEL_LOCAL", "DEL_GLOBAL", "BUILD_TUPLE", "BUILD_SET",
 };
 
 constexpr int kOpCount = static_cast<int>(sizeof(kOpNames) / sizeof(kOpNames[0]));
@@ -31,7 +31,7 @@ constexpr int kOpCount = static_cast<int>(sizeof(kOpNames) / sizeof(kOpNames[0])
 const char* const kBuiltins[] = {
     "len", "str", "int", "float", "bool", "abs", "round", "min", "max",
     "sum", "list", "dict", "range", "print",
-    "format_text", "char_from_code", "text_of_char",
+    "format_text", "char_from_code", "text_of_char", "set",
 };
 
 constexpr int kBuiltinCount =

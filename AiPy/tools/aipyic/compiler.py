@@ -59,7 +59,7 @@ OPCODES = [
     'WITH_ENTER', 'WITH_EXIT',
     'SETUP_EXC', 'POP_EXC', 'RAISE', 'RAISE_TYPE', 'RERAISE',
     'EXC_MATCH', 'CURRENT_EXC', 'CLEAR_EXC',
-    'DEL_LOCAL', 'DEL_GLOBAL', 'BUILD_TUPLE',
+    'DEL_LOCAL', 'DEL_GLOBAL', 'BUILD_TUPLE', 'BUILD_SET',
 ]
 
 # 二元算子编号，与 vm.h 的 BinOp 一致。
@@ -74,7 +74,7 @@ UNOPS = ['NEG', 'NOT', 'INVERT']
 BUILTINS = [
     'len', 'str', 'int', 'float', 'bool', 'abs', 'round', 'min', 'max',
     'sum', 'list', 'dict', 'range', 'print',
-    'format_text', 'char_from_code', 'text_of_char',
+    'format_text', 'char_from_code', 'text_of_char', 'set',
 ]
 
 OP = {name: index for index, name in enumerate(OPCODES)}
@@ -1274,6 +1274,13 @@ class Compiler:
             for element in node.elts:
                 self.expr(element)
             self.block.emit('BUILD_LIST', node)
+            self.block.emit_u16(len(node.elts))
+            return
+
+        if isinstance(node, ast.Set):
+            for element in node.elts:
+                self.expr(element)
+            self.block.emit('BUILD_SET', node)
             self.block.emit_u16(len(node.elts))
             return
 
