@@ -150,6 +150,9 @@ std::vector<std::string> disassemble(const Program& program) {
       case Op::kYield:
         std::snprintf(text, sizeof(text), "yield");
         break;
+      case Op::kAwait:
+        std::snprintf(text, sizeof(text), "await");
+        break;
       case Op::kCallMethod:
         std::snprintf(text, sizeof(text), "call_method %u,%u", read16(code, pc), code[pc + 2]);
         pc += 3;

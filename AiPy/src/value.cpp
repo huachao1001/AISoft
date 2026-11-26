@@ -902,6 +902,18 @@ bool isGenerator(const Value& value) {
   return data != nullptr && data->table == &kGeneratorTable;
 }
 
+// 协程与生成器同构：同样的表与载荷，只多一个标记。分成两个构造入口而不是
+// 加参数，是因为调用点只有「含 yield 的函数」与「async def」两种，各自
+// 明确写出来比传一个 bool 更难读错。
+Value makeCoroutine(int functionIndex, List locals) {
+  Value out = makeGenerator(functionIndex, std::move(locals));
+  out.heap_->isCoroutineObject = true;
+  return out;
+}
+bool isCoroutineObject(const Value& value) {
+  return isGenerator(value) && value.heap_->isCoroutineObject;
+}
+
 int generatorFunctionIndex(const Value& value) {
   if (!isGenerator(value)) return -1;
   return value.heap_->functionIndex;

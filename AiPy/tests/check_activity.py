@@ -277,6 +277,42 @@ CASES = [
         'print(list(g()))\n',
         '[1, 2]\n',
     ),
+    # ── async / await ──
+    (
+        'async 协程依次执行',
+        'async def step(x):\n'
+        '    print("step")\n'
+        '    return x * 2\n'
+        'async def main():\n'
+        '    a = await step(1)\n'
+        '    b = await step(2)\n'
+        '    print(a + b)\n'
+        'main()\n'
+        'await main()\n',
+        'step\nstep\n6\n',
+    ),
+    (
+        'async 惰性（创建不执行）',
+        'async def c():\n'
+        '    print("body")\n'
+        '    return 1\n'
+        'x = c()\n'
+        'print("created")\n'
+        'print(await x)\n',
+        'created\nbody\n1\n',
+    ),
+    (
+        'async 里抛异常向外传播',
+        'async def bad():\n'
+        '    raise ValueError("x")\n'
+        'async def main():\n'
+        '    try:\n'
+        '        await bad()\n'
+        '    except ValueError:\n'
+        '        print("caught")\n'
+        'await main()\n',
+        'caught\n',
+    ),
     # ── 期望被拒绝的 ──
     (
         '两个 Activity 被拒绝',

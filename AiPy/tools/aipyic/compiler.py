@@ -64,7 +64,7 @@ OPCODES = [
     # .bc 被执行成别的指令。
     'CALL_DYN', 'DICT_MERGE', 'MAKE_FUNCTION', 'CALL_VALUE',
     'CALL_VALUE_DYN', 'MAKE_CLASS', 'GET_ATTR', 'SET_ATTR', 'INSTANTIATE',
-    'MAKE_SUPER', 'YIELD',
+    'MAKE_SUPER', 'YIELD', 'AWAIT',
 ]
 
 # 二元算子编号，与 vm.h 的 BinOp 一致。
@@ -140,6 +140,8 @@ class Block:
         self.capture_start = -1
         # 函数体里有 yield：调用它得到生成器，不是返回值。
         self.is_generator = False
+        # `async def`：调用它得到协程，await 才驱动它跑。
+        self.is_coroutine = False
 
     def emit(self, op, node):
         self.lines.append((len(self.code), getattr(node, 'lineno', 0)))
@@ -411,7 +413,7 @@ class Compiler:
         # 先把所有顶层 def 收进来：Python 允许「先调用后定义」，而模块级
         # 代码按顺序执行，所以函数必须先全部就位。
         for node in body:
-            if isinstance(node, ast.FunctionDef):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 self.register_function(node)
 
         # 模块级变量先全部占好槽：函数里读模块级变量要能找到它。
@@ -435,13 +437,13 @@ class Compiler:
         # 「前面的方法调用后面的方法」，也才能检查出「函数里偷偷改模块级
         # 变量却没写 global」。
         for node in body:
-            if isinstance(node, ast.FunctionDef):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 self.compile_function_body(node)
 
         # 类的方法体也要编。
         for node in plain_classes:
             for member in node.body:
-                if isinstance(member, ast.FunctionDef):
+                if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     self.compile_function_body(
                         member, node.name + '.' + member.name)
 
@@ -682,7 +684,7 @@ class Compiler:
     def register_class_methods(self, node):
         """类里的方法登记成 `<类>.<方法>`，保留 self 形参。"""
         for member in node.body:
-            if not isinstance(member, ast.FunctionDef):
+            if not isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             self.register_function(member, node.name + '.' + member.name,
                                    keep_self=True)
@@ -694,7 +696,7 @@ class Compiler:
 
         member_names = []
         for member in node.body:
-            if isinstance(member, ast.FunctionDef):
+            if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 qualified = node.name + '.' + member.name
                 member_names.append(member.name)
                 self.module.emit('MAKE_FUNCTION', member)
@@ -923,6 +925,10 @@ class Compiler:
         saved_class = self.current_class
         dot = name.find('.')
         self.current_class = '' if dot < 0 else name[:dot]
+        # `async def` 是协程：调用它只造对象，await 才驱动。
+        if isinstance(node, ast.AsyncFunctionDef):
+            block.is_coroutine = True
+
         # 函数体里有 yield 就是生成器（lambda 体不算外层的：它自己决定）。
         pending = list(node.body)
         while pending and not block.is_generator:
@@ -959,13 +965,16 @@ class Compiler:
                 self.block.emit('POP', node)
                 return
             if isinstance(node.value, ast.Await):
-                raise CompileError('不支持 await：脚本是单线程事件循环', self.filename, node.value)
+                # `await f()` 作为语句：驱动协程，丢掉返回值。
+                self.expr(node.value)
+                self.block.emit('POP', node)
+                return
             if isinstance(node.value, ast.Call):
                 self.expr(node.value)
                 self.block.emit('POP', node)
             return
 
-        if isinstance(node, ast.FunctionDef):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             # 顶层 def：签名已在 register_function 登记；这里只发默认值求值，
             # 因为 CPython 在执行到这一句时求值默认参数。
             # 函数体里的 def 仍然拒绝——见下面的嵌套检查。
@@ -982,6 +991,14 @@ class Compiler:
 
         if isinstance(node, ast.ClassDef):
             return self.compile_class(node)
+
+        if isinstance(node, ast.AsyncFor):
+            raise CompileError("'async for' is not supported",
+                               self.filename, node)
+
+        if isinstance(node, ast.AsyncWith):
+            raise CompileError("'async with' is not supported",
+                               self.filename, node)
 
         if isinstance(node, ast.Pass):
             return
@@ -1103,7 +1120,7 @@ class Compiler:
             self.try_statement(node)
             return
 
-        if isinstance(node, ast.FunctionDef):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             raise CompileError('不支持嵌套函数 "%s"；请移到模块顶层' % node.name,
                                self.filename, node)
 
@@ -1742,6 +1759,12 @@ class Compiler:
         if isinstance(node, ast.YieldFrom):
             raise CompileError('不支持 yield from', self.filename, node)
 
+        if isinstance(node, ast.Await):
+            # `await 协程`：求值协程对象，再让 VM 驱动它跑到底取返回值。
+            self.expr(node.value)
+            self.block.emit('AWAIT', node)
+            return
+
         if isinstance(node, ast.Yield):
             # `yield` / `yield x`：求出值（没有操作数就是 None）后发 YIELD。
             if node.value is None:
@@ -2127,6 +2150,7 @@ class Compiler:
                 'kwonlyStart': block.kwonly_start,
                 'captureStart': block.capture_start,
                 'isGenerator': block.is_generator,
+                'isCoroutine': block.is_coroutine,
                 'paramNames': block.param_names(),
             }
 

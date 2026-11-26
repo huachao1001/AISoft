@@ -230,7 +230,11 @@ CASES = [
     ('函数', '生成器 yield 无操作数', 'def f():\n    yield\n', 'ok'),
     ('函数', '生成器里的 yield 表达式', 'def f():\n    x = yield 1\n    yield x\n', 'ok'),
     ('函数', 'yield from 拒绝', 'def f():\n    yield from [1, 2]\n', 'no'),
-    ('函数', 'async def', 'async def f():\n    return 1\n', 'no'),
+    ('函数', 'async def', 'async def f():\n    return 1\n', 'ok'),
+    ('函数', 'async def 带 await', 'async def f():\n    x = await g()\n    return x\n', 'ok'),
+    ('函数', 'await 作为语句', 'async def f():\n    await g()\n', 'ok'),
+    ('函数', 'async for 拒绝', 'async def f():\n    async for x in a:\n        pass\n', 'no'),
+    ('函数', 'async with 拒绝', 'async def f():\n    async with a:\n        pass\n', 'no'),
     ('函数', '文档字符串', 'def f():\n    """说明"""\n    return 1\n', 'ok'),
     ('函数', '类型注解返回值', 'def f() -> int:\n    return 1\n', 'ok'),
 

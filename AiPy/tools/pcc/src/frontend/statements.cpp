@@ -347,16 +347,14 @@ NodePtr Parser::compoundStatement() {
     advance();
     if (checkName("def")) return functionDef(true);
     if (checkName("for")) {
-      advance();
-      auto node = make_node(Kind::AsyncFor, token.line, token.col);
-      while (!check(TokenType::Newline) && !check(TokenType::End)) advance();
-      return node;
+      // 报错位置在语句本身。`async for` 要异步迭代器，本语言没有事件循环；
+      // 留在这里明确拒绝，比让它退化成普通 for 安全。
+      fail("'async for' is not supported");
+      return nullptr;
     }
     if (checkName("with")) {
-      advance();
-      auto node = make_node(Kind::AsyncWith, token.line, token.col);
-      while (!check(TokenType::Newline) && !check(TokenType::End)) advance();
-      return node;
+      fail("'async with' is not supported");
+      return nullptr;
     }
     fail(diag::nameExpected("async"));
     return nullptr;

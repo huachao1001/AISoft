@@ -230,6 +230,8 @@ class Value {
   // 生成器值：与函数值同构（kObject + 专用标记表），载荷是函数号 +
   // 已绑好实参的局部量 + 暂停现场。
   friend Value makeGenerator(int functionIndex, List locals);
+  friend Value makeCoroutine(int functionIndex, List locals);
+  friend bool isCoroutineObject(const Value& value);
   friend bool isGenerator(const Value& value);
   friend int generatorFunctionIndex(const Value& value);
   friend int generatorPcOf(const Value& value);
@@ -363,6 +365,9 @@ struct HeapData : DictData {
   int generatorPc = 0;
   bool generatorDone = false;
   bool generatorStarted = false;
+  // 协程（`async def` 的产物）：与生成器同构，只差一个标记——
+  // `await` 用它来区分「驱动协程」与「迭代生成器」。
+  bool isCoroutineObject = false;
   List generatorLocals;
   List generatorStack;
   std::atomic<std::uint32_t> refs{1};  // 1 表示「刚创建，调用方已持有」

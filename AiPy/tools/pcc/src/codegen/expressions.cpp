@@ -366,8 +366,12 @@ bool CodeGen::expr(const Node& node) {
     case Kind::Starred:
       return failAt(diag::unsupportedExpression("Starred"), node);
 
-    case Kind::Await:
-      return failAt(diag::unsupportedExpression("Await"), node);
+    case Kind::Await: {
+      // `await 协程`：求值协程对象，再让 VM 驱动它跑到底取返回值。
+      if (!expr(*node.children[0])) return false;
+      emit("AWAIT", node);
+      return true;
+    }
 
     case Kind::Yield: {
       // `yield` / `yield x`：求出值（没有操作数就是 None）后发 YIELD。

@@ -280,7 +280,7 @@ static Result execute(const Program& program, std::vector<Value>& globals,
 static bool advanceGenerator(const Program& program, std::vector<Value>& globals,
                              const Value& generator, Value* out,
                              std::string* errorType, std::string* error,
-                             bool* failed);
+                             bool* failed, Value* finalValue = nullptr);
 
 // 进程级的全局槽。定义在这里、声明在 vm.h：所有 Machine 实例共用同一份，
 // 线程里 `global X` 才写得到主线程看得见的那个槽。
@@ -353,10 +353,14 @@ Result Machine::callFunction(const Program& program, const std::string& name,
 
 // 「按值建帧」：把可调用值 + 已就绪的位置实参建成一帧。kCallMethod 的
 // 脚本实例分支要用（它已按 MRO 找好函数并绑好 self）。
+//
+// 返回 true 表示压了帧（正常调用）；返回 false 且 `produced` 非空表示这是个
+// 协程/生成器函数——调用它不执行函数体，只产出对象。`error` 非空才是失败。
 static bool pushValueFrame(const Program& program, const Value& callable,
                            std::vector<Value> positional,
                            std::vector<Frame>& frames, std::size_t stackBase,
-                           std::string* error) {
+                           std::string* error, Value* produced = nullptr) {
+  if (produced != nullptr) *produced = Value();
   const int index = functionIndexOf(callable);
   if (index < 0) {
     *error = "'" + typeName(callable) + "' object is not callable";
@@ -389,6 +393,13 @@ static bool pushValueFrame(const Program& program, const Value& callable,
       const std::size_t slot = static_cast<std::size_t>(fn.captureStart) + i;
       if (slot < locals.size()) locals[slot] = captures[i];
     }
+  }
+
+  // 协程 / 生成器：建帧就等于执行函数体，所以只把局部量封进对象。
+  if (produced != nullptr && (fn.isCoroutine || fn.isGenerator)) {
+    *produced = fn.isCoroutine ? makeCoroutine(index, std::move(locals))
+                               : makeGenerator(index, std::move(locals));
+    return false;
   }
 
   Frame callee;
@@ -681,6 +692,10 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         // 生成器函数：不建帧，只把已绑好的局部量塞进生成器对象。函数体
         // 一行都不跑——`g = gen()` 与 yield 之间的先后顺序是 CPython 可
         // 观察到的分界。
+        if (fn.isCoroutine) {
+          stack[sp++] = makeCoroutine(index, std::move(locals));
+          break;
+        }
         if (fn.isGenerator) {
           stack[sp++] = makeGenerator(index, std::move(locals));
           break;
@@ -835,6 +850,10 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         sp = base;
 
         // 生成器：只造对象，不执行函数体。捕获值已填进 locals，一并搬过去。
+        if (fn.isCoroutine) {
+          stack[sp++] = makeCoroutine(index, std::move(locals));
+          break;
+        }
         if (fn.isGenerator) {
           stack[sp++] = makeGenerator(index, std::move(locals));
           break;
@@ -894,6 +913,10 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         }
 
         // 生成器：只造对象，不执行函数体。
+        if (fn.isCoroutine) {
+          stack[sp++] = makeCoroutine(index, std::move(locals));
+          break;
+        }
         if (fn.isGenerator) {
           stack[sp++] = makeGenerator(index, std::move(locals));
           break;
@@ -1235,9 +1258,14 @@ static Result execute(const Program& program, std::vector<Value>& globals,
           positional.push_back(boundMethodSelf(bound));
           for (int i = 0; i < argc; ++i) positional.push_back(args[i]);
           std::string frameError;
+          Value produced;
           if (!pushValueFrame(program, bound, std::move(positional), frames,
-                              sp, &frameError)) {
-            raiseException("TypeError", frameError);
+                              sp, &frameError, &produced)) {
+            if (!frameError.empty()) {
+              raiseException("TypeError", frameError);
+            } else {
+              stack[sp++] = produced;
+            }
           }
           break;
         }
@@ -1257,9 +1285,14 @@ static Result execute(const Program& program, std::vector<Value>& globals,
           positional.push_back(self);
           for (int i = 0; i < argc; ++i) positional.push_back(args[i]);
           std::string frameError;
+          Value produced;
           if (!pushValueFrame(program, member, std::move(positional), frames,
-                              sp, &frameError)) {
-            raiseException("TypeError", frameError);
+                              sp, &frameError, &produced)) {
+            if (!frameError.empty()) {
+              raiseException("TypeError", frameError);
+            } else {
+              stack[sp++] = produced;
+            }
           }
           break;
         }
@@ -1407,6 +1440,32 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         result.yielded = true;
         result.value = value;
         return result;
+      }
+
+      case Op::kAwait: {
+        // `await 协程`：驱动它跑到底，把 return 的值压回栈上。
+        // 协程体里不许有 yield，所以正常情况下一次就能跑完；万一真的有
+        // yield，这里继续推进直到结束——脚本观察不到差别，也不会卡住。
+        const Value coroutine = stack[--sp];
+        if (!isGenerator(coroutine)) {
+          raiseException("TypeError", "object " + typeName(coroutine) +
+                                          " can't be used in 'await' expression");
+          break;
+        }
+        Value produced;
+        Value finalValue;
+        std::string errorType;
+        std::string error;
+        bool failed = false;
+        while (advanceGenerator(program, globals, coroutine, &produced,
+                                &errorType, &error, &failed, &finalValue)) {
+        }
+        if (failed) {
+          raiseException(errorType.empty() ? "RuntimeError" : errorType, error);
+          break;
+        }
+        stack[sp++] = finalValue;
+        break;
       }
 
       case Op::kIterInit: {
@@ -1680,7 +1739,7 @@ static Result execute(const Program& program, std::vector<Value>& globals,
 static bool advanceGenerator(const Program& program, std::vector<Value>& globals,
                              const Value& generator, Value* out,
                              std::string* errorType, std::string* error,
-                             bool* failed) {
+                             bool* failed, Value* finalValue) {
   *failed = false;
   errorType->clear();
   error->clear();
@@ -1738,7 +1797,9 @@ static bool advanceGenerator(const Program& program, std::vector<Value>& globals
     *out = result.value;
     return true;
   }
-  // 跑到末尾（函数体正常结束）也算结束。
+  // 跑到末尾（`return` 或函数体结束）：协程要把返回值交出去，
+  // 生成器则只是结束。
+  if (finalValue != nullptr) *finalValue = result.value;
   setGeneratorState(generator, 0, List{}, List{}, true, true);
   return false;
 }

@@ -79,6 +79,8 @@ MESSAGE_PAIRS = [
     ('不允许给函数 {0} 重新赋值；脚本里没有一等函数',
      "cannot reassign function '{0}'; there are no first-class functions"),
     ('不支持 yield from', "'yield from' is not supported"),
+    ("'async for' is not supported", "'async for' is not supported"),
+    ("'async with' is not supported", "'async with' is not supported"),
     ('不支持 await：脚本是单线程事件循环',
      "'await' is not supported: scripts run on a single thread"),
     ('不支持 while ... else', "'while ... else' is not supported"),

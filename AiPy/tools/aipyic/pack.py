@@ -193,6 +193,7 @@ def pack(program):
         capture = function.get('captureStart', -1)
         out.u16(0xFFFF if capture < 0 else capture)
         out.u16(1 if function.get('isGenerator') else 0)
+        out.u16(1 if function.get('isCoroutine') else 0)
         names = function.get('paramNames', [])
         out.u16(len(names))
         for name in names:

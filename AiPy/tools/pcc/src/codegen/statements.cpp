@@ -26,7 +26,10 @@ bool CodeGen::statement(const Node& node) {
         return true;
       }
       if (value.kind == Kind::Await) {
-        return failAt(diag::awaitUnsupported(), value);
+        // `await f()` 作为语句：驱动协程，丢掉返回值。
+        if (!expr(value)) return false;
+        emit("POP", node);
+        return true;
       }
       // 只有调用语句会产生副作用；`1 + 2` 这样的表达式语句整条丢弃。
       if (value.kind == Kind::Call) {
@@ -149,6 +152,7 @@ bool CodeGen::statement(const Node& node) {
       return tryStatement(node);
 
     case Kind::FunctionDef:
+    case Kind::AsyncFunctionDef:
       // 顶层 def 的签名已在 registerFunction 登记过，这里只发默认值求值：
       // CPython 在**执行到这一句时**求值默认参数，所以位置必须在这里。
       // 函数体里的 def 仍然拒绝——嵌套函数要闭包，而语言里没有。

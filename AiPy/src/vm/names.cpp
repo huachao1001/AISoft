@@ -69,6 +69,7 @@ const char* opName(Op op) {
     case Op::kInstantiate: return "instantiate";
     case Op::kMakeSuper: return "make_super";
     case Op::kYield: return "yield";
+    case Op::kAwait: return "await";
   }
   return "?";
 }

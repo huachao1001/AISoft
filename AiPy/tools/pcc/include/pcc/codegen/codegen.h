@@ -59,6 +59,8 @@ struct CompiledBlock {
   int captureStart = -1;
   // 函数体里有 `yield`：调用它得到生成器，不是返回值。
   bool isGenerator = false;
+  // `async def`：调用它得到协程，`await` 才驱动它跑。
+  bool isCoroutine = false;
 };
 
 // 常量。类型与值分开存，写二进制时按类型序列化。
@@ -121,6 +123,8 @@ class CodeGen {
     int captureStart = -1;
     // 函数体里有 `yield`：调用它得到生成器，不是返回值。
     bool isGenerator = false;
+    // `async def`：调用它得到协程，`await` 才驱动它跑。
+    bool isCoroutine = false;
     // lambda 捕获的外层名字，顺序与 MAKE_FUNCTION 压栈一致。
     std::vector<std::string> captures;
     std::vector<std::string> localNames;  // 槽号 → 名字
@@ -184,6 +188,11 @@ class CodeGen {
   bool compileModule(const Node& module);
   bool expandActivity(const Node& classNode, std::vector<const Node*>* body);
   bool registerFunction(const Node& node);
+  // `def` 与 `async def` 在登记/编译上走同一条路，只在「造协程」上不同。
+  static bool isFunctionNode(const Node& node) {
+    return node.kind == Kind::FunctionDef ||
+           node.kind == Kind::AsyncFunctionDef;
+  }
   // 把 Arguments 节点变成函数的槽布局（参数、默认值、vararg/kwarg）。
   bool buildSignature(const Node& node, const std::string& name, bool isMethod,
                       Block* out, std::uint64_t* mask, int* defaultTotal);

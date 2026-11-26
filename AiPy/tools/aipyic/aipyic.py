@@ -94,6 +94,7 @@ OPERANDS = {
     'INSTANTIATE': ('u8',),
     'MAKE_SUPER': ('u16',),
     'YIELD': (),
+    'AWAIT': (),
     'BUILD_TUPLE': ('u16',),
     'BUILD_SET': ('u16',),
     'DEL_LOCAL': ('u16',),

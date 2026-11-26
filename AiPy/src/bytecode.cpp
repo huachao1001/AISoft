@@ -172,6 +172,7 @@ Result load(const std::uint8_t* data, std::size_t size) {
     const std::uint16_t captureStart = reader.u16();
     function.captureStart = captureStart == 0xFFFF ? -1 : captureStart;
     function.isGenerator = reader.u16() != 0;
+    function.isCoroutine = reader.u16() != 0;
     const std::uint16_t nameCount = reader.u16();
     function.paramNames.reserve(nameCount);
     for (int n = 0; n < nameCount; ++n) function.paramNames.push_back(reader.text());

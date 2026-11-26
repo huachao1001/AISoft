@@ -46,6 +46,7 @@ bool CodeGen::compile(const Node& module) {
     out.kwonlyStart = block.kwonlyStart;
     out.captureStart = block.captureStart;
     out.isGenerator = block.isGenerator;
+    out.isCoroutine = block.isCoroutine;
     out.paramNames.assign(block.localNames.begin(),
                           block.localNames.begin() +
                               static_cast<std::ptrdiff_t>(block.paramCount));
@@ -103,7 +104,7 @@ bool CodeGen::compileModule(const Node& module) {
 
   // 先把所有顶层 def 收进来。
   for (const Node* node : body) {
-    if (node->kind == Kind::FunctionDef) {
+    if (isFunctionNode(*node)) {
       if (!registerFunction(*node)) return false;
     }
   }
@@ -138,7 +139,7 @@ bool CodeGen::compileModule(const Node& module) {
 
   // 函数体最后编译：这时所有函数名与全局槽都已就位。
   for (const Node* node : body) {
-    if (node->kind == Kind::FunctionDef) {
+    if (isFunctionNode(*node)) {
       if (!compileFunctionBody(*node)) return false;
     }
   }
@@ -148,7 +149,7 @@ bool CodeGen::compileModule(const Node& module) {
   for (const Node* cls : plainClasses) {
     for (std::size_t i = 0; i < cls->bodyCount; ++i) {
       const Node& member = *cls->children[cls->argsCount + i];
-      if (member.kind != Kind::FunctionDef) continue;
+      if (!isFunctionNode(member)) continue;
       const std::string qualified = cls->text + "." + member.text;
       if (!compileFunctionBody(member, qualified)) return false;
     }
@@ -178,7 +179,7 @@ bool CodeGen::compileModule(const Node& module) {
 bool CodeGen::registerClassMethods(const Node& classNode) {
   for (std::size_t i = 0; i < classNode.bodyCount; ++i) {
     const Node& member = *classNode.children[classNode.argsCount + i];
-    if (member.kind != Kind::FunctionDef) continue;
+    if (!isFunctionNode(member)) continue;
     // 方法登记成 `<类>.<方法>`：模块级同名函数不该被方法抢走，脚本也
     // 不该能直接调到这个名字。
     const std::string qualified = classNode.text + "." + member.text;
@@ -234,7 +235,7 @@ bool CodeGen::compileClass(const Node& classNode) {
   std::vector<std::string> memberNames;
   for (std::size_t i = 0; i < classNode.bodyCount; ++i) {
     const Node& member = *classNode.children[classNode.argsCount + i];
-    if (member.kind == Kind::FunctionDef) {
+    if (isFunctionNode(member)) {
       const std::string qualified = classNode.text + "." + member.text;
       const int index = rawFunctionIndex(qualified);
       if (index < 0) return failAt(diag::duplicateFunction(qualified), member);
@@ -294,6 +295,7 @@ bool CodeGen::expandActivity(const Node& classNode,
         body->push_back(&statementNode);
         break;
       case Kind::FunctionDef:
+      case Kind::AsyncFunctionDef:
         methods.push_back(&statementNode);
         break;
       case Kind::Pass:
@@ -708,6 +710,9 @@ bool CodeGen::compileFunctionBody(const Node& node,
       return failAt(diag::missingGlobal(name), *item.second);
     }
   }
+
+  // `async def` 是协程：调用它只造对象，`await` 才驱动它跑。
+  if (node.kind == Kind::AsyncFunctionDef) block.isCoroutine = true;
 
   // 函数体里有 `yield` 就是生成器。判断放在编译之前：调用方（kCall 等）
   // 要能在**不执行函数体**的前提下知道该造生成器对象。
