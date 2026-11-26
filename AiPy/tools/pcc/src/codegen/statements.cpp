@@ -159,38 +159,46 @@ bool CodeGen::statement(const Node& node) {
 }
 
 bool CodeGen::withStatement(const Node& node) {
-  if (node.argsCount != 1) return failAt(diag::withMultipleItems(), node);
+  // 多条项 `with a, b:` 与嵌套 `with a: with b:` 语义完全一致：
+  // 依次进入，退出时反序。按嵌套生成，进入失败时已进入的那几层照常退出
+  // ——WITH_ENTER 只在 __enter__ 成功后才压块（见 machine.cpp）。
+  std::vector<int> entered;
+  for (std::size_t index = 0; index < node.argsCount; ++index) {
+    const Node& item = *node.children[index];
+    const Node& context = *item.children[0];
+    const Node* optional =
+        item.children.size() > 1 ? item.children[1].get() : nullptr;
+    if (optional != nullptr && optional->kind != Kind::Name &&
+        !isSelfName(*optional)) {
+      return failAt(diag::withAsNameOnly(), *optional);
+    }
 
-  const Node& item = *node.children[0];
-  const Node& context = *item.children[0];
-  const Node* optional =
-      item.children.size() > 1 ? item.children[1].get() : nullptr;
-  if (optional != nullptr && optional->kind != Kind::Name &&
-      !isSelfName(*optional)) {
-    return failAt(diag::withAsNameOnly(), *optional);
+    // 管理器表达式先求值，WITH_ENTER 直接弹它。
+    if (!expr(context)) return false;
+    const int slot = allocSlot();
+    emit("WITH_ENTER", node);
+    emitU16(slot);
+
+    // `as 名字`：WITH_ENTER 把 __enter__ 的返回值留在栈上，存进名字即可。
+    if (optional != nullptr) {
+      nameStore(optional->text, node);
+    } else {
+      emit("POP", node);
+    }
+
+    entered.push_back(slot);
+    withStack_.push_back(slot);
   }
 
-  // 管理器表达式先求值，WITH_ENTER 直接弹它。
-  if (!expr(context)) return false;
-  const int slot = allocSlot();
-  emit("WITH_ENTER", node);
-  emitU16(slot);
-
-  // `as 名字`：WITH_ENTER 把 __enter__ 的返回值留在栈上，存进名字即可。
-  if (optional != nullptr) {
-    nameStore(optional->text, node);
-  } else {
-    emit("POP", node);
-  }
-
-  withStack_.push_back(slot);
   for (std::size_t i = 0; i < node.bodyCount; ++i) {
     if (!statement(*node.children[node.argsCount + i])) return false;
   }
-  withStack_.pop_back();
 
-  emit("WITH_EXIT", node);
-  emitU16(slot);
+  for (std::size_t count = entered.size(); count > 0; --count) {
+    withStack_.pop_back();
+    emit("WITH_EXIT", node);
+    emitU16(entered[count - 1]);
+  }
   return true;
 }
 

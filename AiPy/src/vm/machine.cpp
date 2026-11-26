@@ -680,7 +680,10 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         std::string error;
         const Value entered = callMethod(manager, "__enter__", nullptr, 0, &error);
         if (!error.empty()) {
-          raiseException("AttributeError", error);
+          // CPython 对不支持上下文协议的对象抛 TypeError，不是 AttributeError。
+          raiseException("TypeError", "'" + typeName(manager) +
+                                         "' object does not support the context "
+                                         "manager protocol");
           break;
         }
         stack[sp++] = entered;
@@ -715,7 +718,9 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         std::string error;
         callMethod(manager, "__exit__", nullptr, 0, &error);
         if (!error.empty()) {
-          raiseException("AttributeError", error);
+          raiseException("TypeError", "'" + typeName(manager) +
+                                         "' object does not support the context "
+                                         "manager protocol");
           break;
         }
         break;

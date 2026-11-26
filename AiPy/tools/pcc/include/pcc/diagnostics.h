@@ -70,7 +70,6 @@ std::string exceptTypeNotException(const std::string& name);
 // raise X(...) 给了多于一个参数。
 std::string raiseTooManyArgs(const std::string& name);
 std::string deleteUnsupported();
-std::string withMultipleItems();
 std::string withAsNameOnly();
 std::string tupleUnpackAssign();
 std::string unsupportedAugTarget();

@@ -964,33 +964,34 @@ class Compiler:
         跳出都会释放。这条不能省：锁不释放的症状是「程序偶发卡死」，而
         卡死点离 with 语句很远。
         """
-        if len(node.items) != 1:
-            raise CompileError('一次只支持一个 with 项；嵌套写多个 with',
-                               self.filename, node)
-        item = node.items[0]
-        if item.optional_vars is not None and not isinstance(item.optional_vars, ast.Name):
-            raise CompileError('with ... as 后面只能跟一个名字',
-                               self.filename, item.optional_vars)
+        entered = []
+        for item in node.items:
+            if item.optional_vars is not None and not isinstance(item.optional_vars, ast.Name):
+                raise CompileError('with ... as 后面只能跟一个名字',
+                                   self.filename, item.optional_vars)
 
-        # 管理器表达式先求值，WITH_ENTER 直接弹它。
-        self.expr(item.context_expr)
-        slot = self.block.alloc_slot()
-        self.block.emit('WITH_ENTER', node)
-        self.block.emit_u16(slot)
+            # 管理器表达式先求值，WITH_ENTER 直接弹它。
+            self.expr(item.context_expr)
+            slot = self.block.alloc_slot()
+            self.block.emit('WITH_ENTER', node)
+            self.block.emit_u16(slot)
 
-        # `as 名字`：WITH_ENTER 把 __enter__ 的返回值留在栈上，存进名字即可。
-        if item.optional_vars is not None:
-            self.name_store(item.optional_vars.id, node)
-        else:
-            self.block.emit('POP', node)
+            # `as 名字`：WITH_ENTER 把 __enter__ 的返回值留在栈上，存进名字即可。
+            if item.optional_vars is not None:
+                self.name_store(item.optional_vars.id, node)
+            else:
+                self.block.emit('POP', node)
 
-        self.with_stack.append(slot)
+            entered.append(slot)
+            self.with_stack.append(slot)
+
         for statement in node.body:
             self.statement(statement)
-        self.with_stack.pop()
 
-        self.block.emit('WITH_EXIT', node)
-        self.block.emit_u16(slot)
+        for slot in reversed(entered):
+            self.with_stack.pop()
+            self.block.emit('WITH_EXIT', node)
+            self.block.emit_u16(slot)
 
     def emit_with_exits(self, node):
         """给 return / break / continue 插上「离开所有 with」的指令。

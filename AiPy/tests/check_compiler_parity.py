@@ -91,9 +91,6 @@ MESSAGE_PAIRS = [
     ('不支持 try 语句', "'try' statements are not supported"),
     ('不支持 del；容器用 .pop()/.clear()',
      "'del' is not supported; use .pop() or .clear() on containers"),
-    ('一次只支持一个 with 项；嵌套写多个 with',
-     "only one item is allowed in a 'with' statement; nest multiple "
-     "'with' blocks instead"),
     ('with ... as 后面只能跟一个名字',
      "'with ... as' may only bind a single name"),
     ('不支持元组解包赋值；请分开写',

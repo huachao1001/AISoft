@@ -177,11 +177,6 @@ std::string deleteUnsupported() {
   return "'del' is not supported; use .pop() or .clear() on containers";
 }
 
-std::string withMultipleItems() {
-  return "only one item is allowed in a 'with' statement; nest multiple "
-         "'with' blocks instead";
-}
-
 std::string withAsNameOnly() {
   return "'with ... as' may only bind a single name";
 }
