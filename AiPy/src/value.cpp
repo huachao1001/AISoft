@@ -29,6 +29,10 @@ const MethodTable kInstanceTable = {kNoMethods};
 const MethodTable kBoundMethodTable = {kNoMethods};
 const MethodTable kSuperTable = {kNoMethods};
 const MethodTable kGeneratorTable = {kNoMethods};
+// `@staticmethod` / `@classmethod` 的包装。判据同样是表指针——它们只是
+// 「访问时怎么绑定」的标记，本身不是可调用值。
+const MethodTable kStaticMethodTable = {kNoMethods};
+const MethodTable kClassMethodTable = {kNoMethods};
 
 // 数字提升：只要有一边是 float，结果就是 float。Python 的 / 永远返回 float，
 // 但 + - * % 保持 int。这里不区分来源，由调用点决定走哪个函数。
@@ -877,6 +881,50 @@ Value superClassOf(const Value& value) {
   return value.heap_->superClass;
 }
 
+// ── @staticmethod / @classmethod ──
+//
+// 这两个装饰器改变的是「访问时如何绑定」，所以必须保留到运行期：`A.sm`
+// 不该绑 self，`A.cm` 要绑 `A`（而不是定义它的那个类）。包装值只装被装饰
+// 的函数，贴着它一起进类成员表。
+
+Value makeStaticMethod(const Value& function) {
+  Value out;
+  out.type_ = Value::Type::kObject;
+  out.heap_ = makeHeap();
+  out.heap_->object.table = &kStaticMethodTable;
+  out.heap_->boundSelf = function;
+  return out;
+}
+
+Value makeClassMethod(const Value& function) {
+  Value out;
+  out.type_ = Value::Type::kObject;
+  out.heap_ = makeHeap();
+  out.heap_->object.table = &kClassMethodTable;
+  out.heap_->boundSelf = function;
+  return out;
+}
+
+bool isStaticMethod(const Value& value) {
+  const ObjectData* data = value.asObject();
+  return data != nullptr && data->table == &kStaticMethodTable;
+}
+
+bool isClassMethod(const Value& value) {
+  const ObjectData* data = value.asObject();
+  return data != nullptr && data->table == &kClassMethodTable;
+}
+
+Value staticMethodFunction(const Value& value) {
+  if (!isStaticMethod(value)) return Value();
+  return value.heap_->boundSelf;
+}
+
+Value classMethodFunction(const Value& value) {
+  if (!isClassMethod(value)) return Value();
+  return value.heap_->boundSelf;
+}
+
 // ── 生成器 ──
 //
 // 与函数值同构：kObject + 专用标记表。载荷是函数号（复用 functionIndex）、
@@ -1231,6 +1279,10 @@ Value eq(const Value& a, const Value& b) {
     return Value(numberOf(a) == numberOf(b));
   }
   if (a.type() != b.type()) return Value(false);
+  // 有对象身份的值：`A() == A()` 在 CPython 里是 False（默认按身份比）。
+  // 不放行的话会掉进 compareValues 的「同类型 → 0」，让所有同类实例、
+  // 函数、生成器互相相等。
+  if (a.type() == Value::Type::kObject) return Value(a.identity() == b.identity());
   if (a.isList() || a.isTuple()) {
     const List& left = a.asList();
     const List& right = b.asList();
@@ -1815,6 +1867,14 @@ Value floorDiv(const Value& a, const Value& b) {
 Value isNone(const Value& v) { return Value(v.isNone()); }
 
 Value isSame(const Value& a, const Value& b) {
+  // 有「对象身份」的值必须按身份比：两个不同的类、实例、函数、生成器
+  // 在 CPython 里 `is` 都是 False，哪怕内容一样。把它们落到 eq / 
+  // compareValues 上会被判成相等——而 compareValues 对同类型的 kObject
+  // 直接返回 0，那正是「Leaf.who() 里 cls is Base 得到 True」的原因。
+  if (a.type() == Value::Type::kObject || b.type() == Value::Type::kObject) {
+    if (a.type() != b.type()) return Value(false);
+    return Value(a.identity() == b.identity());
+  }
   // 容器按「是不是同一个对象」判断，其余类型 Python 的 is 语义本来就按值
   // 相等（小整数与字符串驻留），用 eq 近似是对的，且更可预测。
   if (a.isList() && b.isList()) return Value(a.mutableList() == b.mutableList());

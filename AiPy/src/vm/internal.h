@@ -63,9 +63,19 @@ void instanceSetAttr(const Value& instance, const std::string& name,
 Value bindMethod(const Value& function, const Value& self);
 // 沿 MRO 找名字对应的函数值（不绑定）；找不到返回 None。
 Value classLookupRaw(const Value& cls, const std::string& name);
+// 同 classLookupRaw，但用返回值区分「没找到」与「成员就是 None」，
+// 并为继承来的普通函数补上绑定接收者。
+bool classLookup(const Value& cls, const std::string& name, Value* out);
+// 把类成员按描述符语义变成「访问到的值」：staticmethod 不绑定，
+// classmethod 绑接收者的类，普通函数经实例访问时绑 self。
+Value descriptorValue(const Value& member, const Value& receiver,
+                      bool asInstance);
 // `super()` 的查找：跳过 currentClass 本身，从它的基类沿 MRO 找。
 Value superLookupRaw(const Value& self, const Value& currentClass,
                      const std::string& name);
+// 同 superLookupRaw，但用返回值区分「没找到」与「成员就是 None」。
+bool superLookupValue(const Value& self, const Value& currentClass,
+                      const std::string& name, Value* out);
 
 // ── 帧 ──
 //

@@ -250,9 +250,12 @@ using detail::applyUnary;
 using detail::bindArguments;
 using detail::callMethod;
 using detail::classLookupRaw;
+using detail::classLookup;
+using detail::descriptorValue;
 using detail::instanceAttrOf;
 using detail::instanceSetAttr;
 using detail::superLookupRaw;
+using detail::superLookupValue;
 using detail::Frame;
 using detail::read16;
 
@@ -995,29 +998,31 @@ static Result execute(const Program& program, std::vector<Value>& globals,
           stack[sp++] = value;
           break;
         }
-        // 类对象：`A.x` 直接取类成员（不绑定）。
+        // 类对象：`A.x` 直接取类成员，但要走描述符语义——`A.cm` 要绑
+        // 到 A 本身，`A.sm` 与 `A.m` 返回裸函数（CPython 里 py3 的方法
+        // 通过类访问不绑定）。
         if (isClass(target)) {
-          const Value value = classLookupRaw(target, name);
-          if (value.isNone()) {
-            // 免不了再确认一次：成员本身可以是 None。
-            const std::string clsName = classNameOf(target);
-            bool found = false;
-            for (const Value& memberValue : classMemberValues(target)) (void)memberValue;
-            const List& keys = classMemberKeys(target);
-            for (const Value& key : keys) {
-              if (key.asString() == name) {
-                found = true;
-                break;
-              }
-            }
-            if (!found) {
-              raiseException("AttributeError",
-                             "type object '" + clsName +
-                                 "' has no attribute '" + name + "'");
-              break;
-            }
+          Value member;
+          if (!classLookup(target, name, &member)) {
+            raiseException("AttributeError", "type object '" + classNameOf(target) +
+                                                 "' has no attribute '" + name + "'");
+            break;
           }
-          stack[sp++] = value;
+          stack[sp++] = descriptorValue(member, target, false);
+          break;
+        }
+        // `super().m` 作为值取用（不是立刻调用）：与 kCallMethod 同一套
+        // 描述符语义，只是把结果压栈。
+        if (isSuper(target)) {
+          const Value self = superSelf(target);
+          const Value current = superClassOf(target);
+          Value member;
+          if (!superLookupValue(self, current, name, &member)) {
+            raiseException("AttributeError",
+                           "'super' object has no attribute '" + name + "'");
+            break;
+          }
+          stack[sp++] = descriptorValue(member, self, isInstance(self));
           break;
         }
         raiseException("AttributeError",
@@ -1237,9 +1242,8 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         const Value target = stack[--sp];
         const std::string name = program.consts[nameIndex].asString();
 
-        // 脚本实例：沿 MRO 找成员。找到函数值就建帧，与 CALL_VALUE 同构
-        // 但先把 self 补成第一个实参。编译期不知道接收者类型，所以这条
-        // 指令要同时服务「字符串方法」与「脚本方法」。
+        // 脚本实例：沿 MRO 找成员。instanceAttrOf 已按描述符语义处理过：
+        // 普通方法绑好了 self，staticmethod 是裸函数，classmethod 绑的是类。
         if (isInstance(target)) {
           std::string error;
           const Value bound = instanceAttrOf(target, name, &error);
@@ -1247,7 +1251,7 @@ static Result execute(const Program& program, std::vector<Value>& globals,
             raiseException("AttributeError", error);
             break;
           }
-          if (!isBoundMethod(bound)) {
+          if (!isBoundMethod(bound) && !isFunction(bound)) {
             // 成员存在但不是函数：CPython 报 TypeError。
             raiseException("TypeError", "'" + typeName(bound) +
                                             "' object is not callable");
@@ -1255,7 +1259,42 @@ static Result execute(const Program& program, std::vector<Value>& globals,
           }
           std::vector<Value> positional;
           positional.reserve(static_cast<std::size_t>(argc) + 1);
-          positional.push_back(boundMethodSelf(bound));
+          // 只有已绑定的方法才补 self；staticmethod 的裸函数直接调。
+          if (isBoundMethod(bound)) positional.push_back(boundMethodSelf(bound));
+          for (int i = 0; i < argc; ++i) positional.push_back(args[i]);
+          std::string frameError;
+          Value produced;
+          if (!pushValueFrame(program, bound, std::move(positional), frames,
+                              sp, &frameError, &produced)) {
+            if (!frameError.empty()) {
+              raiseException("TypeError", frameError);
+            } else {
+              stack[sp++] = produced;
+            }
+          }
+          break;
+        }
+
+        // 类对象：`A.m(...)`、`A.cm(...)`、`A.sm(...)`。
+        // 描述符语义一样要生效——classmethod 绑到 A 本身（这是它和
+        // 定义它的类可能不同的地方），staticmethod 是裸函数。
+        if (isClass(target)) {
+          Value member;
+          if (!classLookup(target, name, &member)) {
+            raiseException("AttributeError", "type object '" +
+                                                 classNameOf(target) +
+                                                 "' has no attribute '" + name + "'");
+            break;
+          }
+          const Value bound = descriptorValue(member, target, false);
+          if (!isBoundMethod(bound) && !isFunction(bound)) {
+            raiseException("TypeError", "'" + typeName(bound) +
+                                            "' object is not callable");
+            break;
+          }
+          std::vector<Value> positional;
+          positional.reserve(static_cast<std::size_t>(argc) + 1);
+          if (isBoundMethod(bound)) positional.push_back(boundMethodSelf(bound));
           for (int i = 0; i < argc; ++i) positional.push_back(args[i]);
           std::string frameError;
           Value produced;
@@ -1274,19 +1313,28 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         if (isSuper(target)) {
           const Value self = superSelf(target);
           const Value current = superClassOf(target);
-          const Value member = superLookupRaw(self, current, name);
-          if (!isFunction(member)) {
+          Value member;
+          if (!superLookupValue(self, current, name, &member)) {
             raiseException("AttributeError",
                            "'super' object has no attribute '" + name + "'");
             break;
           }
+          // super() 在 classmethod 里时 self 是类而不是实例：此时按
+          // 「经由类访问」绑定，classmethod 拿到的是这个类。
+          const Value bound =
+              descriptorValue(member, self, isInstance(self));
+          if (!isBoundMethod(bound) && !isFunction(bound)) {
+            raiseException("TypeError", "'" + typeName(bound) +
+                                            "' object is not callable");
+            break;
+          }
           std::vector<Value> positional;
           positional.reserve(static_cast<std::size_t>(argc) + 1);
-          positional.push_back(self);
+          if (isBoundMethod(bound)) positional.push_back(boundMethodSelf(bound));
           for (int i = 0; i < argc; ++i) positional.push_back(args[i]);
           std::string frameError;
           Value produced;
-          if (!pushValueFrame(program, member, std::move(positional), frames,
+          if (!pushValueFrame(program, bound, std::move(positional), frames,
                               sp, &frameError, &produced)) {
             if (!frameError.empty()) {
               raiseException("TypeError", frameError);
@@ -1465,6 +1513,20 @@ static Result execute(const Program& program, std::vector<Value>& globals,
           break;
         }
         stack[sp++] = finalValue;
+        break;
+      }
+
+      case Op::kMakeStaticMethod: {
+        // 栈顶是刚造出的函数值，包一层标记。包装值直接进类成员表，
+        // 访问时由 descriptorValue 决定不绑定接收者。
+        if (sp < 1) return fail("staticmethod 缺少函数值（编译器 bug）");
+        stack[sp - 1] = makeStaticMethod(stack[sp - 1]);
+        break;
+      }
+
+      case Op::kMakeClassMethod: {
+        if (sp < 1) return fail("classmethod 缺少函数值（编译器 bug）");
+        stack[sp - 1] = makeClassMethod(stack[sp - 1]);
         break;
       }
 

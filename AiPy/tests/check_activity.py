@@ -313,6 +313,86 @@ CASES = [
         'await main()\n',
         'caught\n',
     ),
+    # ── staticmethod / classmethod ──
+    (
+        'staticmethod 不绑 self',
+        'class A:\n'
+        '    @staticmethod\n'
+        '    def add(x, y):\n'
+        '        return x + y\n'
+        'print(A.add(1, 2))\n'
+        'print(A().add(3, 4))\n',
+        '3\n7\n',
+    ),
+    (
+        'classmethod 绑接收者的类',
+        'class Base:\n'
+        '    @classmethod\n'
+        '    def who(cls):\n'
+        '        if cls is Base:\n'
+        '            return "Base"\n'
+        '        return "sub"\n'
+        'class Derived(Base):\n'
+        '    pass\n'
+        'print(Base.who())\n'
+        'print(Derived.who())\n'
+        'print(Derived().who())\n',
+        'Base\nsub\nsub\n',
+    ),
+    (
+        'classmethod 里 super() 仍绑接收者的类',
+        'class Base:\n'
+        '    @classmethod\n'
+        '    def who(cls):\n'
+        '        if cls is Base:\n'
+        '            return "Base"\n'
+        '        return "sub"\n'
+        'class Derived(Base):\n'
+        '    @classmethod\n'
+        '    def who(cls):\n'
+        '        return "D[" + super().who() + "]"\n'
+        'class Leaf(Derived):\n'
+        '    pass\n'
+        'print(Leaf.who())\n'
+        'print(Derived.who())\n',
+        'D[sub]\nD[sub]\n',
+    ),
+    (
+        'staticmethod 经继承与实例访问',
+        'class Base:\n'
+        '    @staticmethod\n'
+        '    def tag():\n'
+        '        return "static"\n'
+        'class Derived(Base):\n'
+        '    pass\n'
+        'print(Derived.tag())\n'
+        'print(Derived().tag())\n'
+        'print(Base.tag())\n',
+        'static\nstatic\nstatic\n',
+    ),
+    (
+        '类成员的普通装饰器生效',
+        'def replace(f):\n'
+        '    return other\n'
+        'def other(obj):\n'
+        '    return 999\n'
+        'class A:\n'
+        '    @replace\n'
+        '    def m(self):\n'
+        '        return 1\n'
+        'print(A().m())\n',
+        '999\n',
+    ),
+    (
+        '两个不同的类用 is 比是 False',
+        'class A:\n'
+        '    pass\n'
+        'class B(A):\n'
+        '    pass\n'
+        'print(B is A)\n'
+        'print(A is A)\n',
+        'False\nTrue\n',
+    ),
     # ── 期望被拒绝的 ──
     (
         '两个 Activity 被拒绝',

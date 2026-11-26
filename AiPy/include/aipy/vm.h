@@ -174,6 +174,13 @@ enum class Op : std::uint8_t {
 
   // `await 协程`：驱动协程跑到底，把它的返回值压回栈上。
   kAwait,
+
+  // `@staticmethod` / `@classmethod`：弹一个函数值，压一个包装值。
+  // 包装本身不可调用，它只改变「访问时如何绑定」——那是描述符语义，
+  // 必须由 VM 的类查找来做，所以编译期就得把这件事记进类成员表。
+  // 装饰器名字在编译期识别：运行期它们不是可传递的值。
+  kMakeStaticMethod,
+  kMakeClassMethod,
 };
 
 enum class BinOp : std::uint8_t {

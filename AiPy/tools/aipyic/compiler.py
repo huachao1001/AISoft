@@ -65,6 +65,7 @@ OPCODES = [
     'CALL_DYN', 'DICT_MERGE', 'MAKE_FUNCTION', 'CALL_VALUE',
     'CALL_VALUE_DYN', 'MAKE_CLASS', 'GET_ATTR', 'SET_ATTR', 'INSTANTIATE',
     'MAKE_SUPER', 'YIELD', 'AWAIT',
+    'MAKE_STATIC_METHOD', 'MAKE_CLASS_METHOD',
 ]
 
 # 二元算子编号，与 vm.h 的 BinOp 一致。
@@ -689,6 +690,37 @@ class Compiler:
             self.register_function(member, node.name + '.' + member.name,
                                    keep_self=True)
 
+    def apply_member_descriptors(self, member):
+        """类成员的装饰器：栈顶已有一个函数值，就地应用。
+
+        与模块级 apply_decorators 的差别是值不从全局槽取——类体里的成员值
+        是 MAKE_CLASS 从栈上收的。@staticmethod / @classmethod 在编译期
+        识别：它们是「访问时怎么绑定」的标记，必须变成包装值进成员表。
+        """
+        if not member.decorator_list:
+            return
+
+        for decorator in reversed(member.decorator_list):
+            if (isinstance(decorator, ast.Name) and
+                    decorator.id in ('staticmethod', 'classmethod')):
+                self.module.emit(
+                    'MAKE_STATIC_METHOD' if decorator.id == 'staticmethod'
+                    else 'MAKE_CLASS_METHOD', decorator)
+                continue
+            self.expr(decorator)
+            value_slot = self.module.slot_of('\x01member_value')
+            deco_slot = self.module.slot_of('\x01member_decorator')
+            self.module.emit('STORE_LOCAL', member)
+            self.module.emit_u16(deco_slot)
+            self.module.emit('STORE_LOCAL', member)
+            self.module.emit_u16(value_slot)
+            self.module.emit('LOAD_LOCAL', member)
+            self.module.emit_u16(deco_slot)
+            self.module.emit('LOAD_LOCAL', member)
+            self.module.emit_u16(value_slot)
+            self.module.emit('CALL_VALUE', member)
+            self.module.emit_u8(1)
+
     def compile_class(self, node):
         """类体摊平成「名字 → 值」的成员表，发 MAKE_CLASS。"""
         for base in node.bases:
@@ -702,6 +734,7 @@ class Compiler:
                 self.module.emit('MAKE_FUNCTION', member)
                 self.module.emit_u16(self.function_by_name[qualified])
                 self.module.emit_u16(0)
+                self.apply_member_descriptors(member)
                 continue
             if isinstance(member, ast.Assign) and len(member.targets) == 1:
                 target = member.targets[0]

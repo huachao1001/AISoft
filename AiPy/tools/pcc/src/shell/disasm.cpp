@@ -170,7 +170,8 @@ bool shapesOf(const std::string& name, std::vector<char>* shapes,
   static const char* const kNone[] = {
       "NONE", "TRUE", "FALSE", "POP", "DUP", "RETURN", "GET_ITEM", "SET_ITEM",
       "ITER_INIT", "ITER_BREAK", "POP_EXC", "RAISE", "RERAISE", "CURRENT_EXC",
-      "CLEAR_EXC", "DICT_MERGE", "CALL_VALUE_DYN", nullptr};
+      "CLEAR_EXC", "DICT_MERGE", "CALL_VALUE_DYN", "YIELD", "AWAIT",
+      "MAKE_STATIC_METHOD", "MAKE_CLASS_METHOD", nullptr};
 
   for (const char* const* it = kTwoU16; *it != nullptr; ++it) {
     if (name == *it) {

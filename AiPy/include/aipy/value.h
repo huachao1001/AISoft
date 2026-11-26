@@ -184,6 +184,9 @@ class Value {
   // 对象的方法表；不是 kObject 时返回 nullptr。
   // 返回的 ObjectData* 指向堆载荷，生命周期与这个 Value 的句柄一致。
   ObjectData* asObject() const;
+  // 堆载荷的地址，用来判断「是不是同一个对象」（`is` 与默认的 `==`）。
+  // 返回 const void* 而不是 HeapData*：外部只需要比地址，不该看见载荷布局。
+  const void* identity() const { return heap_; }
   // 字典取键的下标；没有这个键返回 -1。键比较用 eq 的语义。
   long long dictIndex(const Value& key) const;
   // 可变的容器视图。指向的数据由 shared_ptr 持有，所以 const 方法也能
@@ -227,6 +230,15 @@ class Value {
   friend bool isSuper(const Value& value);
   friend Value superSelf(const Value& value);
   friend Value superClassOf(const Value& value);
+  // `@staticmethod` / `@classmethod` 的包装值。它们本身不可调用，只在被
+  // 访问时决定「要不要绑定接收者、绑定谁」——那正是描述符语义，必须由
+  // VM 的类查找来做。被包装的函数复用 boundSelf 字段，Value 仍是 16 字节。
+  friend Value makeStaticMethod(const Value& function);
+  friend Value makeClassMethod(const Value& function);
+  friend bool isStaticMethod(const Value& value);
+  friend bool isClassMethod(const Value& value);
+  friend Value staticMethodFunction(const Value& value);
+  friend Value classMethodFunction(const Value& value);
   // 生成器值：与函数值同构（kObject + 专用标记表），载荷是函数号 +
   // 已绑好实参的局部量 + 暂停现场。
   friend Value makeGenerator(int functionIndex, List locals);

@@ -243,6 +243,7 @@ bool CodeGen::compileClass(const Node& classNode) {
       emit("MAKE_FUNCTION", member);
       emitU16(index);
       emitU16(0);
+      if (!applyMemberDescriptors(member)) return false;
       continue;
     }
     if (member.kind == Kind::Assign && member.children.size() == 2) {
@@ -631,8 +632,47 @@ bool CodeGen::emitLambdaDefaults(const Node& node, const Block& callee) {
   return true;
 }
 
-bool CodeGen::applyDecorators(const Node& node) {
-  // `@a @b def f` 等价于 `f = a(b(f))`：最靠近 def 的装饰器先应用。
+// 类成员的装饰器：栈顶已有一个函数值。
+//
+// 与模块级 applyDecorators 的差别是**值不从全局槽取**——类体里的成员值
+// 是 MAKE_CLASS 从栈上收的，所以这里就地在栈顶应用，每条装饰器收一次结果。
+//
+// @staticmethod / @classmethod 在编译期识别：它们不是可传递的普通值，
+// 而是「访问时怎么绑定」的标记，必须变成包装值进类成员表。
+bool CodeGen::applyMemberDescriptors(const Node& member) {
+  if (member.decoratorCount == 0) return true;
+
+  // 逆序：decorators[0] 最靠近 @ 的第一行，最后应用。
+  for (std::size_t i = member.decorators.size(); i > 0; --i) {
+    const Node& decorator = *member.decorators[i - 1];
+    if (decorator.kind == Kind::Name &&
+        (decorator.text == "staticmethod" || decorator.text == "classmethod")) {
+      emit(decorator.text == "staticmethod" ? "MAKE_STATIC_METHOD"
+                                            : "MAKE_CLASS_METHOD",
+           decorator);
+      continue;
+    }
+    // 普通装饰器：栈上是 [..., 当前函数值]，压装饰器再按值调用。
+    if (!expr(decorator)) return false;
+    // 现在栈上是 [..., 函数值, 装饰器]，而 CALL_VALUE 要 [可调用值, 实参]。
+    // 用两个隐藏局部槽周转一次，免得为这点需求新增一条 SWAP 指令。
+    const int valueSlot = slotOf("\x01member_value");
+    const int decoSlot = slotOf("\x01member_decorator");
+    emit("STORE_LOCAL", member);
+    emitU16(decoSlot);                 // 弹装饰器
+    emit("STORE_LOCAL", member);
+    emitU16(valueSlot);                // 弹函数值
+    emit("LOAD_LOCAL", member);
+    emitU16(decoSlot);                 // 装饰器作可调用值
+    emit("LOAD_LOCAL", member);
+    emitU16(valueSlot);                // 函数值作唯一实参
+    emit("CALL_VALUE", member);
+    emitU8(1);
+  }
+  return true;
+}
+
+bool CodeGen::applyDecorators(const Node& node) {  // `@a @b def f` 等价于 `f = a(b(f))`：最靠近 def 的装饰器先应用。
   //
   // 每轮都要拿到「当前值」，所以先造出函数值放进一个隐藏全局槽，然后
   // 从最内层装饰器开始逐层调用，结果写回同一个槽。槽名带前缀，避免与

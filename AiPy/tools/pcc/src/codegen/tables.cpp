@@ -37,6 +37,8 @@ const char* const kOpNames[] = {
     "MAKE_SUPER",
     "YIELD",
     "AWAIT",
+    "MAKE_STATIC_METHOD",
+    "MAKE_CLASS_METHOD",
 };
 
 constexpr int kOpCount = static_cast<int>(sizeof(kOpNames) / sizeof(kOpNames[0]));

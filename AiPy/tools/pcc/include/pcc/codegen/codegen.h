@@ -209,6 +209,8 @@ class CodeGen {
   bool emitLambdaDefaults(const Node& node, const Block& callee);
   // 应用装饰器：`@a @b def f` 就是 `f = a(b(f))`。
   bool applyDecorators(const Node& node);
+  // 类成员的装饰器：栈顶已有函数值，就地应用（含 static/classmethod 包装）。
+  bool applyMemberDescriptors(const Node& member);
   // 编函数体。类方法的函数表名是 `<类>.<方法>`，用 qualifiedName 指定。
   bool compileFunctionBody(const Node& node, const std::string& qualifiedName);
   // 普通 Python 类：方法登记成 `<类>.<方法>`，类定义处发 MAKE_CLASS。

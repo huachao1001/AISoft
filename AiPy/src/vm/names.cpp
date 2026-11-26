@@ -70,6 +70,8 @@ const char* opName(Op op) {
     case Op::kMakeSuper: return "make_super";
     case Op::kYield: return "yield";
     case Op::kAwait: return "await";
+    case Op::kMakeStaticMethod: return "make_static_method";
+    case Op::kMakeClassMethod: return "make_class_method";
   }
   return "?";
 }

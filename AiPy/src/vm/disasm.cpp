@@ -153,6 +153,12 @@ std::vector<std::string> disassemble(const Program& program) {
       case Op::kAwait:
         std::snprintf(text, sizeof(text), "await");
         break;
+      case Op::kMakeStaticMethod:
+        std::snprintf(text, sizeof(text), "make_static_method");
+        break;
+      case Op::kMakeClassMethod:
+        std::snprintf(text, sizeof(text), "make_class_method");
+        break;
       case Op::kCallMethod:
         std::snprintf(text, sizeof(text), "call_method %u,%u", read16(code, pc), code[pc + 2]);
         pc += 3;
