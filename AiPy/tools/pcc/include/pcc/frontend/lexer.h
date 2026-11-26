@@ -28,7 +28,9 @@ struct LexError {
 
 class Lexer {
  public:
-  Lexer(std::string source, std::string filename);
+  // lineOffset 用于 f-string 这类「从源码中间切出一段再单独词法分析」的场景，
+  // 让报错与字节码行号仍指向原始文件的那一行，而不是恒从 1 开始。
+  Lexer(std::string source, std::string filename, int startLine = 1);
 
   // 切出全部记号。失败返回 false，原因在 error()。
   bool tokenize();

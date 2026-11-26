@@ -22,6 +22,7 @@
 #include "pcc/frontend/parser.h"
 
 #include "pcc/diagnostics.h"
+#include "pcc/frontend/lexer.h"
 
 namespace pcc {
 namespace {
@@ -515,12 +516,7 @@ NodePtr Parser::atom() {
 
   if (token.type == TokenType::String) {
     advance();
-    if (token.isFString) {
-      // f-string：内容要当表达式编译，而 LANGUAGE.md 明确不支持。
-      auto joined = make_node(Kind::JoinedStr, token.line, token.col);
-      joined->text = token.text;
-      return joined;
-    }
+    if (token.isFString) return fstring(token);
 
     auto node = make_node(Kind::Constant, token.line, token.col);
     node->text = token.text;
@@ -723,6 +719,113 @@ NodePtr Parser::parseAtomBrace() {
   }
   if (!expectOp("}")) return nullptr;
   return node;
+}
+
+NodePtr Parser::fstring(const Token& token) {
+  // f-string 的内容已经在词法层解码过（转义已处理），这里只做结构拆分：
+  // 文本段 → Constant，`{...}` → 递归解析出的表达式节点。
+  //
+  // `{{` / `}}` 是转义的花括号，必须当字面量，不能当占位符边界。
+  auto joined = make_node(Kind::JoinedStr, token.line, token.col);
+
+  const std::string& text = token.text;
+  std::string literal;
+  std::size_t i = 0;
+  while (i < text.size()) {
+    const char ch = text[i];
+    if (ch == '{') {
+      if (i + 1 < text.size() && text[i + 1] == '{') {
+        literal.push_back('{');
+        i += 2;
+        continue;
+      }
+      // 进入占位符：先把累积的字面量收成一段。
+      if (!literal.empty()) {
+        auto part = make_node(Kind::Constant, token.line, token.col);
+        part->text = literal;
+        part->constKind = ConstKind::Str;
+        joined->children.push_back(std::move(part));
+        literal.clear();
+      }
+
+      // 找配对的 `}`，允许里面出现嵌套括号（`{d["k"]}`、`{f(a)}`）。
+      const std::size_t start = i + 1;
+      std::size_t depth = 0;
+      std::size_t end = start;
+      bool closed = false;
+      for (; end < text.size(); ++end) {
+        const char inside = text[end];
+        if (inside == '(' || inside == '[' || inside == '{') {
+          ++depth;
+        } else if (inside == ')' || inside == ']') {
+          if (depth > 0) --depth;
+        } else if (inside == '}') {
+          if (depth == 0) {
+            closed = true;
+            break;
+          }
+          --depth;
+        } else if (inside == ':' && depth == 0) {
+          // 格式说明符 `{x:>5}`：先不支持，明确报错。
+          fail("format specifiers in f-strings are not supported");
+          return nullptr;
+        } else if (inside == '!' && depth == 0 &&
+                   end + 1 < text.size() &&
+                   (text[end + 1] == 'r' || text[end + 1] == 's' ||
+                    text[end + 1] == 'a')) {
+          fail("conversion flags (!r / !s) in f-strings are not supported");
+          return nullptr;
+        }
+      }
+      if (!closed) {
+        fail("unterminated placeholder in f-string");
+        return nullptr;
+      }
+
+      const std::string source = text.substr(start, end - start);
+      if (source.empty()) {
+        fail("empty placeholder in f-string");
+        return nullptr;
+      }
+
+      // 占位符里的内容按完整表达式解析：新建一个词法 + 语法分析器。
+      // 起始行号用 f-string 记号自己的行号，否则占位符里的表达式会被记成
+      // 第 1 行，行号表与 CPython 版就对不上了。
+      Lexer lexer(source, filename_, token.line);
+      if (!lexer.tokenize()) {
+        fail(lexer.error().message);
+        return nullptr;
+      }
+      Parser inner(lexer.tokens(), filename_);
+      NodePtr value = inner.parseSingleExpression();
+      if (!value) {
+        failAtLine(inner.error().message, inner.error().line, inner.error().col);
+        return nullptr;
+      }
+      joined->children.push_back(std::move(value));
+      i = end + 1;
+      continue;
+    }
+    if (ch == '}') {
+      if (i + 1 < text.size() && text[i + 1] == '}') {
+        literal.push_back('}');
+        i += 2;
+        continue;
+      }
+      fail("single '}' is not allowed in f-string");
+      return nullptr;
+    }
+    literal.push_back(ch);
+    ++i;
+  }
+
+  if (!literal.empty()) {
+    auto part = make_node(Kind::Constant, token.line, token.col);
+    part->text = literal;
+    part->constKind = ConstKind::Str;
+    joined->children.push_back(std::move(part));
+  }
+  return joined;
 }
 
 }  // namespace pcc

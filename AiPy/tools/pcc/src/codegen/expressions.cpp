@@ -228,8 +228,35 @@ bool CodeGen::expr(const Node& node) {
       return true;
     }
 
-    case Kind::JoinedStr:
-      return failAt(diag::fstringUnsupported(), node);
+    case Kind::JoinedStr: {
+      // f-string 展开成 `"a" + str(x) + "b"`，用 ADD 链即可。
+      //
+      // 表达式段必须显式 str()：`f"{1}"` 得到 "1"，而 `"a" + 1` 在 CPython
+      // 是 TypeError。CPython 的 f-string 内部同样对每段调 format()。
+      if (node.children.empty()) {
+        emit("CONST", node);
+        emitU16(constIndexOfStr(""));
+        return true;
+      }
+      bool emitted = false;
+      for (const NodePtr& part : node.children) {
+        if (part->kind == Kind::Constant) {
+          emit("CONST", *part);
+          emitU16(constIndexOfStr(part->text));
+        } else {
+          if (!expr(*part)) return false;
+          emit("CALL_BUILTIN", *part);
+          emitU16(builtinIndex("str"));
+          emitU8(1);
+        }
+        if (emitted) {
+          emit("BIN", *part);
+          emitU8(binopOf(Kind::Add, *part));
+        }
+        emitted = true;
+      }
+      return true;
+    }
 
     case Kind::TupleLit: {
       for (const auto& element : node.children) {

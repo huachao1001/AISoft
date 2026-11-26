@@ -36,6 +36,10 @@ class Parser {
   // 解析整个模块。失败返回空指针，原因在 error()。
   NodePtr parseModule();
 
+  // 解析单独一个表达式（f-string 里 `{...}` 的内容用它）。
+  // 要求表达式后紧跟 End：`{x if y}` 这类残缺写法要在原地报错。
+  NodePtr parseSingleExpression();
+
   const ParseError& error() const { return error_; }
 
  private:
@@ -51,6 +55,9 @@ class Parser {
   bool expectNewline();
   void skipNewlines();
   bool fail(const std::string& message);
+  // 带上位置：f-string 里的表达式由子解析器解析，位置信息在子解析器里，
+  // 直接 fail(message) 会把错误指到 f-string 之后的那一行。
+  bool failAtLine(const std::string& message, int line, int col);
 
   // ── 语句（statements.cpp）──
   NodePtr statement();
@@ -80,6 +87,7 @@ class Parser {
   // ── 表达式（expressions.cpp）──
   NodePtr expression();
   NodePtr expressionList();
+  NodePtr fstring(const Token& token);
   NodePtr targetList();
   NodePtr orExpr();
   NodePtr andExpr();

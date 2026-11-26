@@ -67,8 +67,8 @@ const char* const kTwoChar[] = {
 
 }  // namespace
 
-Lexer::Lexer(std::string source, std::string filename)
-    : source_(std::move(source)), filename_(std::move(filename)) {}
+Lexer::Lexer(std::string source, std::string filename, int startLine)
+    : source_(std::move(source)), filename_(std::move(filename)), line_(startLine) {}
 
 char Lexer::peek(std::size_t ahead) const {
   const std::size_t at = pos_ + ahead;

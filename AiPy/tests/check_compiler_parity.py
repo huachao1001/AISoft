@@ -104,6 +104,10 @@ MESSAGE_PAIRS = [
     ('不支持这种赋值目标', 'unsupported assignment target'),
     ('不支持这种调用目标', 'this call target is not supported'),
     ('不支持 f-string', 'f-strings are not supported'),
+    ('f-string 里的格式说明符暂不支持',
+     'format specifiers in f-strings are not supported'),
+    ('f-string 里的 !r / !s 转换暂不支持',
+     'conversion flags (!r / !s) in f-strings are not supported'),
     ('f-string 暂不支持字节码路线',
      'f-strings are not supported by the bytecode compiler; use '
      'format_text() or string concatenation'),

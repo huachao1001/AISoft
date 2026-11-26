@@ -72,6 +72,15 @@ bool Parser::fail(const std::string& message) {
   return false;
 }
 
+bool Parser::failAtLine(const std::string& message, int line, int col) {
+  if (failed_) return false;
+  failed_ = true;
+  error_.message = message;
+  error_.line = line;
+  error_.col = col;
+  return false;
+}
+
 NodePtr Parser::parseModule() {
   auto module = make_node(Kind::Module, 1, 0);
   skipNewlines();
@@ -87,6 +96,19 @@ NodePtr Parser::parseModule() {
   }
   if (failed_) return nullptr;
   return module;
+}
+
+NodePtr Parser::parseSingleExpression() {
+  // f-string 的占位符内容是从源码里切出来的一段，词法层会在末尾补 NEWLINE，
+  // 所以先跳过它再要求 End：`{x if}` 这类残缺写法仍要在原地报错。
+  NodePtr value = expression();
+  if (!value) return nullptr;
+  skipNewlines();
+  if (!check(TokenType::End)) {
+    fail(diag::strayToken(peek().text));
+    return nullptr;
+  }
+  return value;
 }
 
 }  // namespace pcc

@@ -1295,7 +1295,32 @@ class Compiler:
             return
 
         if isinstance(node, ast.JoinedStr):
-            raise CompileError('f-string 暂不支持字节码路线', self.filename, node)
+            # 与 C++ 版一致：常量段直接压常量，表达式段先 str() 再 ADD 链。
+            emitted = False
+            for part in node.values:
+                if isinstance(part, ast.Constant):
+                    self.block.emit('CONST', node)
+                    self.block.emit_u16(self.const_string(part.value))
+                else:
+                    # ast.FormattedValue
+                    if part.format_spec is not None:
+                        raise CompileError('f-string 里的格式说明符暂不支持',
+                                           self.filename, node)
+                    if part.conversion not in (-1, None):
+                        raise CompileError('f-string 里的 !r / !s 转换暂不支持',
+                                           self.filename, node)
+                    self.expr(part.value)
+                    self.block.emit('CALL_BUILTIN', node)
+                    self.block.emit_u16(self.builtin_index('str'))
+                    self.block.emit_u8(1)
+                if emitted:
+                    self.block.emit('BIN', node)
+                    self.block.emit_u8(BINOP['ADD'])
+                emitted = True
+            if not emitted:
+                self.block.emit('CONST', node)
+                self.block.emit_u16(self.const_string(''))
+            return
 
         if isinstance(node, ast.Tuple):
             for element in node.elts:
