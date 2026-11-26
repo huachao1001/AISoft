@@ -287,6 +287,10 @@ class CodeGen {
 
   std::vector<std::string> globalOrder_;
   std::set<std::string> globalsSet_;
+  // 已经**编译过**的模块级赋值。与 globalsSet_（预扫描，全部模块级名字）
+  // 不同：CPython 的名字解析按执行顺序，`int = 5` 写在后面时前面的 `int`
+  // 仍是内建。判「同名变量是否遮蔽类型名」必须用这个。
+  std::set<std::string> assignedSoFar_;
 
   std::vector<LoopFrame> loopStack_;
   std::vector<int> withStack_;

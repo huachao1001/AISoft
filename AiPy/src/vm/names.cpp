@@ -72,6 +72,7 @@ const char* opName(Op op) {
     case Op::kAwait: return "await";
     case Op::kMakeStaticMethod: return "make_static_method";
     case Op::kMakeClassMethod: return "make_class_method";
+    case Op::kLoadType: return "load_type";
   }
   return "?";
 }

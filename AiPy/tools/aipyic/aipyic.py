@@ -95,6 +95,7 @@ OPERANDS = {
     'MAKE_SUPER': ('u16',),
     'YIELD': (),
     'AWAIT': (),
+    'LOAD_TYPE': ('u16',),
     'BUILD_TUPLE': ('u16',),
     'BUILD_SET': ('u16',),
     'DEL_LOCAL': ('u16',),

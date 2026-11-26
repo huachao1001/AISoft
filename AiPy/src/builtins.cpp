@@ -306,6 +306,11 @@ Value builtinTextOfChar(const Value* args, int count, std::string* error) {
   return textOfChar(args[0]);
 }
 
+// 放在单独一个 .cpp 里：它们要判脚本类的 MRO，与其余内建（纯值运算）
+// 关注点不同。
+Value builtinType(const Value* args, int count, std::string* error);
+Value builtinIsInstance(const Value* args, int count, std::string* error);
+
 // ── 名字表 ──
 //
 // 顺序必须与 Python 侧编译器（tools/pyuic/vm_compiler.py）的 BUILTINS 一致。
@@ -340,6 +345,8 @@ const Entry kBuiltinTable[] = {
     {"set", builtinSet},
     // `next` 只是登记：真正的推进在 VM 里（值层拿不到 Program）。
     {"next", nullptr},
+    {"type", builtinType},
+    {"isinstance", builtinIsInstance},
 };
 
 }  // namespace builtins

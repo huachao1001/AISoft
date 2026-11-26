@@ -182,6 +182,11 @@ enum class Op : std::uint8_t {
   // 装饰器名字在编译期识别：运行期它们不是可传递的值。
   kMakeStaticMethod,
   kMakeClassMethod,
+
+  // 取一个内建类值：u16 类型名常量号。压上 `<class 'int'>` 这样的值。
+  // `type(x) is int`、`isinstance(x, str)` 都要把类型名当值用，而内建名
+  // 在编译期就是已知的字符串，所以直接由指令给出名字，不必进全局槽。
+  kLoadType,
 };
 
 enum class BinOp : std::uint8_t {

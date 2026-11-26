@@ -39,6 +39,7 @@ const char* const kOpNames[] = {
     "AWAIT",
     "MAKE_STATIC_METHOD",
     "MAKE_CLASS_METHOD",
+    "LOAD_TYPE",
 };
 
 constexpr int kOpCount = static_cast<int>(sizeof(kOpNames) / sizeof(kOpNames[0]));
@@ -48,6 +49,7 @@ const char* const kBuiltins[] = {
     "len", "str", "int", "float", "bool", "abs", "round", "min", "max",
     "sum", "list", "dict", "range", "print",
     "format_text", "char_from_code", "text_of_char", "set", "next",
+    "type", "isinstance",
 };
 
 constexpr int kBuiltinCount =

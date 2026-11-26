@@ -153,7 +153,7 @@ traceback 对象）。`with [1, 2]:` 会报「list 不支持上下文管理器�
 | `x[::-1]` | 负步长（反向） |
 | `d["k"]` | 字典下标 |
 
-### 内建函数（19 个）
+### 内建函数（21 个）
 
 | 函数 | 说明 |
 |---|---|
@@ -164,6 +164,8 @@ traceback 对象）。`with [1, 2]:` 会报「list 不支持上下文管理器�
 | `format_text(tpl, list)` | 单占位符格式化 |
 | `char_from_code` `text_of_char` | 码点与字符互转 |
 | `next(生成器)` | 推进一格，耗尽抛 `StopIteration` |
+| `type(x)` | 返回 `<class 'int'>` 形式的类型值，脚本类带 `__main__.` 前缀 |
+| `isinstance(x, T)` | 认脚本类的继承链与异常层级；`T` 暂不支持元组形式 |
 
 ### 类
 
@@ -312,8 +314,12 @@ class App(Activity):
 ### 内建函数
 
 `sorted` `enumerate` `zip` `map` `filter` `any` `all` `reversed`
-`isinstance` `type` `help` `dir` `id` `hash` `repr`
+`help` `dir` `id` `hash` `repr`
 `chr` `ord` `bin` `hex` `oct` `divmod` `pow` `sum(生成器)` 全部不支持。
+
+内建类型名（`int` `str` `list` `dict` `ValueError` 等）在**值位置**是可用的：
+`type(x) is int`、`isinstance(x, str)`、`f(int)` 都成立。调用位置仍然是内建
+函数——`int("3")` 走 `CALL_BUILTIN`，两者由语法位置区分，不需要额外标记。
 
 `open` 与 `input` **支持**，但它们的实现来自 `fs.pylib`：库用
 `AIPY_PYLIB_BUILTIN` 把它们注册成裸名，所以脚本里写 `open(p)` / `input()`

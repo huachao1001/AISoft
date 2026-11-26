@@ -165,6 +165,10 @@ std::vector<std::string> disassemble(const Program& program) {
       case Op::kMakeStaticMethod:
         std::snprintf(text, sizeof(text), "make_static_method");
         break;
+      case Op::kLoadType:
+        std::snprintf(text, sizeof(text), "load_type %u", read16(code, pc));
+        pc += 2;
+        break;
       case Op::kMakeClassMethod:
         std::snprintf(text, sizeof(text), "make_class_method");
         break;

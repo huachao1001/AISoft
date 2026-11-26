@@ -120,7 +120,7 @@ __declspec(noinline) bool unwindException(std::vector<Frame>& frames,
           std::string error;
           const bool called = ::aipy::vm::callDunder(
               program, globals, manager, "__exit__",
-              {makeExceptionClass(exceptionType(exception)), exception, Value()},
+              {makeBuiltinClass(exceptionType(exception)), exception, Value()},
               &ignored, &found, &error);
           clearPendingException();
           if (called && found && ignored.toBool()) {
@@ -1564,6 +1564,15 @@ static Result execute(const Program& program, std::vector<Value>& globals,
       case Op::kMakeClassMethod: {
         if (sp < 1) return fail("classmethod 缺少函数值（编译器 bug）");
         stack[sp - 1] = makeClassMethod(stack[sp - 1]);
+        break;
+      }
+
+      case Op::kLoadType: {
+        // u16 类型名常量号。压一个类值，供 `type(x) is int` 这类比较使用。
+        const std::uint16_t nameIndex = read16(code, frame.pc);
+        frame.pc += 2;
+        if (nameIndex >= program.consts.size()) return fail("类型名越界（编译器 bug）");
+        stack[sp++] = makeBuiltinClass(program.consts[nameIndex].asString());
         break;
       }
 

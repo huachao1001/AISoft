@@ -65,7 +65,7 @@ OPCODES = [
     'CALL_DYN', 'DICT_MERGE', 'MAKE_FUNCTION', 'CALL_VALUE',
     'CALL_VALUE_DYN', 'MAKE_CLASS', 'GET_ATTR', 'SET_ATTR', 'INSTANTIATE',
     'MAKE_SUPER', 'YIELD', 'AWAIT',
-    'MAKE_STATIC_METHOD', 'MAKE_CLASS_METHOD',
+    'MAKE_STATIC_METHOD', 'MAKE_CLASS_METHOD', 'LOAD_TYPE',
 ]
 
 # 二元算子编号，与 vm.h 的 BinOp 一致。
@@ -81,6 +81,7 @@ BUILTINS = [
     'len', 'str', 'int', 'float', 'bool', 'abs', 'round', 'min', 'max',
     'sum', 'list', 'dict', 'range', 'print',
     'format_text', 'char_from_code', 'text_of_char', 'set', 'next',
+    'type', 'isinstance',
 ]
 
 OP = {name: index for index, name in enumerate(OPCODES)}
@@ -94,6 +95,14 @@ BUILTIN_INDEX = {name: index for index, name in enumerate(BUILTINS)}
 # 为什么这里是手抄而不是读那个头：Python 版是 oracle，只在测试期跑；
 # 读 C++ 头要写一个解析器，而解析别人源码的代码本身会成为新的不一致来源。
 # 两边各写一份、由 aipy_compiler_parity 的探针对齐更直接。
+# 内建类型名：出现在值位置时编成 LOAD_TYPE。与 include/aipy/types_names.h
+# 同内容，靠 probe 对拍保证不分叉。
+BUILTIN_TYPE_NAMES = [
+    'NoneType', 'bool', 'int', 'float', 'complex',
+    'str', 'bytes', 'list', 'tuple', 'dict',
+    'set', 'range', 'object', 'type',
+]
+
 EXCEPTION_CLASSES = [
     'BaseException', 'Exception', 'SystemExit', 'KeyboardInterrupt',
     'ArithmeticError', 'ZeroDivisionError', 'OverflowError',
@@ -271,6 +280,7 @@ class Compiler:
         # 的中途，函数体要等所有全局槽就位后再编。
         self.pending_lambdas = []
         self.globals = {}              # 模块级变量名 → 全局槽
+        self.assigned_so_far = set()   # 已按源码顺序编译过的模块级赋值
         self.global_count = 0
         self.module = Block('<module>')
         self.block = self.module
@@ -376,6 +386,11 @@ class Compiler:
         else:
             self.block.emit('STORE_GLOBAL', node)
             self.block.emit_u16(self.global_slot(name))
+            # 模块级赋值一旦编译过，后续读同名名字就是读变量而非内建。
+            # 不能用预扫描的 self.globals：`int = 5` 写在后面时前面的
+            # `int` 在 CPython 里仍是内建。
+            if self.block is self.module:
+                self.assigned_so_far.add(name)
 
     # ── 入口 ──
 
@@ -1588,7 +1603,30 @@ class Compiler:
             return
 
         if isinstance(node, ast.Name):
+            # 同名变量优先于类型名：`int = 5` 之后再读 `int` 必须是 5，
+            # 不是 `<class 'int'>`——CPython 里赋值遮蔽内建。
+            #
+            # 判据分两种：模块级代码按**编译顺序**看已赋值的名字（`int = 5`
+            # 写在后面时前面的 `int` 仍是内建）；函数体里按模块级是否
+            # **声明过**——函数调用发生在模块执行完之后。
+            if self.block is self.module:
+                shadowed = (self.is_local(node.id) or
+                            node.id in self.assigned_so_far)
+            else:
+                shadowed = (self.is_local(node.id) or
+                            node.id in self.globals)
+            # 类型名在值位置是合法的：`type(x) is int`、`isinstance(x, str)`。
+            # 与 C++ 版同序——必须在「内建不能当值」之前判。
+            if not shadowed and (node.id in BUILTIN_TYPE_NAMES or
+                                 node.id in EXCEPTION_SET):
+                self.block.emit('LOAD_TYPE', node)
+                self.block.emit_u16(self.const_string(node.id))
+                return
             if node.id in BUILTIN_INDEX:
+                # 内建名被赋值过时它就是一个普通变量，不再是「不能当值」的内建。
+                if shadowed:
+                    self.name_target(node.id, node)
+                    return
                 # `len` 作为值出现时没有意义（没有一等函数），但 `len(x)` 是调用，
                 # 走 call 分支。这里只处理它被当成普通名字读的情况。
                 raise CompileError('内建函数 %s 不能当值使用' % node.id,

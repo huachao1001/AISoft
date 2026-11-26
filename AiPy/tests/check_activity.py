@@ -508,6 +508,98 @@ CASES = [
         'print(f({"a": 1}))\n',
         '[1]\n',
     ),
+    # ── type() / isinstance() ──
+    (
+        'type 返回的类型名',
+        'print(type(1))\n'
+        'print(type("a"))\n'
+        'print(type([1]))\n'
+        'print(type(None))\n'
+        'print(type(True))\n',
+        "<class 'int'>\n<class 'str'>\n<class 'list'>\n"
+        "<class 'NoneType'>\n<class 'bool'>\n",
+    ),
+    (
+        'type(x) is T',
+        'x = 1\n'
+        'print(type(x) is int)\n'
+        'print(type(x) is str)\n'
+        'print(type("a") is str)\n',
+        'True\nFalse\nTrue\n',
+    ),
+    (
+        'isinstance 基础类型',
+        'print(isinstance(1, int))\n'
+        'print(isinstance("a", str))\n'
+        'print(isinstance(1, str))\n'
+        'print(isinstance([1], list))\n',
+        'True\nTrue\nFalse\nTrue\n',
+    ),
+    (
+        'isinstance 认继承',
+        'class A:\n'
+        '    pass\n'
+        'class B(A):\n'
+        '    pass\n'
+        'class C(B):\n'
+        '    pass\n'
+        'print(isinstance(A(), A))\n'
+        'print(isinstance(B(), A))\n'
+        'print(isinstance(C(), A))\n'
+        'print(isinstance(A(), C))\n',
+        'True\nTrue\nTrue\nFalse\n',
+    ),
+    (
+        'type 脚本实例带 __main__ 前缀',
+        'class A:\n'
+        '    pass\n'
+        'print(type(A()))\n',
+        "<class '__main__.A'>\n",
+    ),
+    (
+        'isinstance 认异常层级',
+        'try:\n'
+        '    raise ValueError("x")\n'
+        'except ValueError as e:\n'
+        '    print(isinstance(e, ValueError))\n'
+        '    print(isinstance(e, Exception))\n',
+        'True\nTrue\n',
+    ),
+    (
+        '__exit__ 的 exc_type 能 is 比较',
+        'class S:\n'
+        '    def __enter__(self):\n'
+        '        return self\n'
+        '    def __exit__(self, t, e, tb):\n'
+        '        print(t is ValueError)\n'
+        '        return True\n'
+        'with S():\n'
+        '    raise ValueError("x")\n',
+        'True\n',
+    ),
+    (
+        '局部赋值遮蔽类型名',
+        'int = 5\n'
+        'print(int)\n'
+        'print(int + 1)\n'
+        'print(type(1) is int)\n',
+        "5\n6\nFalse\n",
+    ),
+    (
+        '参数遮蔽类型名',
+        'def f(str):\n'
+        '    return str\n'
+        'print(f(42))\n',
+        '42\n',
+    ),
+    (
+        '先读类型名后赋值不互相影响',
+        'print(type(1) is int)\n'
+        'int = 5\n'
+        'print(int)\n'
+        'print(type(1) is int)\n',
+        'True\n5\nFalse\n',
+    ),
     # ── 期望被拒绝的 ──
     (
         '两个 Activity 被拒绝',

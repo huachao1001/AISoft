@@ -4,6 +4,9 @@
 #include "pcc/codegen/tables.h"
 #include "pcc/diagnostics.h"
 
+#include "aipy/exceptions.h"
+#include "aipy/types_names.h"
+
 #include <cstdlib>
 #include <cstring>
 
@@ -54,8 +57,32 @@ std::string dottedName(const Node& node) {
 }  // namespace
 
 bool CodeGen::nameRead(const std::string& name, const Node& node) {
-  // `len` 作为值出现时没有意义：内建不是可传递的值，只有调用形式。
+  // 同名变量优先于类型名：`int = 5` 之后再读 `int` 必须是 5，不是
+  // `<class 'int'>`（CPython 里赋值遮蔽内建）。
+  //
+  // 判据分两种：模块级代码按**编译顺序**看已赋值的名字（`int = 5` 写在
+  // 后面时前面的 `int` 仍是内建）；函数体里按模块级是否**声明过**——函数
+  // 调用发生在模块执行完之后，那时全局名已经存在。
+  const bool shadowed =
+      isLocal(name) || (block_ == &module_ ? assignedSoFar_.count(name) != 0
+                                          : globalsSet_.count(name) != 0);
+  if (!shadowed && aipy::isBuiltinTypeName(name)) {
+    emit("LOAD_TYPE", node);
+    emitU16(constIndexOfStr(name));
+    return true;
+  }
+  if (!shadowed && aipy::isExceptionClassName(name)) {
+    // 异常类同样是值：`isinstance(e, ValueError)`、`raise` 之外的场合。
+    emit("LOAD_TYPE", node);
+    emitU16(constIndexOfStr(name));
+    return true;
+  }
   if (Tables::isBuiltin(name)) {
+    // 内建名被赋值过时它就是一个普通变量，不再是「不能当值」的内建。
+    if (shadowed) {
+      nameTarget(name, node);
+      return true;
+    }
     return failAt(diag::builtinAsValue(name), node);
   }
   // 脚本函数出现在值的位置（`g = f`、`f(func)` 的实参）就是取函数值。

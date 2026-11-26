@@ -47,6 +47,7 @@ target_include_directories(aipy_base PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 add_library(aipy STATIC
   src/value.cpp
   src/builtins.cpp
+  src/builtins_types.cpp
   src/bytecode.cpp
   # pylib 注册：靠节合并发现「已链接进来的扩展模块」。这里只有机制，
   # 没有任何具体能力（见 include/aipy/pylib.h 头部）。

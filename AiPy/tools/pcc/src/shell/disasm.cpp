@@ -162,7 +162,7 @@ bool shapesOf(const std::string& name, std::vector<char>* shapes,
       "JUMP", "JUMP_IF_FALSE", "JUMP_IF_FALSE_KEEP", "JUMP_IF_TRUE_KEEP",
       "BUILD_LIST", "BUILD_DICT", "ITER_NEXT", "WITH_EXIT",
       "SETUP_EXC", "BUILD_TUPLE", "BUILD_SET", "CALL_DYN",
-      "MAKE_SUPER", "GET_ATTR", "SET_ATTR",
+      "MAKE_SUPER", "GET_ATTR", "SET_ATTR", "LOAD_TYPE",
       nullptr};
   static const char* const kU8[] = {"BIN", "CMP", "UNARY", "INPLACE", "SLICE",
                                     "SET_SLICE", "CALL_VALUE", "INSTANTIATE",

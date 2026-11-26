@@ -20,8 +20,9 @@ const List kEmptyList;
 // 所有用到判定的地方（isException、toString）之前可见。
 const MethodEntry kNoMethods[] = {{nullptr, nullptr}};
 const MethodTable kExceptionTable = {kNoMethods};
-// 异常类本身（`ValueError` 这个类），只出现在 `__exit__` 的第一个实参上。
-const MethodTable kExceptionClassTable = {kNoMethods};
+// 内建类值（`int`、`str`、`ValueError`）。没有成员表，只做显示、
+// `is` 比较与 isinstance 的第二个参数。
+const MethodTable kBuiltinClassTable = {kNoMethods};
 // 函数值的标记表。与异常同构：判据是「表指针是不是它」。
 const MethodTable kFunctionTable = {kNoMethods};
 // 类对象与实例的标记表。同样只是标记——实例的方法查找要沿基类上溯，
@@ -707,7 +708,7 @@ std::string Value::toString() const {
       }
       // 异常类同样显示成 `<class 'ValueError'>`：脚本里会写
       // `print(exc_type)` 或把它拼进日志。
-      if (heap_ != nullptr && heap_->object.table == &kExceptionClassTable) {
+      if (heap_ != nullptr && heap_->object.table == &kBuiltinClassTable) {
         return "<class '" + heap_->className + "'>";
       }
       if (heap_ != nullptr && heap_->object.table == &kInstanceTable) {
@@ -737,22 +738,22 @@ bool isException(const Value& value) {
   return data != nullptr && data->table == &kExceptionTable;
 }
 
-Value makeExceptionClass(const std::string& type) {
+Value makeBuiltinClass(const std::string& type) {
   Value out;
   out.type_ = Value::Type::kObject;
   out.heap_ = makeHeap();
-  out.heap_->object.table = &kExceptionClassTable;
+  out.heap_->object.table = &kBuiltinClassTable;
   out.heap_->className = type;
   return out;
 }
 
-bool isExceptionClass(const Value& value) {
+bool isBuiltinClass(const Value& value) {
   const ObjectData* data = value.asObject();
-  return data != nullptr && data->table == &kExceptionClassTable;
+  return data != nullptr && data->table == &kBuiltinClassTable;
 }
 
-std::string exceptionClassName(const Value& value) {
-  if (!isExceptionClass(value)) return std::string();
+std::string builtinClassName(const Value& value) {
+  if (!isBuiltinClass(value)) return std::string();
   return value.heap_->className;
 }
 
@@ -1072,7 +1073,7 @@ std::string typeName(const Value& value) {
     case Value::Type::kSet: return "set";
     case Value::Type::kDict: return "dict";
     case Value::Type::kHost: return "host";
-    case Value::Type::kObject: return isExceptionClass(value) ? exceptionClassName(value) : "object";
+    case Value::Type::kObject: return isBuiltinClass(value) ? builtinClassName(value) : "object";
     case Value::Type::kDeleted: return "NoneType";
   }
   return "object";
@@ -1899,6 +1900,11 @@ Value isSame(const Value& a, const Value& b) {
   // 直接返回 0，那正是「Leaf.who() 里 cls is Base 得到 True」的原因。
   if (a.type() == Value::Type::kObject || b.type() == Value::Type::kObject) {
     if (a.type() != b.type()) return Value(false);
+    // 内建类值（`int`、`type(1)`、`ValueError`）没有独立身份，按名字判等：
+    // `type(1) is int` 必须是 True，而它们是两个不同的堆载荷。
+    if (isBuiltinClass(a) || isBuiltinClass(b)) {
+      return Value(builtinClassName(a) == builtinClassName(b));
+    }
     return Value(a.identity() == b.identity());
   }
   // 容器按「是不是同一个对象」判断，其余类型 Python 的 is 语义本来就按值

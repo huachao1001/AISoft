@@ -86,6 +86,10 @@ void CodeGen::nameStore(const std::string& name, const Node& node) {
   } else {
     emit("STORE_GLOBAL", node);
     emitU16(globalSlot(name));
+    // 模块级赋值一旦编译过，后续读同名名字就是读变量而非内建/类型名。
+    // 不能用预扫描的 globalsSet_：`int = 5` 写在后面时前面的 `int`
+    // 在 CPython 里仍是内建。
+    if (block_ == &module_) assignedSoFar_.insert(name);
   }
 }
 
