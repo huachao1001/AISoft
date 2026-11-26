@@ -155,12 +155,12 @@ bool shapesOf(const std::string& name, std::vector<char>* shapes,
   static const char* const kTwoU16[] = {"CALL", "CALL_BUILTIN", "CALL_METHOD",
                                         "CALL_EXT", "RAISE_TYPE", nullptr};
   static const char* const kU16Pair[] = {"EXC_MATCH", "DEL_LOCAL", "DEL_GLOBAL",
-                                         "MAKE_FUNCTION",
+                                         "MAKE_FUNCTION", "WITH_ENTER",
                                          nullptr};
   static const char* const kU16[] = {
       "CONST", "LOAD_LOCAL", "STORE_LOCAL", "LOAD_GLOBAL", "STORE_GLOBAL",
       "JUMP", "JUMP_IF_FALSE", "JUMP_IF_FALSE_KEEP", "JUMP_IF_TRUE_KEEP",
-      "BUILD_LIST", "BUILD_DICT", "ITER_NEXT", "WITH_ENTER", "WITH_EXIT",
+      "BUILD_LIST", "BUILD_DICT", "ITER_NEXT", "WITH_EXIT",
       "SETUP_EXC", "BUILD_TUPLE", "BUILD_SET", "CALL_DYN",
       "MAKE_SUPER", "GET_ATTR", "SET_ATTR",
       nullptr};

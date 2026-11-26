@@ -200,6 +200,9 @@ class Value {
   friend Value makeException(const std::string& type, const std::string& message);
   friend std::string exceptionType(const Value& value);
   friend std::string exceptionMessage(const Value& value);
+  friend Value makeExceptionClass(const std::string& type);
+  friend bool isExceptionClass(const Value& value);
+  friend std::string exceptionClassName(const Value& value);
   // 函数值与异常同构：载荷是语言语义，不该成为宿主可见的 API 面。
   friend Value makeFunction(int index, List captures);
   friend int functionIndexOf(const Value& value);
@@ -394,9 +397,18 @@ struct HeapData : DictData {
 // 用一个专用方法表当标记，`table == &kExceptionTable` 就是判据——不需要
 // 额外标志位。
 Value makeException(const std::string& type, const std::string& message);
-
 // 是不是异常值。
 bool isException(const Value& value);
+
+// 异常类（`ValueError` 这个类本身，而不是一个实例）。
+//
+// 只在协议方法里需要：CPython 的 `__exit__(exc_type, exc, tb)` 第一个参数
+// 是异常**类**，脚本里会写 `if exc_type is ValueError` 或 `str(exc_type)`。
+// 用一张专用标记表当前判据，类型名放在 className 字段——与类对象同构，
+// 但它在脚本里不可调用、不能继承。
+Value makeExceptionClass(const std::string& type);
+bool isExceptionClass(const Value& value);
+std::string exceptionClassName(const Value& value);
 
 // ── 函数值（一等函数 / lambda）──
 //

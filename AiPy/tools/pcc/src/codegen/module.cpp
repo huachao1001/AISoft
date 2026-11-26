@@ -255,6 +255,19 @@ bool CodeGen::compileClass(const Node& classNode) {
       if (!expr(*member.children[1])) return false;
       continue;
     }
+    if (member.kind == Kind::AnnAssign) {
+      // `x: int = 1` 等价于 `x = 1`；`x: int`（纯注解）在类体里只留下
+      // 一条 __annotations__ 记录，没有值，所以不产生成员——与 CPython
+      // 的 `hasattr(A, 'x') == False` 一致。
+      const Node& target = *member.children[0];
+      if (target.kind != Kind::Name) {
+        return failAt(diag::unsupportedStatement("class attribute target"), member);
+      }
+      if (member.children.size() < 3) continue;
+      memberNames.push_back(target.text);
+      if (!expr(*member.children[2])) return false;
+      continue;
+    }
     if (member.kind == Kind::Pass) continue;
     if (member.kind == Kind::Expr) continue;  // 文档字符串
     return failAt(diag::unsupportedStatement("class body"), member);

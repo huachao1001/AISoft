@@ -393,6 +393,121 @@ CASES = [
         'print(A is A)\n',
         'False\nTrue\n',
     ),
+    # ── with 上下文协议（脚本类）──
+    (
+        '脚本类的 with 进入与退出',
+        'class Guard:\n'
+        '    def __init__(self, name):\n'
+        '        self.name = name\n'
+        '    def __enter__(self):\n'
+        '        print("enter " + self.name)\n'
+        '        return self.name\n'
+        '    def __exit__(self, t, e, tb):\n'
+        '        print("exit " + self.name)\n'
+        'with Guard("a"):\n'
+        '    print("body")\n'
+        'print("done")\n',
+        'enter a\nbody\nexit a\ndone\n',
+    ),
+    (
+        '多条目 with 按嵌套语义退出',
+        'class Guard:\n'
+        '    def __init__(self, n):\n'
+        '        self.n = n\n'
+        '    def __enter__(self):\n'
+        '        print("enter " + self.n)\n'
+        '        return self.n\n'
+        '    def __exit__(self, t, e, tb):\n'
+        '        print("exit " + self.n)\n'
+        'with Guard("a"), Guard("b"):\n'
+        '    print("body")\n',
+        'enter a\nenter b\nbody\nexit b\nexit a\n',
+    ),
+    (
+        'with as 拿到 __enter__ 的返回值',
+        'class Guard:\n'
+        '    def __enter__(self):\n'
+        '        return 42\n'
+        '    def __exit__(self, t, e, tb):\n'
+        '        pass\n'
+        'with Guard() as v:\n'
+        '    print(v)\n',
+        '42\n',
+    ),
+    (
+        '__exit__ 返回真值吞掉异常',
+        'class Suppress:\n'
+        '    def __enter__(self):\n'
+        '        return self\n'
+        '    def __exit__(self, t, e, tb):\n'
+        '        print(t)\n'
+        '        return True\n'
+        'with Suppress():\n'
+        '    raise ValueError("boom")\n'
+        'print("after")\n',
+        "<class 'ValueError'>\nafter\n",
+    ),
+    (
+        '__exit__ 返回假值异常继续传播',
+        'class NoSuppress:\n'
+        '    def __enter__(self):\n'
+        '        return self\n'
+        '    def __exit__(self, t, e, tb):\n'
+        '        print("saw")\n'
+        '        return False\n'
+        'try:\n'
+        '    with NoSuppress():\n'
+        '        raise ValueError("boom")\n'
+        'except ValueError:\n'
+        '    print("caught")\n',
+        'saw\ncaught\n',
+    ),
+    (
+        'with 体内 return 也会退出',
+        'class Guard:\n'
+        '    def __enter__(self):\n'
+        '        print("enter")\n'
+        '    def __exit__(self, t, e, tb):\n'
+        '        print("exit")\n'
+        'def f():\n'
+        '    with Guard():\n'
+        '        return 1\n'
+        'print(f())\n',
+        'enter\nexit\n1\n',
+    ),
+    # ── 注解（只解析，不产生代码）──
+    (
+        '参数与返回注解被忽略',
+        'def f(a: int, b: str = "x") -> int:\n'
+        '    return a\n'
+        'print(f(3))\n'
+        'print(f(4, b="y"))\n',
+        '3\n4\n',
+    ),
+    (
+        '类属性注解',
+        'class A:\n'
+        '    x: int = 1\n'
+        '    y: str = "s"\n'
+        'print(A.x)\n'
+        'print(A().y)\n',
+        '1\ns\n',
+    ),
+    (
+        '变量注解',
+        'n: int = 5\n'
+        'print(n)\n'
+        'names: list = [1, 2]\n'
+        'print(names)\n',
+        '5\n[1, 2]\n',
+    ),
+    (
+        '嵌套泛型注解',
+        'def f(a: dict[str, int]) -> list[int]:\n'
+        '    return [1]\n'
+        'print(f({"a": 1}))\n',
+        '[1]\n',
+    ),
     # ── 期望被拒绝的 ──
     (
         '两个 Activity 被拒绝',

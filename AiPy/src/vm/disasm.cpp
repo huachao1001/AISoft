@@ -100,6 +100,15 @@ std::vector<std::string> disassemble(const Program& program) {
         std::snprintf(text, sizeof(text), "%s %u", opName(op), read16(code, pc));
         pc += 2;
         break;
+      case Op::kWithEnter:
+        std::snprintf(text, sizeof(text), "with_enter %u,exit=%u", read16(code, pc),
+                      read16(code, pc + 2));
+        pc += 4;
+        break;
+      case Op::kWithExit:
+        std::snprintf(text, sizeof(text), "with_exit %u", read16(code, pc));
+        pc += 2;
+        break;
       case Op::kCall:
       case Op::kCallBuiltin:
       case Op::kCallExt:

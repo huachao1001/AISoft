@@ -20,6 +20,8 @@ const List kEmptyList;
 // 所有用到判定的地方（isException、toString）之前可见。
 const MethodEntry kNoMethods[] = {{nullptr, nullptr}};
 const MethodTable kExceptionTable = {kNoMethods};
+// 异常类本身（`ValueError` 这个类），只出现在 `__exit__` 的第一个实参上。
+const MethodTable kExceptionClassTable = {kNoMethods};
 // 函数值的标记表。与异常同构：判据是「表指针是不是它」。
 const MethodTable kFunctionTable = {kNoMethods};
 // 类对象与实例的标记表。同样只是标记——实例的方法查找要沿基类上溯，
@@ -703,6 +705,11 @@ std::string Value::toString() const {
       if (heap_ != nullptr && heap_->object.table == &kClassTable) {
         return "<class '" + heap_->className + "'>";
       }
+      // 异常类同样显示成 `<class 'ValueError'>`：脚本里会写
+      // `print(exc_type)` 或把它拼进日志。
+      if (heap_ != nullptr && heap_->object.table == &kExceptionClassTable) {
+        return "<class '" + heap_->className + "'>";
+      }
       if (heap_ != nullptr && heap_->object.table == &kInstanceTable) {
         const Value cls = heap_->instanceOf;
         if (isClass(cls)) return "<" + cls.heap_->className + " object>";
@@ -728,6 +735,25 @@ Value makeException(const std::string& type, const std::string& message) {
 bool isException(const Value& value) {
   const ObjectData* data = value.asObject();
   return data != nullptr && data->table == &kExceptionTable;
+}
+
+Value makeExceptionClass(const std::string& type) {
+  Value out;
+  out.type_ = Value::Type::kObject;
+  out.heap_ = makeHeap();
+  out.heap_->object.table = &kExceptionClassTable;
+  out.heap_->className = type;
+  return out;
+}
+
+bool isExceptionClass(const Value& value) {
+  const ObjectData* data = value.asObject();
+  return data != nullptr && data->table == &kExceptionClassTable;
+}
+
+std::string exceptionClassName(const Value& value) {
+  if (!isExceptionClass(value)) return std::string();
+  return value.heap_->className;
 }
 
 // ── 函数值 ──
@@ -1046,7 +1072,7 @@ std::string typeName(const Value& value) {
     case Value::Type::kSet: return "set";
     case Value::Type::kDict: return "dict";
     case Value::Type::kHost: return "host";
-    case Value::Type::kObject: return "object";
+    case Value::Type::kObject: return isExceptionClass(value) ? exceptionClassName(value) : "object";
     case Value::Type::kDeleted: return "NoneType";
   }
   return "object";

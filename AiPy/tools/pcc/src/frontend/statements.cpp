@@ -670,6 +670,12 @@ NodePtr Parser::parseFunctionArgs() {
       return nullptr;
     }
     const std::string name = advance().text;
+    // 参数注解 `a: int`：忽略注解表达式。CPython 把它求值后塞进
+    // __annotations__，而本语言没有反射面，所以只解析不生成代码。
+    if (matchOp(":")) {
+      NodePtr annotation = expression();
+      if (!annotation) return nullptr;
+    }
     const bool keywordOnly = seenStar || seenKwonly;
     if (keywordOnly) {
       args->hasKwonly = true;

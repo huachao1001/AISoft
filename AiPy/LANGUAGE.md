@@ -65,8 +65,8 @@ python tests\probe_syntax.py build\final\pcc.exe build\final\aipy_run.exe
 | `x = 1` | 赋值 |
 | `a = b = 1` | 链式赋值 |
 | `x += 1` 等 | `+=` `-=` `*=` 等增量赋值 |
-| `x[0] = 1` | 下标赋值（单下标，不支持切片赋值） |
-| `x: int = 1` | 类型注解，注解本身被忽略 |
+| `x[0] = 1` | 下标赋值（含切片赋值 `x[1:3] = ...`） |
+| `x: int = 1` | 支持；注解本身被忽略（没有 `__annotations__`） |
 | `pass` | |
 | `global x` | 函数内改模块级变量必须声明 |
 | 函数内赋值 | 函数里第一次赋值就是**局部变量**（与 CPython 一致），不写 `global` 不会改到同名的模块级变量 |
@@ -75,11 +75,13 @@ python tests\probe_syntax.py build\final\pcc.exe build\final\aipy_run.exe
 
 `with` 的 `__exit__` **一定会被调用**：正常走完、`return`、循环里 `break` /
 `continue`，四条路径都覆盖。这是锁不泄漏的前提，由编译器在每条出口插指令
-保证。一次只支持一个 manager；`with a, b:` 要嵌套写。
+保证。多条目 `with a, b:` 按嵌套语义展开，退出时反序。
 
-**manager 必须来自 pylib**：语言里没有可实例化的类（只有 `class X(Activity)`），
-所以插件的 `__enter__`/`__exit__` 只能由 `kObject`（带方法表的宿主对象）提供。
-`with [1, 2]:` 会报「列表没有方法 `__enter__`」，这是预期行为。
+**manager 可以是脚本类**（实现 `__enter__` / `__exit__` 即可），也可以来自
+pylib（锁、文件句柄）。`__exit__` 收到 `(exc_type, exc, tb)`，返回真值会
+吞掉异常；`exc_type` 是可打印的类对象，`tb` 恒为 `None`（本语言没有
+traceback 对象）。`with [1, 2]:` 会报「list 不支持上下文管理器协议」，
+与 CPython 一致。
 
 ### 异常
 
@@ -121,6 +123,8 @@ python tests\probe_syntax.py build\final\pcc.exe build\final\aipy_run.exe
 | `def f(a, b):` | 位置参数 |
 | `return x` / `return` | |
 | `def f() -> int:` | 返回类型注解，被忽略 |
+| `def f(a: int)` | 参数注解，被忽略 |
+| `def f(a: dict[str, int])` | 嵌套泛型注解，同样被忽略 |
 | 递归 | 深度上限 256 层，超出报错不崩溃 |
 | 前向调用 | 后面的函数可以被前面调用 |
 | 文档字符串 | 作为普通字符串表达式，无副作用 |

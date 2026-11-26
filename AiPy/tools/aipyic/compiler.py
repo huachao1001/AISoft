@@ -743,6 +743,16 @@ class Compiler:
                 member_names.append(target.id)
                 self.expr(member.value)
                 continue
+            if isinstance(member, ast.AnnAssign):
+                # `x: int = 1` 等价于 `x = 1`；纯注解 `x: int` 在类体里
+                # 只留下 __annotations__ 记录，没有值，所以不产生成员。
+                if not isinstance(member.target, ast.Name):
+                    raise CompileError('不支持这种类属性目标', self.filename, member)
+                if member.value is None:
+                    continue
+                member_names.append(member.target.id)
+                self.expr(member.value)
+                continue
             if isinstance(member, ast.Pass):
                 continue
             if isinstance(member, ast.Expr):
@@ -1388,6 +1398,7 @@ class Compiler:
         卡死点离 with 语句很远。
         """
         entered = []
+        exit_fixups = []
         for item in node.items:
             if item.optional_vars is not None and not isinstance(item.optional_vars, ast.Name):
                 raise CompileError('with ... as 后面只能跟一个名字',
@@ -1398,6 +1409,9 @@ class Compiler:
             slot = self.block.alloc_slot()
             self.block.emit('WITH_ENTER', node)
             self.block.emit_u16(slot)
+            # 第二个操作数：__exit__ 返回真值（吞掉异常）时跳到这里。
+            exit_fixups.append(len(self.block.code))
+            self.block.emit_u16(0)
 
             # `as 名字`：WITH_ENTER 把 __enter__ 的返回值留在栈上，存进名字即可。
             if item.optional_vars is not None:
@@ -1415,6 +1429,11 @@ class Compiler:
             self.with_stack.pop()
             self.block.emit('WITH_EXIT', node)
             self.block.emit_u16(slot)
+
+        # 被吞掉的异常从这里继续。多条目时所有层指向同一终点。
+        after = len(self.block.code)
+        for fixup in exit_fixups:
+            self.block.patch_u16(fixup, after)
 
     def emit_with_exits(self, node):
         """给 return / break / continue 插上「离开所有 with」的指令。

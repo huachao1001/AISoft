@@ -73,8 +73,8 @@ OPERANDS = {
     'ITER_NEXT': ('u16',),
     'ITER_BREAK': (),
     'INPLACE': ('u8',),
-    # u16 是局部槽号：存 with 的管理器。
-    'WITH_ENTER': ('u16',),
+    # u16 局部槽号（存 with 的管理器）+ u16「异常被吞掉时的跳转目标」。
+    'WITH_ENTER': ('u16', 'u16'),
     'WITH_EXIT': ('u16',),
     'NONE': (),
     'TRUE': (),

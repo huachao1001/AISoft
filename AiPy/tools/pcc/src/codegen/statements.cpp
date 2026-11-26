@@ -183,6 +183,7 @@ bool CodeGen::withStatement(const Node& node) {
   // 依次进入，退出时反序。按嵌套生成，进入失败时已进入的那几层照常退出
   // ——WITH_ENTER 只在 __enter__ 成功后才压块（见 machine.cpp）。
   std::vector<int> entered;
+  std::vector<int> exitFixups;
   for (std::size_t index = 0; index < node.argsCount; ++index) {
     const Node& item = *node.children[index];
     const Node& context = *item.children[0];
@@ -198,6 +199,10 @@ bool CodeGen::withStatement(const Node& node) {
     const int slot = allocSlot();
     emit("WITH_ENTER", node);
     emitU16(slot);
+    // 第二个操作数：`__exit__` 返回真值（吞掉异常）时跳到这里。先占位，
+    // 等整个 with 语句发完再回填成「with 之后」的偏移。
+    const int exitFixup = static_cast<int>(block_->code.size());
+    emitU16(0);
 
     // `as 名字`：WITH_ENTER 把 __enter__ 的返回值留在栈上，存进名字即可。
     if (optional != nullptr) {
@@ -208,6 +213,7 @@ bool CodeGen::withStatement(const Node& node) {
 
     entered.push_back(slot);
     withStack_.push_back(slot);
+    exitFixups.push_back(exitFixup);
   }
 
   for (std::size_t i = 0; i < node.bodyCount; ++i) {
@@ -218,6 +224,13 @@ bool CodeGen::withStatement(const Node& node) {
     withStack_.pop_back();
     emit("WITH_EXIT", node);
     emitU16(entered[count - 1]);
+  }
+
+  // 被吞掉的异常从这里继续。嵌套（多条目）时所有层都指向同一个终点：
+  // 内层吞掉后外层也已经退出了，直接落到语句之后即可。
+  const int after = static_cast<int>(block_->code.size());
+  for (int fixup : exitFixups) {
+    patchU16(static_cast<std::size_t>(fixup), after);
   }
   return true;
 }

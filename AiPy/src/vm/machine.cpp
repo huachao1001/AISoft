@@ -25,6 +25,13 @@
 namespace aipy {
 namespace vm {
 
+// 协议方法调用（`__enter__` / `__exit__`）。定义在后面（它要用 execute）。
+// `found` 为 false 表示该对象不支持这个协议；`error` 非空表示调用失败。
+bool callDunder(const Program& program, std::vector<Value>& globals,
+                const Value& target, const std::string& name,
+                std::vector<Value> args, Value* out, bool* found,
+                std::string* error);
+
 namespace detail {
 
 namespace {
@@ -53,7 +60,9 @@ thread_local const Program* g_currentProgram = nullptr;
 __declspec(noinline) bool unwindException(std::vector<Frame>& frames,
                                           std::vector<Value>& stack,
                                           std::size_t* sp, Result* result,
-                                          const Value& exception) {
+                                          const Value& exception,
+                                          const Program& program,
+                                          std::vector<Value>& globals) {
   for (;;) {
     if (frames.empty()) {
       result->failed = true;
@@ -95,14 +104,31 @@ __declspec(noinline) bool unwindException(std::vector<Frame>& frames,
     }
 
     if (block.kind == Block::kWith) {
-      // __exit__ 自己出错时不该覆盖原始异常：CPython 把它挂成 during handling，
-      // 这里只保留第一个——原始原因更有用。
+      // `__exit__` 收三个参数（类型、实例、traceback）；本语言没有
+      // traceback 对象，用 None 占位——脚本里判 `tb is None` 的写法仍然成立。
+      //
+      // 返回值是真值就**吞掉**异常：CPython 的 `contextlib.suppress` 正是
+      // 靠这一条实现的。之前没有这个判断，`__exit__` 返回 True 也照样往外抛。
+      //
+      // `__exit__` 自己出错时不该覆盖原始异常：CPython 把它挂成 during
+      // handling，这里只保留第一个——原始原因更有用。
       if (block.withSlot < frame.locals.size()) {
         const Value manager = frame.locals[block.withSlot];
         if (!manager.isNone()) {
+          Value ignored;
+          bool found = false;
           std::string error;
-          callMethod(manager, "__exit__", nullptr, 0, &error);
+          const bool called = ::aipy::vm::callDunder(
+              program, globals, manager, "__exit__",
+              {makeExceptionClass(exceptionType(exception)), exception, Value()},
+              &ignored, &found, &error);
           clearPendingException();
+          if (called && found && ignored.toBool()) {
+            // 被吞掉：控制从这个 with 之后继续，值栈回到进入时的深度。
+            frame.pc = block.target;
+            if (*sp > block.stackLevel) *sp = block.stackLevel;
+            return true;
+          }
         }
       }
       continue;
@@ -284,6 +310,16 @@ static bool advanceGenerator(const Program& program, std::vector<Value>& globals
                              const Value& generator, Value* out,
                              std::string* errorType, std::string* error,
                              bool* failed, Value* finalValue = nullptr);
+
+// 协议方法调用（`__enter__` / `__exit__`）。脚本实例要真的跑脚本函数，
+// 所以建帧 + execute；pylib 对象走方法表转发。with 的三条路径（进入、
+// 正常退出、异常退出）共用它，否则必然分叉成「这条路径能进、那条不能」。
+//
+// `found` 为 false 表示该对象不支持这个协议；`error` 非空表示调用失败。
+bool callDunder(const Program& program, std::vector<Value>& globals,
+                const Value& target, const std::string& name,
+                std::vector<Value> args, Value* out, bool* found,
+                std::string* error);
 
 // 进程级的全局槽。定义在这里、声明在 vm.h：所有 Machine 实例共用同一份，
 // 线程里 `global X` 才写得到主线程看得见的那个槽。
@@ -490,7 +526,8 @@ static Result execute(const Program& program, std::vector<Value>& globals,
   // 异常展开与判定的薄封装：真正的逻辑在不内联的 unwindException 里，
   // 原因见它的注释（子线程栈只有 1 MB）。
   const auto unwind = [&](const Value& exception) -> bool {
-    return detail::unwindException(frames, stack, &sp, &result, exception);
+    return detail::unwindException(frames, stack, &sp, &result, exception,
+                                   program, globals);
   };
 
   while (!frames.empty()) {
@@ -1619,17 +1656,25 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         // 块在 `__enter__` 之后才压：进入失败时不该由这个 with 去调
         // `__exit__`（CPython 也一样，进入失败就不退出）。
         const std::uint16_t slot = read16(code, frame.pc);
-        frame.pc += 2;
+        const std::uint16_t exitTarget = read16(code, frame.pc + 2);
+        frame.pc += 4;
         if (slot >= frame.locals.size()) return fail("with 临时槽越界（编译器 bug）");
         const Value manager = stack[--sp];
         frame.locals[slot] = manager;
+        Value entered;
+        bool found = false;
         std::string error;
-        const Value entered = callMethod(manager, "__enter__", nullptr, 0, &error);
-        if (!error.empty()) {
+        if (!callDunder(program, globals, manager, "__enter__", {}, &entered,
+                        &found, &error) ||
+            !found) {
           // CPython 对不支持上下文协议的对象抛 TypeError，不是 AttributeError。
           raiseException("TypeError", "'" + typeName(manager) +
                                          "' object does not support the context "
                                          "manager protocol");
+          break;
+        }
+        if (!error.empty()) {
+          raiseException("RuntimeError", error);
           break;
         }
         stack[sp++] = entered;
@@ -1637,6 +1682,7 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         Block block;
         block.kind = Block::kWith;
         block.withSlot = slot;
+        block.target = exitTarget;
         block.stackLevel = sp;
         ExceptionState& state = exceptionStateOf(frame);
         block.exceptionDepth = state.exceptions.size();
@@ -1661,12 +1707,19 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         const Value manager = frame.locals[slot];
         // 清空槽：让管理器能被回收，也让同一槽被下一个 with 复用时安全。
         frame.locals[slot] = Value();
+        Value ignored;
+        bool found = false;
         std::string error;
-        callMethod(manager, "__exit__", nullptr, 0, &error);
-        if (!error.empty()) {
+        if (!callDunder(program, globals, manager, "__exit__",
+                        {Value(), Value(), Value()}, &ignored, &found, &error) ||
+            !found) {
           raiseException("TypeError", "'" + typeName(manager) +
                                          "' object does not support the context "
                                          "manager protocol");
+          break;
+        }
+        if (!error.empty()) {
+          raiseException("RuntimeError", error);
           break;
         }
         break;
@@ -1864,6 +1917,94 @@ static bool advanceGenerator(const Program& program, std::vector<Value>& globals
   if (finalValue != nullptr) *finalValue = result.value;
   setGeneratorState(generator, 0, List{}, List{}, true, true);
   return false;
+}
+
+// 协议方法调用（`__enter__` / `__exit__`）。
+//
+// 两条来源要分开处理：
+//   * 脚本实例：沿 MRO 找函数值，建帧跑一遍 execute——脚本方法必须真的执行；
+//   * pylib 对象（文件、锁）：走方法表转发，VM 不认识它是什么。
+//
+// 之前 with 只走 callMethod，于是脚本类写的 `__enter__` 完全不会被调用，
+// 症状是 `with Guard():` 报「object 不支持上下文管理器协议」，而同一个类
+// 在 CPython 里明明可以。
+bool callDunder(const Program& program, std::vector<Value>& globals,
+                const Value& target, const std::string& name,
+                std::vector<Value> args, Value* out, bool* found,
+                std::string* error) {
+  *found = false;
+  if (out != nullptr) *out = Value();
+  error->clear();
+
+  if (isInstance(target)) {
+    Value member;
+    if (!classLookup(instanceClass(target), name, &member)) {
+      // 实例字段里也可能放着一个可调用值。
+      std::string fieldError;
+      member = instanceAttrOf(target, name, &fieldError);
+      if (!fieldError.empty()) return true;
+    }
+    const Value bound = descriptorValue(member, target, true);
+    if (!isBoundMethod(bound) && !isFunction(bound)) return true;
+
+    std::vector<Value> positional;
+    positional.reserve(args.size() + 1);
+    if (isBoundMethod(bound)) positional.push_back(boundMethodSelf(bound));
+    for (Value& arg : args) positional.push_back(std::move(arg));
+
+    const int index = functionIndexOf(bound);
+    if (index < 0 || index >= static_cast<int>(program.functions.size())) {
+      *error = "'" + typeName(bound) + "' object is not callable";
+      return false;
+    }
+    const Function& fn = program.functions[static_cast<std::size_t>(index)];
+    std::vector<Value> locals(static_cast<std::size_t>(fn.localCount), Value());
+    const Value defaults =
+        fn.defaultSlot >= 0 && fn.defaultSlot < static_cast<int>(globals.size())
+            ? globals[static_cast<std::size_t>(fn.defaultSlot)]
+            : Value();
+    std::string bindError;
+    if (!bindArguments(fn, defaults, positional, List{}, List{}, &locals,
+                       &bindError)) {
+      *error = fn.name + "() " + bindError;
+      return false;
+    }
+    const List& captures = functionCaptures(bound);
+    if (!captures.empty() && fn.captureStart >= 0) {
+      for (std::size_t i = 0; i < captures.size(); ++i) {
+        const std::size_t slot = static_cast<std::size_t>(fn.captureStart) + i;
+        if (slot < locals.size()) locals[slot] = captures[i];
+      }
+    }
+    if (fn.isGenerator || fn.isCoroutine) {
+      // 协议方法写成生成器没有意义，CPython 也只是把它当普通函数调。
+      *error = fn.name + "() is a generator; context manager protocol "
+                         "methods must return normally";
+      return false;
+    }
+
+    std::vector<Frame> frames;
+    frames.reserve(4);
+    pushFrame(fn, std::move(locals), frames, 0);
+    const Result result = execute(program, globals, frames);
+    if (result.failed) {
+      const std::string type = resultExceptionType(result);
+      *error = (type.empty() ? std::string("RuntimeError") : type) + ": " +
+               result.error;
+      return false;
+    }
+    *found = true;
+    if (out != nullptr) *out = result.value;
+    return true;
+  }
+
+  std::string methodError;
+  const Value value = callMethod(target, name, args.empty() ? nullptr : args.data(),
+                                 static_cast<int>(args.size()), &methodError);
+  if (!methodError.empty()) return true;  // 没有这个方法 → found = false
+  *found = true;
+  if (out != nullptr) *out = value;
+  return true;
 }
 
 }  // namespace vm
