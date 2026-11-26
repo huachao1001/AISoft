@@ -322,6 +322,13 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         const std::uint16_t slot = read16(code, frame.pc);
         frame.pc += 2;
         if (slot >= frame.locals.size()) return fail("局部槽越界（编译器 bug）");
+        if (frame.locals[slot].isDeleted()) {
+          raiseException("NameError",
+                         "local variable '" +
+                             frame.locals[slot].deletedName() +
+                             "' referenced before assignment");
+          break;
+        }
         stack[sp++] = frame.locals[slot];
         break;
       }
@@ -336,7 +343,12 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         const std::uint16_t slot = read16(code, frame.pc);
         frame.pc += 2;
         if (slot >= globals.size()) return fail("全局槽越界（编译器 bug）");
-        stack[sp++] = globals[slot];
+        if (globals[slot].isDeleted()) {
+          raiseException("NameError",
+                         "name '" + globals[slot].deletedName() +
+                             "' is not defined");
+          break;
+        }        stack[sp++] = globals[slot];
         break;
       }
       case Op::kStoreGlobal: {
@@ -344,6 +356,44 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         frame.pc += 2;
         if (slot >= globals.size()) return fail("全局槽越界（编译器 bug）");
         globals[slot] = stack[--sp];
+        break;
+      }
+
+      case Op::kDelLocal: {
+        // u16 槽号 + u16 名字常量号：名字只用于 NameError 消息。
+        const std::uint16_t slot = read16(code, frame.pc);
+        const std::uint16_t nameIndex = read16(code, frame.pc + 2);
+        frame.pc += 4;
+        if (slot >= frame.locals.size()) return fail("局部槽越界（编译器 bug）");
+        if (nameIndex >= program.consts.size()) {
+          return fail("删除的名字越界（编译器 bug）");
+        }
+        if (frame.locals[slot].isDeleted()) {
+          raiseException("NameError", "name '" +
+                                          program.consts[nameIndex].toString() +
+                                          "' is not defined");
+          break;
+        }
+        frame.locals[slot] =
+            Value::deleted(program.consts[nameIndex].toString());
+        break;
+      }
+
+      case Op::kDelGlobal: {
+        const std::uint16_t slot = read16(code, frame.pc);
+        const std::uint16_t nameIndex = read16(code, frame.pc + 2);
+        frame.pc += 4;
+        if (slot >= globals.size()) return fail("全局槽越界（编译器 bug）");
+        if (nameIndex >= program.consts.size()) {
+          return fail("删除的名字越界（编译器 bug）");
+        }
+        if (globals[slot].isDeleted()) {
+          raiseException("NameError", "name '" +
+                                          program.consts[nameIndex].toString() +
+                                          "' is not defined");
+          break;
+        }
+        globals[slot] = Value::deleted(program.consts[nameIndex].toString());
         break;
       }
 

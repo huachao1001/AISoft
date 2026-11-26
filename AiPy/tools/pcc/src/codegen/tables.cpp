@@ -22,6 +22,7 @@ const char* const kOpNames[] = {
     "WITH_ENTER", "WITH_EXIT",
     "SETUP_EXC", "POP_EXC", "RAISE", "RAISE_TYPE", "RERAISE",
     "EXC_MATCH", "CURRENT_EXC", "CLEAR_EXC",
+    "DEL_LOCAL", "DEL_GLOBAL",
 };
 
 constexpr int kOpCount = static_cast<int>(sizeof(kOpNames) / sizeof(kOpNames[0]));
@@ -30,7 +31,7 @@ constexpr int kOpCount = static_cast<int>(sizeof(kOpNames) / sizeof(kOpNames[0])
 const char* const kBuiltins[] = {
     "len", "str", "int", "float", "bool", "abs", "round", "min", "max",
     "sum", "list", "dict", "range", "print",
-    "format_text", "parse_number", "char_from_code", "text_of_char",
+    "format_text", "char_from_code", "text_of_char",
 };
 
 constexpr int kBuiltinCount =
@@ -41,7 +42,8 @@ const char* const kBinOps[] = {
     "ADD", "SUB", "MUL", "DIV", "FLOOR_DIV", "MOD", "POW",
     "BIT_AND", "BIT_OR", "BIT_XOR", "SHL", "SHR",
 };
-const char* const kCmpOps[] = {"EQ", "NE", "LT", "LE", "GT", "GE", "IN", "NOT_IN"};
+const char* const kCmpOps[] = {"EQ", "NE", "LT", "LE", "GT", "GE", "IN", "NOT_IN",
+                                "IS", "IS_NOT"};
 const char* const kUnOps[] = {"NEG", "NOT", "INVERT"};
 
 int findIn(const char* const* table, int count, const char* name) {
@@ -77,7 +79,7 @@ int Tables::binopNumber(Kind op) {
 int Tables::cmpopNumber(Kind op) {
   const char* spelling = cmpopSpelling(op);
   if (spelling == nullptr) return -1;
-  return findIn(kCmpOps, 8, spelling);
+  return findIn(kCmpOps, 10, spelling);
 }
 
 int Tables::unopNumber(Kind op) {
@@ -115,8 +117,8 @@ const char* Tables::cmpopSpelling(Kind op) {
     case Kind::GtE: return "GE";
     case Kind::In: return "IN";
     case Kind::NotIn: return "NOT_IN";
-    case Kind::Is: return "Is";
-    case Kind::IsNot: return "IsNot";
+    case Kind::Is: return "IS";
+    case Kind::IsNot: return "IS_NOT";
     default: return nullptr;  }
 }
 

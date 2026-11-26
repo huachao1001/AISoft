@@ -72,6 +72,8 @@ class Parser {
   NodePtr importStatement();
   NodePtr fromImportStatement();
   NodePtr returnStatement();
+  NodePtr assertStatement();
+  NodePtr deleteStatement();
   NodePtr globalStatement(bool nonlocal);
   NodePtr rejectRemainder(Kind kind);  // 识别并跳过（del/assert/raise...）
 

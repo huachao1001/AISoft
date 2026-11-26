@@ -42,6 +42,8 @@ Value applyCmp(CmpOp op, const Value& a, const Value& b) {
     // 的签名是 contains(容器, 元素)，所以这里要换位。
     case CmpOp::kIn: return contains(b, a);
     case CmpOp::kNotIn: return lnot(contains(b, a));
+    case CmpOp::kIs: return isSame(a, b);
+    case CmpOp::kIsNot: return lnot(isSame(a, b));
   }
   return Value();
 }

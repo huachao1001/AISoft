@@ -59,13 +59,14 @@ OPCODES = [
     'WITH_ENTER', 'WITH_EXIT',
     'SETUP_EXC', 'POP_EXC', 'RAISE', 'RAISE_TYPE', 'RERAISE',
     'EXC_MATCH', 'CURRENT_EXC', 'CLEAR_EXC',
+    'DEL_LOCAL', 'DEL_GLOBAL',
 ]
 
 # 二元算子编号，与 vm.h 的 BinOp 一致。
 BINOPS = ['ADD', 'SUB', 'MUL', 'DIV', 'FLOOR_DIV', 'MOD', 'POW',
           'BIT_AND', 'BIT_OR', 'BIT_XOR', 'SHL', 'SHR']
 
-CMPOPS = ['EQ', 'NE', 'LT', 'LE', 'GT', 'GE', 'IN', 'NOT_IN']
+CMPOPS = ['EQ', 'NE', 'LT', 'LE', 'GT', 'GE', 'IN', 'NOT_IN', 'IS', 'IS_NOT']
 
 UNOPS = ['NEG', 'NOT', 'INVERT']
 
@@ -73,7 +74,7 @@ UNOPS = ['NEG', 'NOT', 'INVERT']
 BUILTINS = [
     'len', 'str', 'int', 'float', 'bool', 'abs', 'round', 'min', 'max',
     'sum', 'list', 'dict', 'range', 'print',
-    'format_text', 'parse_number', 'char_from_code', 'text_of_char',
+    'format_text', 'char_from_code', 'text_of_char',
 ]
 
 OP = {name: index for index, name in enumerate(OPCODES)}
@@ -92,25 +93,10 @@ EXCEPTION_CLASSES = [
     'ArithmeticError', 'ZeroDivisionError', 'OverflowError',
     'LookupError', 'IndexError', 'KeyError',
     'ValueError', 'TypeError', 'NameError', 'AttributeError',
-    'RuntimeError', 'RecursionError', 'NotImplementedError',
+    'RuntimeError', 'RecursionError', 'NotImplementedError', 'MemoryError',
     'OSError', 'FileNotFoundError', 'PermissionError', 'FileExistsError',
-    'IsADirectoryError', 'UnicodeError', 'StopIteration', 'AssertionError',
-]
-EXCEPTION_SET = set(EXCEPTION_CLASSES)
-
-# 内建异常类的名字，与 AiPy/include/aipy/exceptions.h 一致。
-#
-# 为什么这里是手抄而不是读那个头：Python 版是 oracle，只在测试期跑；
-# 读 C++ 头要写一个解析器，而 parse 别人源码的代码本身就会成为新的
-# 不一致来源。两边各写一份、由 aipy_compiler_parity 的探针对齐更直接。
-EXCEPTION_CLASSES = [
-    'BaseException', 'Exception', 'SystemExit', 'KeyboardInterrupt',
-    'ArithmeticError', 'ZeroDivisionError', 'OverflowError',
-    'LookupError', 'IndexError', 'KeyError',
-    'ValueError', 'TypeError', 'NameError', 'AttributeError',
-    'RuntimeError', 'RecursionError', 'NotImplementedError',
-    'OSError', 'FileNotFoundError', 'PermissionError', 'FileExistsError',
-    'IsADirectoryError', 'UnicodeError', 'StopIteration', 'AssertionError',
+    'IsADirectoryError', 'UnicodeError', 'EOFError', 'StopIteration',
+    'AssertionError',
 ]
 EXCEPTION_SET = set(EXCEPTION_CLASSES)
 
@@ -729,7 +715,8 @@ class Compiler:
             raise CompileError('不支持 nonlocal；嵌套函数本身也不支持', self.filename, node)
 
         if isinstance(node, ast.Assert):
-            raise CompileError('不支持 assert；请写 if + 显式处理', self.filename, node)
+            self.assert_statement(node)
+            return
 
         if isinstance(node, ast.Raise):
             self.raise_statement(node)
@@ -748,13 +735,63 @@ class Compiler:
                                self.filename, node)
 
         if isinstance(node, ast.Delete):
-            raise CompileError('不支持 del；容器用 .pop()/.clear()', self.filename, node)
+            self.delete_statement(node)
+            return
 
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             self.import_statement(node)
             return
 
         raise CompileError('不支持语句 %s' % type(node).__name__, self.filename, node)
+
+    def delete_statement(self, node):
+        """`del x` / `del x, y`。发射顺序与 C++ 版 deleteStatement 一致：
+
+            DEL_LOCAL/DEL_GLOBAL <槽号>, <名字常量号>
+        """
+        for target in node.targets:
+            if not isinstance(target, ast.Name):
+                raise CompileError('del 只支持删除变量名', self.filename, target)
+            name = target.id
+            if self.is_local(name):
+                self.block.emit('DEL_LOCAL', target)
+                self.block.emit_u16(self.slot_of(name))
+            else:
+                self.block.emit('DEL_GLOBAL', target)
+                self.block.emit_u16(self.global_slot(name))
+            self.block.emit_u16(self.const_string(name))
+
+    def assert_statement(self, node):
+        """`assert cond` / `assert cond, msg`。
+
+        发射顺序与 C++ 版 assertStatement 一致：
+
+            <cond>
+            JUMP_IF_FALSE L_THROW
+            JUMP L_END
+          L_THROW:
+            <msg>              （有消息才发射）
+            RAISE_TYPE "AssertionError", 有消息?
+          L_END:
+        """
+        self.expr(node.test)
+        self.block.emit('JUMP_IF_FALSE', node)
+        throw_fixup = len(self.block.code)
+        self.block.emit_u16(0)
+
+        self.block.emit('JUMP', node)
+        end_fixup = len(self.block.code)
+        self.block.emit_u16(0)
+
+        self.block.patch_u16(throw_fixup, len(self.block.code))
+        has_message = node.msg is not None
+        if has_message:
+            self.expr(node.msg)
+        self.block.emit('RAISE_TYPE', node)
+        self.block.emit_u16(self.const_string('AssertionError'))
+        self.block.emit_u8(1 if has_message else 0)
+
+        self.block.patch_u16(end_fixup, len(self.block.code))
 
     def raise_statement(self, node):
         """`raise` / `raise X` / `raise X(msg)`。
@@ -1397,6 +1434,7 @@ class Compiler:
         table = {
             ast.Eq: 'EQ', ast.NotEq: 'NE', ast.Lt: 'LT', ast.LtE: 'LE',
             ast.Gt: 'GT', ast.GtE: 'GE', ast.In: 'IN', ast.NotIn: 'NOT_IN',
+            ast.Is: 'IS', ast.IsNot: 'IS_NOT',
         }
         name = table.get(type(op))
         if name is None:

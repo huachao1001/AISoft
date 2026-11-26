@@ -154,7 +154,8 @@ bool shapesOf(const std::string& name, std::vector<char>* shapes,
               std::string* error) {
   static const char* const kTwoU16[] = {"CALL", "CALL_BUILTIN", "CALL_METHOD",
                                         "CALL_EXT", "RAISE_TYPE", nullptr};
-  static const char* const kU16Pair[] = {"EXC_MATCH", nullptr};
+  static const char* const kU16Pair[] = {"EXC_MATCH", "DEL_LOCAL", "DEL_GLOBAL",
+                                         nullptr};
   static const char* const kU16[] = {
       "CONST", "LOAD_LOCAL", "STORE_LOCAL", "LOAD_GLOBAL", "STORE_GLOBAL",
       "JUMP", "JUMP_IF_FALSE", "JUMP_IF_FALSE_KEEP", "JUMP_IF_TRUE_KEEP",

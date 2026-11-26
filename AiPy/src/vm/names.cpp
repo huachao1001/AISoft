@@ -53,6 +53,8 @@ const char* opName(Op op) {
     case Op::kExcMatch: return "exc_match";
     case Op::kCurrentExc: return "current_exc";
     case Op::kClearExc: return "clear_exc";
+    case Op::kDelLocal: return "del_local";
+    case Op::kDelGlobal: return "del_global";
   }
   return "?";
 }

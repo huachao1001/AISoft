@@ -128,18 +128,24 @@ void* openForUpdate(const std::string& path, bool append) {
 #endif
 
 bool readAll(const std::string& path, std::string* content, std::string* error,
-             bool text) {
+             bool text, int* errorCode) {
+  if (errorCode != nullptr) *errorCode = 0;
   bool isDirectory = false;
   if (aipy::io::pathExists(path, &isDirectory) && isDirectory) {
     if (error != nullptr) *error = aipy::io::describeError(path, "那是一个目录");
+    // CPython 打开目录是 PermissionError（EACCES），不是 IsADirectoryError。
+    if (errorCode != nullptr) *errorCode = EACCES;
     return false;
   }
 
+  errno = 0;
   void* handle = openForRead(path);
   if (handle == nullptr) {
+    const int code = errno == 0 ? EIO : errno;
     if (error != nullptr) {
-      *error = aipy::io::describeError(path, aipy::io::reasonOf(errno));
+      *error = aipy::io::describeError(path, aipy::io::reasonOf(code));
     }
+    if (errorCode != nullptr) *errorCode = code;
     return false;
   }
 
@@ -157,6 +163,7 @@ bool readAll(const std::string& path, std::string* content, std::string* error,
     if (error != nullptr) {
       *error = aipy::io::describeError(path, "读取中断");
     }
+    if (errorCode != nullptr) *errorCode = EIO;
     return false;
   }
   if (text) data = aipy::io::normalizeNewlines(data);
@@ -165,12 +172,16 @@ bool readAll(const std::string& path, std::string* content, std::string* error,
 }
 
 bool writeAll(const std::string& path, const std::string& content, bool append,
-              std::string* error, bool text) {
+              std::string* error, bool text, int* errorCode) {
+  if (errorCode != nullptr) *errorCode = 0;
+  errno = 0;
   void* handle = openForWrite(path, append);
   if (handle == nullptr) {
+    const int code = errno == 0 ? EIO : errno;
     if (error != nullptr) {
-      *error = aipy::io::describeError(path, aipy::io::reasonOf(errno));
+      *error = aipy::io::describeError(path, aipy::io::reasonOf(code));
     }
+    if (errorCode != nullptr) *errorCode = code;
     return false;
   }
   std::FILE* file = static_cast<std::FILE*>(handle);
@@ -184,6 +195,7 @@ bool writeAll(const std::string& path, const std::string& content, bool append,
   const bool closeFailed = std::fclose(file) != 0;
   if (written != payload.size() || closeFailed) {
     if (error != nullptr) *error = aipy::io::describeError(path, "写入失败");
+    if (errorCode != nullptr) *errorCode = errno == 0 ? EIO : errno;
     return false;
   }
   return true;

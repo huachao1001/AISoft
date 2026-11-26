@@ -188,7 +188,8 @@ def main(argv):
     # 用 AiPy 独有内建的那份：只校验关键结果。
     builtins_script = os.path.join(examples, '03_builtins.py')
     required = [
-        'parse_number(\'not a number\') = None',
+        "int 解析失败: invalid literal for int() with base 10: 'not a number'",
+        '除零: division by zero',
         '坐标 (10, 20)',
         '1 + 2 = 3',
         '自检通过: 5 / 5',

@@ -46,6 +46,8 @@ const char* cmpName(CmpOp op) {
     case CmpOp::kGe: return ">=";
     case CmpOp::kIn: return "in";
     case CmpOp::kNotIn: return "not in";
+    case CmpOp::kIs: return "is";
+    case CmpOp::kIsNot: return "is not";
   }
   return "?";
 }
@@ -122,7 +124,9 @@ std::vector<std::string> disassemble(const Program& program) {
         pc += 3;
         break;
       case Op::kExcMatch:
-        std::snprintf(text, sizeof(text), "exc_match %u,%u", read16(code, pc),
+      case Op::kDelLocal:
+      case Op::kDelGlobal:
+        std::snprintf(text, sizeof(text), "%s %u,%u", opName(op), read16(code, pc),
                       read16(code, pc + 2));
         pc += 4;
         break;

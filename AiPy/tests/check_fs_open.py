@@ -151,11 +151,13 @@ with OPEN(path2, "w") as f:
     print("w_writable " + str(f.writable()))
 
 # ── 11. x 模式：已存在必须失败 ──
-# 这里不能对拍：CPython 抛 FileExistsError，而 AiPy 没有异常通道，只能返回
-# None。两边都用 EXCLUSIVE_EXISTING 占位，CPython 侧包 try/except，
-# AiPy 侧就是一句比较。
+# 两边都抛 FileExistsError，所以这里直接对拍，不需要占位符。
 header("exclusive")
-print("x_exists " + str(EXCLUSIVE_EXISTING(path2)))
+try:
+    OPEN(path2, "x")
+    print("x_exists False")
+except FileExistsError:
+    print("x_exists True")
 path11 = DIR + "/new.txt"
 with OPEN(path11, "x") as f:
     f.write("fresh")
@@ -208,27 +210,9 @@ def main(argv):
 
     cpython_source = (PROBE.replace('OPEN(', 'open(')
                            .replace('CLOSED(f)', 'f.closed')
-                           .replace('EXCLUSIVE_EXISTING(path2)',
-                                    'open_existing(path2)')
                            .replace('import fs\n', ''))
     aipy_source = (PROBE.replace('OPEN(', 'fs.open(')
-                        .replace('CLOSED(f)', 'f.closed()')
-                        .replace('EXCLUSIVE_EXISTING(path2)',
-                                 'fs.open(path2, "x") == None'))
-
-    # CPython 侧要给 x 模式包一层：它会抛 FileExistsError，而探针的其余部分
-    # 不该因为这条中断。
-    cpython_source = cpython_source.replace(
-        'def header(text):',
-        'def open_existing(path):\n'
-        '    try:\n'
-        '        open(path, "x").close()\n'
-        '        return False\n'
-        '    except FileExistsError:\n'
-        '        return True\n'
-        '\n'
-        '\n'
-        'def header(text):')
+                        .replace('CLOSED(f)', 'f.closed()'))
 
     def write(name, text):
         path = os.path.join(scratch, name)

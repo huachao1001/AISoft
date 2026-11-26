@@ -37,11 +37,13 @@ void* openForUpdate(const std::string& path, bool append);
 // text 为真时做 universal newlines：`\r\n` 与单独的 `\r` 都归一成 `\n`。
 // 这是 CPython 文本模式的读语义——不归一的话，Windows 上 `readline()` 会
 // 带着 `\r\n` 回来，脚本再 `strip("\n")` 就留下一个 `\r`。
+// 读全部内容。失败返回 false，error 里给可读原因；`errorCode` 非空时
+// 再写入系统错误码，供调用方换算成异常类型（`FileNotFoundError` 等）。
 bool readAll(const std::string& path, std::string* content, std::string* error,
-             bool text = true);
+             bool text = true, int* errorCode = nullptr);
 // 写全部内容（覆盖或追加）。text 为真时把 `\n` 换成本平台换行。
 bool writeAll(const std::string& path, const std::string& content, bool append,
-              std::string* error, bool text = true);
+              std::string* error, bool text = true, int* errorCode = nullptr);
 
 }  // namespace fs
 }  // namespace aipy

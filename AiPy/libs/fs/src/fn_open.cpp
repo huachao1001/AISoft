@@ -40,7 +40,9 @@
 #include "aipy/io/paths.h"
 #include "aipy/pylib.h"
 #include "aipy/utf8.h"
+#include "aipy/value.h"
 
+#include <cerrno>
 #include <cstdio>
 #include <new>
 #include <string>
@@ -69,14 +71,15 @@ FileState* stateOf(const aipy::Value& self) {
   return static_cast<FileState*>(data->host);
 }
 
-// 落盘。成功返回 true；失败时已写过诊断。
+// 落盘。成功返回 true；失败时抛异常。
 bool flushState(FileState* state) {
   if (state == nullptr || !state->dirty) return true;
   std::string error;
+  int code = 0;
   // 文本模式交给 writeAll 做换行转换：这里的内容统一是 `\n`。
   if (!aipy::fs::writeAll(state->path, state->content, false, &error,
-                          !state->binary)) {
-    aipy::diagnose(error);
+                          !state->binary, &code)) {
+    aipy::raiseException(aipy::io::exceptionTypeOf(code), error);
     return false;
   }
   state->dirty = false;
@@ -85,11 +88,13 @@ bool flushState(FileState* state) {
 
 bool requireOpen(const FileState* state, const char* method) {
   if (state == nullptr) {
-    aipy::diagnose(std::string("文件对象已失效（") + method + "）");
+    aipy::raiseException("ValueError",
+                         std::string("文件对象已失效（") + method + "）");
     return false;
   }
   if (state->closed) {
-    aipy::diagnose(std::string("对已关闭的文件调用 ") + method + "()");
+    aipy::raiseException("ValueError",
+                         std::string("对已关闭的文件调用 ") + method + "()");
     return false;
   }
   return true;
@@ -98,7 +103,9 @@ bool requireOpen(const FileState* state, const char* method) {
 bool requireReadable(const FileState* state, const char* method) {
   if (!requireOpen(state, method)) return false;
   if (!state->readable) {
-    aipy::diagnose(std::string("文件不是以读模式打开的，不能 ") + method + "()");
+    aipy::raiseException(
+        "ValueError",
+        std::string("文件不是以读模式打开的，不能 ") + method + "()");
     return false;
   }
   return true;
@@ -107,7 +114,9 @@ bool requireReadable(const FileState* state, const char* method) {
 bool requireWritable(const FileState* state, const char* method) {
   if (!requireOpen(state, method)) return false;
   if (!state->writable) {
-    aipy::diagnose(std::string("文件不是以写模式打开的，不能 ") + method + "()");
+    aipy::raiseException(
+        "ValueError",
+        std::string("文件不是以写模式打开的，不能 ") + method + "()");
     return false;
   }
   return true;
@@ -187,7 +196,7 @@ aipy::Value writeMethod(const aipy::Value& self, const aipy::Value* args, int co
   FileState* state = stateOf(self);
   if (!requireWritable(state, "write")) return aipy::Value();
   if (count < 1) {
-    aipy::diagnose("write 需要 1 个参数");
+    aipy::raiseException("TypeError", "write 需要 1 个参数");
     return aipy::Value();
   }
   const std::string text = args[0].toString();
@@ -220,7 +229,7 @@ aipy::Value writelinesMethod(const aipy::Value& self, const aipy::Value* args,
   FileState* state = stateOf(self);
   if (!requireWritable(state, "writelines")) return aipy::Value();
   if (count < 1) {
-    aipy::diagnose("writelines 需要 1 个参数（列表）");
+    aipy::raiseException("TypeError", "writelines 需要 1 个参数（列表）");
     return aipy::Value();
   }
   // 与 CPython 一样**不加**换行：调用方给的行要自带 `\n`。
@@ -242,7 +251,7 @@ aipy::Value seekMethod(const aipy::Value& self, const aipy::Value* args, int cou
   FileState* state = stateOf(self);
   if (!requireOpen(state, "seek")) return aipy::Value();
   if (count < 1) {
-    aipy::diagnose("seek 需要 offset 参数");
+    aipy::raiseException("TypeError", "seek 需要 offset 参数");
     return aipy::Value();
   }
   const long long offset = args[0].toInt();
@@ -256,13 +265,13 @@ aipy::Value seekMethod(const aipy::Value& self, const aipy::Value* args, int cou
   } else if (whence == 2) {
     base = static_cast<long long>(state->content.size());
   } else {
-    aipy::diagnose("seek 的 whence 只认 0 / 1 / 2");
+    aipy::raiseException("ValueError", "seek 的 whence 只认 0 / 1 / 2");
     return aipy::Value();
   }
 
   const long long target = base + offset;
   if (target < 0) {
-    aipy::diagnose("seek 到了文件开头之前");
+    aipy::raiseException("ValueError", "seek 到了文件开头之前");
     return aipy::Value();
   }
   // 允许越过末尾（与 CPython 一致）：之后的 read 返回空串，write 补零。
@@ -442,23 +451,26 @@ aipy::Value openImpl(const aipy::Value* args, int count) {
       count >= 2 ? args[1].toString() : std::string("r");
   const std::string encoding = count >= 3 ? args[2].toString() : std::string();
   if (path.empty()) {
-    aipy::diagnose("open 需要文件路径");
+    aipy::raiseException("TypeError", "open() 需要文件路径");
     return aipy::Value();
   }
 
   Mode mode;
   std::string error;
   if (!parseMode(modeText, &mode, &error)) {
-    aipy::diagnose(aipy::io::describeError(path, error));
+    aipy::raiseException("ValueError", error);
     return aipy::Value();
   }
   if (!acceptEncoding(encoding, &error)) {
-    aipy::diagnose(aipy::io::describeError(path, error));
+    aipy::raiseException("ValueError", error);
     return aipy::Value();
   }
 
   FileState* state = new (std::nothrow) FileState();
-  if (state == nullptr) return aipy::Value();
+  if (state == nullptr) {
+    aipy::raiseException("MemoryError", "open() 无法分配文件状态");
+    return aipy::Value();
+  }
   state->path = path;
   state->binary = mode.binary;
   state->readable = (mode.primary == 'r') || mode.plus;
@@ -466,38 +478,45 @@ aipy::Value openImpl(const aipy::Value* args, int count) {
   state->append = mode.primary == 'a';
 
   const bool text = !mode.binary;
-  // 打开阶段的失败要在这里就报出来，与 CPython 一样：open 拿不到文件时
+  // 打开阶段的失败要在这里就抛出来，与 CPython 一样：open 拿不到文件时
   // 后面每个 read 都会失败，早报比晚报有用。
+  //
+  // 异常类型按系统错误码分类（FileNotFoundError / PermissionError …），
+  // 这样脚本里 `except FileNotFoundError:` 真的能接住。
   bool loaded = true;
+  int code = 0;
   switch (mode.primary) {
     case 'r':
-      loaded = aipy::fs::readAll(path, &state->content, &error, text);
+      loaded = aipy::fs::readAll(path, &state->content, &error, text, &code);
       break;
     case 'a': {
       bool isDirectory = false;
       if (aipy::io::pathExists(path, &isDirectory) && isDirectory) {
-        error = aipy::io::describeError(path, "那是一个目录");
+        code = EACCES;
+        error = aipy::io::describeError(path, aipy::io::reasonOf(code));
         loaded = false;
         break;
       }
       // 不存在就创建空文件（CPython 的 "a" 会创建）。
       if (!aipy::io::pathExists(path, nullptr)) {
-        loaded = aipy::fs::writeAll(path, std::string(), true, &error, text);
+        loaded = aipy::fs::writeAll(path, std::string(), true, &error, text,
+                                    &code);
       } else {
-        loaded = aipy::fs::readAll(path, &state->content, &error, text);
+        loaded = aipy::fs::readAll(path, &state->content, &error, text, &code);
       }
       state->position = state->content.size();
       break;
     }
     case 'w':
       // 立即截断：CPython 的 "w" 在 open 时就清空，不等第一次 write。
-      loaded = aipy::fs::writeAll(path, std::string(), false, &error, text);
+      loaded = aipy::fs::writeAll(path, std::string(), false, &error, text,
+                                  &code);
       break;
     case 'x': {
       void* handle = aipy::fs::openExclusive(path, mode.plus);
       if (handle == nullptr) {
-        error = aipy::io::describeError(
-            path, "文件已存在，x 模式不覆盖（要覆盖请用 w）");
+        code = EEXIST;
+        error = aipy::io::describeError(path, aipy::io::reasonOf(code));
         loaded = false;
         break;
       }
@@ -511,7 +530,7 @@ aipy::Value openImpl(const aipy::Value* args, int count) {
   }
 
   if (!loaded) {
-    aipy::diagnose(error);
+    aipy::raiseException(aipy::io::exceptionTypeOf(code), error);
     delete state;
     return aipy::Value();
   }

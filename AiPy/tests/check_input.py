@@ -38,9 +38,12 @@ age = input()
 print("age [" + age + "]")
 '''
 
-# EOF 用例：CPython 抛 EOFError，AiPy 没有异常通道，约定返回 None。
-EOF_SCRIPT = '''x = input()
-print("x = " + str(x))
+# EOF 用例：CPython 抛 EOFError，AiPy 同样抛，文案也一致。
+EOF_SCRIPT = '''try:
+    x = input()
+    print("x = " + str(x))
+except EOFError as e:
+    print("EOFError: " + str(e))
 '''
 
 FAILURES = []
@@ -168,10 +171,11 @@ def main(argv):
                  % (built.stderr.strip() or built.stdout.strip()))
         else:
             done = run([eof_exe], stdin_data=b'', cwd=scratch)
-            if b'x = None' not in done.stdout:
-                fail('stdin 到底时应当返回 None，实际 %r' % done.stdout)
+            expected = b'EOFError: EOF when reading a line'
+            if expected not in done.stdout:
+                fail('stdin 到底时应当抛 EOFError，实际 %r' % done.stdout)
             else:
-                ok('EOF 返回 None（CPython 抛 EOFError，这里没有异常通道）')
+                ok('EOF 抛 EOFError，文案与 CPython 一致')
 
         # ── 与 CPython 逐字节对拍 ──
         #

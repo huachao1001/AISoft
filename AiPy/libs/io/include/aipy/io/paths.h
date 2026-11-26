@@ -47,6 +47,14 @@ std::string describeError(const std::string& path, const std::string& reason);
 // 系统错误码 → 可读原因。errno 那天没被设置时返回泛化描述。
 std::string reasonOf(int code);
 
+// 系统错误码 → CPython 的异常类名（"FileNotFoundError" / "PermissionError"
+// / "FileExistsError" / "IsADirectoryError" / "OSError"）。
+//
+// 与 reasonOf 分开：文案给人看，类型给 `except` 用。脚本里
+// `except FileNotFoundError:` 必须真的能接住，否则库层报的错和语言层
+// 抛的错就成了两套体系。
+const char* exceptionTypeOf(int code);
+
 // CPython 文本模式写入的换行：Windows 上是 `\r\n`，其余平台是 `\n`。
 const char* platformNewline();
 

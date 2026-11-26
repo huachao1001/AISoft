@@ -52,14 +52,24 @@ Value builtinInt(const Value* args, int count, std::string* error) {
     *error = "int 需要 1 个参数";
     return Value();
   }
-  // `int("12")` 在 Python 里合法。字符串走 parseNumber，其它走 toInt。
   if (args[0].type() == Value::Type::kString) {
-    const Value parsed = parseNumber(args[0]);
+    // 整串必须是整数：CPython 的 int("12.5") 是 ValueError，不是 12。
+    const Value parsed = parseInteger(args[0]);
     if (parsed.isNone()) {
-      *error = "int() 无法解析字符串 " + args[0].toString();
+      raiseException("ValueError",
+                     "invalid literal for int() with base 10: '" +
+                         args[0].toString() + "'");
       return Value();
     }
-    return Value(parsed.toInt());
+    return parsed;
+  }
+  if (args[0].type() == Value::Type::kNone ||
+      args[0].type() == Value::Type::kList ||
+      args[0].type() == Value::Type::kDict) {
+    raiseException("TypeError",
+                   "int() argument must be a string, a bytes-like object or "
+                   "a real number, not '" + typeName(args[0]) + "'");
+    return Value();
   }
   return Value(args[0].toInt());
 }
@@ -70,12 +80,22 @@ Value builtinFloat(const Value* args, int count, std::string* error) {
     return Value();
   }
   if (args[0].type() == Value::Type::kString) {
-    const Value parsed = parseNumber(args[0]);
+    const Value parsed = parseFloat(args[0]);
     if (parsed.isNone()) {
-      *error = "float() 无法解析字符串 " + args[0].toString();
+      raiseException("ValueError",
+                     "could not convert string to float: '" +
+                         args[0].toString() + "'");
       return Value();
     }
-    return Value(parsed.toFloat());
+    return parsed;
+  }
+  if (args[0].type() == Value::Type::kNone ||
+      args[0].type() == Value::Type::kList ||
+      args[0].type() == Value::Type::kDict) {
+    raiseException("TypeError",
+                   "float() argument must be a string or a real number, not '" +
+                       typeName(args[0]) + "'");
+    return Value();
   }
   return Value(args[0].toFloat());
 }
@@ -249,14 +269,6 @@ Value builtinFormatText(const Value* args, int count, std::string* error) {
   return formatText(args[0], args[1]);
 }
 
-Value builtinParseNumber(const Value* args, int count, std::string* error) {
-  if (count != 1) {
-    *error = "parse_number 需要 1 个参数";
-    return Value();
-  }
-  return parseNumber(args[0]);
-}
-
 Value builtinCharFromCode(const Value* args, int count, std::string* error) {
   if (count != 1) {
     *error = "char_from_code 需要 1 个参数";
@@ -302,7 +314,6 @@ const Entry kBuiltinTable[] = {
     {"range", builtinRange},
     {"print", builtinPrint},
     {"format_text", builtinFormatText},
-    {"parse_number", builtinParseNumber},
     {"char_from_code", builtinCharFromCode},
     {"text_of_char", builtinTextOfChar},
 };

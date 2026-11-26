@@ -116,6 +116,40 @@ NodePtr Parser::rejectRemainder(Kind kind) {
   return node;
 }
 
+NodePtr Parser::deleteStatement() {
+  auto node = make_node(Kind::Delete, peek().line, peek().col);
+  advance();  // del
+  // 只支持 `del 名字` 与 `del 名字, 名字`。下标/属性删除需要 VM 的
+  // DICT_DELETE 之类语义，留给后面按需加。
+  for (;;) {
+    if (!check(TokenType::Name)) {
+      fail(diag::nameExpected("a variable name"));
+      return nullptr;
+    }
+    NodePtr target = make_node(Kind::Name, peek().line, peek().col);
+    target->text = peek().text;
+    advance();
+    node->children.push_back(std::move(target));
+    if (!matchOp(",")) break;
+  }
+  return node;
+}
+
+NodePtr Parser::assertStatement() {
+  auto node = make_node(Kind::Assert, peek().line, peek().col);
+  advance();  // assert
+  NodePtr condition = expression();
+  if (condition == nullptr) return nullptr;
+  node->children.push_back(std::move(condition));
+  // `assert cond, "message"`：消息是可选的，逗号后接任意表达式。
+  if (matchOp(",")) {
+    NodePtr message = expression();
+    if (message == nullptr) return nullptr;
+    node->children.push_back(std::move(message));
+  }
+  return node;
+}
+
 NodePtr Parser::returnStatement() {
   auto node = make_node(Kind::Return, peek().line, peek().col);
   advance();
@@ -236,8 +270,8 @@ NodePtr Parser::smallStatement() {
   if (checkName("return")) return returnStatement();
   if (checkName("global")) return globalStatement(false);
   if (checkName("nonlocal")) return globalStatement(true);
-  if (checkName("del")) return rejectRemainder(Kind::Delete);
-  if (checkName("assert")) return rejectRemainder(Kind::Assert);
+  if (checkName("del")) return deleteStatement();
+  if (checkName("assert")) return assertStatement();
   if (checkName("raise")) return raiseStatement();
   if (checkName("import")) return importStatement();
   if (checkName("from")) return fromImportStatement();

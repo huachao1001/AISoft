@@ -93,6 +93,10 @@ class Value {
     // 才成立。表由 pylib 注册（见 MethodTable），VM 只负责按名字转发，
     // 所以这里不含任何具体能力——符合「核心 VM 只认 Python 语法」。
     kObject,
+    // 「这个槽没有值」——`del x` 之后的状态。CPython 里再读会 NameError，
+    // 而 None 是合法的值，两者必须能区分。载荷是变量名（堆字符串），
+    // 报错时要把它写进消息。
+    kDeleted,
   };
 
   // `= default` 会把 union 成员留成未初始化值。type_ 有默认值所以类型判断
@@ -144,6 +148,11 @@ class Value {
   // ── 构造与查询 ──
   static Value list(List items);
   static Value dict(const List& keys, const List& values);
+  // 「已删除」哨兵：`del x` 之后槽里放它，再读会抛 NameError。名字用于报错。
+  static Value deleted(std::string name);
+  bool isDeleted() const { return type_ == Type::kDeleted; }
+  // 被删除的变量名；不是 kDeleted 时返回空串。
+  std::string deletedName() const;
   // 带方法的宿主对象（`threading.Lock()`）。table 决定能调哪些方法，
   // destroy 在引用计数归零时调用（锁靠它释放系统资源）。
   static Value object(void* host, const MethodTable* table,
@@ -288,6 +297,9 @@ bool exceptionMatches(const std::string& thrownType,
 
 // `except X:` 里的 X 是不是一个已知的异常类名。编译期用它拒绝拼错的名字。
 bool isExceptionTypeName(const std::string& name);
+
+// CPython 在 TypeError 消息里用的类型名（"int" / "str" / "NoneType" …）。
+std::string typeName(const Value& value);
 
 // ── 待处理异常 ──
 //
@@ -440,7 +452,10 @@ Value textOfChar(const Value& codepoint);
 Value minimum(const Value& a, const Value& b);
 Value maximum(const Value& a, const Value& b);
 // 字符串 → 数字，只认整串都是数字（"12abc" 返回 None 而不是 12）
-Value parseNumber(const Value& text);
+// 文本 → 整数；整串必须是整数，失败返回 None（调用方抛 ValueError）。
+Value parseInteger(const Value& text);
+// 文本 → 浮点；整串必须是数字，失败返回 None。
+Value parseFloat(const Value& text);
 // 码点 → UTF-8 字符
 Value charFromCode(const Value& codepoint);
 // 调试输出。默认写 stderr；宿主可以装自己的 sink（GUI 程序里 stderr

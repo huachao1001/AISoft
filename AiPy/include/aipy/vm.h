@@ -104,6 +104,10 @@ enum class Op : std::uint8_t {
   kExcMatch,
   kCurrentExc,  // 把当前处理的异常压栈（`except ... as e` 用）
   kClearExc,    // 离开 except 体：弹掉一层「当前异常」
+  // `del x`：把槽置成「已删除」哨兵。再读这个槽会抛 NameError，
+  // 与 CPython 一致——赋 None 是不够的，None 是合法值。
+  kDelLocal,   // u16 槽号
+  kDelGlobal,  // u16 槽号
 };
 
 enum class BinOp : std::uint8_t {
@@ -112,7 +116,7 @@ enum class BinOp : std::uint8_t {
 };
 
 enum class CmpOp : std::uint8_t {
-  kEq, kNe, kLt, kLe, kGt, kGe, kIn, kNotIn,
+  kEq, kNe, kLt, kLe, kGt, kGe, kIn, kNotIn, kIs, kIsNot,
 };
 
 enum class UnOp : std::uint8_t { kNeg, kNot, kInvert };

@@ -47,6 +47,24 @@ std::string reasonOf(int code) {
   }
 }
 
+// 系统错误码 → 异常类名。脚本里 `except FileNotFoundError:` 要能接住，
+// 所以库层的失败必须抛语言认得的类型。
+const char* exceptionTypeOf(int code) {
+  switch (code) {
+    case ENOENT:
+      return "FileNotFoundError";
+    case EACCES:
+    case EPERM:
+      return "PermissionError";
+    case EEXIST:
+      return "FileExistsError";
+    case EISDIR:
+      return "IsADirectoryError";
+    default:
+      return "OSError";
+  }
+}
+
 #if defined(_WIN32)
 
 NativePath toNativePath(const std::string& utf8) {

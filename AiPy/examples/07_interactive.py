@@ -4,10 +4,10 @@
 # 脚本里不用 import 就能用。双击打包好的 exe，你会看到提示语停在窗口里，
 # 光标在等键盘输入；敲完回车程序才继续。
 #
-# ── 与 CPython 的唯一差异 ──
+# ── 与 CPython 的差异（只剩这一处） ──
 #
-# stdin 到底时（管道里没数据了）CPython 抛 EOFError，这里返回 None。
-# 这个语言没有异常通道，失败一律靠返回值。
+# stdin 到底时（管道里没数据了）CPython 抛 EOFError，这里同样抛。
+# `aipy_input` 拿 CPython 逐字节对拍守着这条。
 #
 # ── 为什么值得一个示例 ──
 #
@@ -36,10 +36,14 @@ name = input("你的名字: ")
 income = input("月收入（元）: ")
 months = input("发几个月: ")
 
-# 输入永远是字符串，要算数得自己转。parse_number 失败返回 None，
-# 所以这里能用它做校验——这是没有 try/except 时的替代写法。
-salary = parse_number(income)
-bonus_months = parse_number(months)
+# 输入永远是字符串，要算数得自己转。int()/float() 失败抛 ValueError，
+# 这里用 try/except 兜住——与 CPython 写法完全一致。
+try:
+    salary = float(income)
+    bonus_months = int(months)
+except ValueError:
+    salary = None
+    bonus_months = None
 
 if salary == None or bonus_months == None:
     print("")

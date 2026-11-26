@@ -67,8 +67,11 @@ int main() {
 
   // 内建
   expect(aipy::maximum(Value(3LL), Value(7LL)).toInt() == 7, "max");
-  expect(aipy::parseNumber(Value(std::string("12.5"))).toFloat() == 12.5, "parse_number");
-  expect(aipy::parseNumber(Value(std::string("12abc"))).isNone(), "parse_number 拒绝脏串");
+  expect(aipy::parseInteger(Value(std::string("12"))).toInt() == 12, "int('12')");
+  expect(aipy::parseInteger(Value(std::string("12.5"))).isNone(), "int('12.5') 失败");
+  expect(aipy::parseInteger(Value(std::string("12abc"))).isNone(), "int('12abc') 失败");
+  expect(aipy::parseFloat(Value(std::string("12.5"))).toFloat() == 12.5, "float('12.5')");
+  expect(aipy::parseFloat(Value(std::string("12abc"))).isNone(), "float('12abc') 失败");
   expect(aipy::charFromCode(Value(0x4E2DLL)).toString() == "中", "char_from_code");
 
   std::printf("aipy standalone: %s\n", failures == 0 ? "OK" : "FAILED");

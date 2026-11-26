@@ -230,7 +230,8 @@ void release(HeapData* heap) {
 // 析构三个函数里，很容易漏。
 inline bool isHeapType(Value::Type type) {
   return type == Value::Type::kString || type == Value::Type::kList ||
-         type == Value::Type::kDict || type == Value::Type::kObject;
+         type == Value::Type::kDict || type == Value::Type::kObject ||
+         type == Value::Type::kDeleted;
 }
 
 }  // namespace
@@ -253,6 +254,7 @@ Value::Value(const Value& other) : type_(other.type_) {
     case Type::kList:
     case Type::kDict:
     case Type::kObject:
+    case Type::kDeleted:
       heap_ = other.heap_;
       retain(heap_);
       break;
@@ -278,6 +280,7 @@ Value::Value(Value&& other) noexcept : type_(other.type_) {
     case Type::kList:
     case Type::kDict:
     case Type::kObject:
+    case Type::kDeleted:
       heap_ = other.heap_;
       break;
     case Type::kNone:
@@ -315,6 +318,7 @@ Value& Value::operator=(const Value& other) {
     case Type::kList:
     case Type::kDict:
     case Type::kObject:
+    case Type::kDeleted:
       heap_ = other.heap_;
       break;
     case Type::kNone:
@@ -343,6 +347,7 @@ Value& Value::operator=(Value&& other) noexcept {
     case Type::kList:
     case Type::kDict:
     case Type::kObject:
+    case Type::kDeleted:
       heap_ = other.heap_;
       break;
     case Type::kNone:
@@ -385,6 +390,19 @@ Value Value::list(List items) {
   out.heap_ = makeHeap();
   out.heap_->items = std::move(items);
   return out;
+}
+
+Value Value::deleted(std::string name) {
+  Value out;
+  out.type_ = Type::kDeleted;
+  out.heap_ = makeHeap();
+  out.heap_->text = std::move(name);
+  return out;
+}
+
+std::string Value::deletedName() const {
+  if (type_ != Type::kDeleted || heap_ == nullptr) return std::string();
+  return heap_->text;
 }
 
 Value Value::dict(const List& keys, const List& values) {
@@ -548,8 +566,8 @@ std::string Value::toString() const {
       // 其它对象保持不透明：与 Python 的 <threading.Lock object at 0x...>
       // 同一个意图，不去猜 pylib 私有状态的细节。
       if (heap_ != nullptr && heap_->object.table == &kExceptionTable) {
-        return heap_->exceptionMessage.empty() ? heap_->exceptionType
-                                               : heap_->exceptionMessage;
+        // CPython 的 str(exc) 就是 args 的内容：没有消息时是空串，不是类型名。
+        return heap_->exceptionMessage;
       }
       return "<object>";
   }
@@ -601,6 +619,22 @@ bool isExceptionTypeName(const std::string& name) {
   return isExceptionClassName(name);
 }
 
+// CPython 在 TypeError 消息里用的类型名。
+std::string typeName(const Value& value) {
+  switch (value.type()) {
+    case Value::Type::kNone: return "NoneType";
+    case Value::Type::kBool: return "bool";
+    case Value::Type::kInt: return "int";
+    case Value::Type::kFloat: return "float";
+    case Value::Type::kString: return "str";
+    case Value::Type::kList: return "list";
+    case Value::Type::kDict: return "dict";
+    case Value::Type::kHost: return "host";
+    case Value::Type::kObject: return "object";
+  }
+  return "object";
+}
+
 // ── 待处理异常 ──
 //
 // 见 value.h 的解释：值层统一「返回值」，失败靠这条旁路通知执行循环。
@@ -646,10 +680,8 @@ Value add(const Value& a, const Value& b) {
     if (bothIntOrBool(a, b)) return Value(static_cast<long long>(numberOf(a) + numberOf(b)));
     return Value(numberOf(a) + numberOf(b));
   }
-  // 字符串拼接：任一边是字符串就整体按文本拼，这是 Python 里
-  // "总计: " + str(n) 之外的常见写法（这里更宽松，省掉一次显式 str）。
-  if (a.type() == Value::Type::kString || b.type() == Value::Type::kString) {
-    return Value(a.toString() + b.toString());
+  if (a.type() == Value::Type::kString && b.type() == Value::Type::kString) {
+    return Value(a.asString() + b.asString());
   }
   if (a.isList() && b.isList()) {
     List out = a.asList();
@@ -657,10 +689,29 @@ Value add(const Value& a, const Value& b) {
     out.insert(out.end(), right.begin(), right.end());
     return Value::list(std::move(out));
   }
-  return Value(asNumber(a) + asNumber(b));
+  // 类型不匹配一律抛 TypeError，文案照抄 CPython：静默把数字转成字符串
+  // 会让 `1 + "x"` 在迁移回 CPython 时突然崩，而兼容性是本项目的全部意义。
+  if (a.type() == Value::Type::kString) {
+    raiseException("TypeError", "can only concatenate str (not \"" +
+                                    typeName(b) + "\") to str");
+    return Value();
+  }
+  if (a.isList()) {
+    raiseException("TypeError", "can only concatenate list (not \"" +
+                                    typeName(b) + "\") to list");
+    return Value();
+  }
+  raiseException("TypeError", "unsupported operand type(s) for +: '" +
+                                  typeName(a) + "' and '" + typeName(b) + "'");
+  return Value();
 }
 
 Value sub(const Value& a, const Value& b) {
+  if (!asNumberLike(a) || !asNumberLike(b)) {
+    raiseException("TypeError", "unsupported operand type(s) for -: '" +
+                                    typeName(a) + "' and '" + typeName(b) + "'");
+    return Value();
+  }
   if (bothIntOrBool(a, b)) {
     return Value(static_cast<long long>(numberOf(a) - numberOf(b)));
   }
@@ -687,21 +738,41 @@ Value mul(const Value& a, const Value& b) {
     for (long long i = 0; i < b.toInt(); ++i) out.insert(out.end(), source.begin(), source.end());
     return Value::list(std::move(out));
   }
-  return Value(asNumber(a) * asNumber(b));
+  if (a.isNumber() && b.isList()) return mul(b, a);
+  raiseException("TypeError", "unsupported operand type(s) for *: '" +
+                                  typeName(a) + "' and '" + typeName(b) + "'");
+  return Value();
 }
 
 Value div(const Value& a, const Value& b) {
+  if (!asNumberLike(a) || !asNumberLike(b)) {
+    raiseException("TypeError", "unsupported operand type(s) for /: '" +
+                                    typeName(a) + "' and '" + typeName(b) + "'");
+    return Value();
+  }
   const double divisor = asNumber(b);
-  // 除零返回 None 而不是 inf：Python 抛异常，这里没有异常通道，
-  // 返回 None 让脚本里的 `if x is None` 能兜住，界面也不会显示 "inf"。
-  if (divisor == 0.0) return Value();
+  if (divisor == 0.0) {
+    // 整数除法与浮点除法的文案不同，与 CPython 一致。
+    raiseException("ZeroDivisionError",
+                   bothIntOrBool(a, b) ? "division by zero"
+                                       : "float division by zero");
+    return Value();
+  }
   return Value(asNumber(a) / divisor);
 }
 
 Value mod(const Value& a, const Value& b) {
+  if (!asNumberLike(a) || !asNumberLike(b)) {
+    raiseException("TypeError", "unsupported operand type(s) for %: '" +
+                                    typeName(a) + "' and '" + typeName(b) + "'");
+    return Value();
+  }
   if (bothInt(a, b)) {
     const long long divisor = intOf(b);
-    if (divisor == 0) return Value();
+    if (divisor == 0) {
+      raiseException("ZeroDivisionError", "integer modulo by zero");
+      return Value();
+    }
     // Python 的 % 结果符号跟除数走（-7 % 3 == 2），不是 C 的 -1。
     // 时钟、取模取余这类场景几乎都依赖这一点。
     long long result = intOf(a) % divisor;
@@ -709,18 +780,33 @@ Value mod(const Value& a, const Value& b) {
     return Value(result);
   }
   const double divisor = asNumber(b);
-  if (divisor == 0.0) return Value();
+  if (divisor == 0.0) {
+    raiseException("ZeroDivisionError", "float modulo");
+    return Value();
+  }
   double result = std::fmod(asNumber(a), divisor);
   if (result != 0.0 && ((result < 0.0) != (divisor < 0.0))) result += divisor;
   return Value(result);
 }
 
 Value neg(const Value& a) {
+  if (!asNumberLike(a)) {
+    raiseException("TypeError", "bad operand type for unary -: '" +
+                                    typeName(a) + "'");
+    return Value();
+  }
   if (a.type() == Value::Type::kInt) return Value(-intOf(a));
   return Value(-asNumber(a));
 }
 
-Value invert(const Value& a) { return Value(~a.toInt()); }
+Value invert(const Value& a) {
+  if (a.type() != Value::Type::kInt && a.type() != Value::Type::kBool) {
+    raiseException("TypeError", "bad operand type for unary ~: '" +
+                                    typeName(a) + "'");
+    return Value();
+  }
+  return Value(~a.toInt());
+}
 
 // ── 比较 ──
 
@@ -797,11 +883,52 @@ Value contains(const Value& container, const Value& item) {
   return Value(false);
 }
 
-Value bitAnd(const Value& a, const Value& b) { return Value(a.toInt() & b.toInt()); }
-Value bitOr(const Value& a, const Value& b) { return Value(a.toInt() | b.toInt()); }
-Value bitXor(const Value& a, const Value& b) { return Value(a.toInt() ^ b.toInt()); }
-Value shiftLeft(const Value& a, const Value& b) { return Value(a.toInt() << b.toInt()); }
-Value shiftRight(const Value& a, const Value& b) { return Value(a.toInt() >> b.toInt()); }
+// 位运算只接受整数（Python 里 bool 是 int 子类型，所以也算）。
+// 不做 toInt() 的静默截断：`3.7 & 1` 在 CPython 是 TypeError，
+// 静默取整会让脚本迁移回去时行为突变。
+namespace {
+
+bool isIntegerLike(const Value& v) {
+  return v.type() == Value::Type::kInt || v.type() == Value::Type::kBool;
+}
+
+Value bitError(const char* op, const Value& a, const Value& b) {
+  raiseException("TypeError", std::string("unsupported operand type(s) for ") +
+                                  op + ": '" + typeName(a) + "' and '" +
+                                  typeName(b) + "'");
+  return Value();
+}
+
+}  // namespace
+
+Value bitAnd(const Value& a, const Value& b) {
+  if (!isIntegerLike(a) || !isIntegerLike(b)) return bitError("&", a, b);
+  return Value(a.toInt() & b.toInt());
+}
+Value bitOr(const Value& a, const Value& b) {
+  if (!isIntegerLike(a) || !isIntegerLike(b)) return bitError("|", a, b);
+  return Value(a.toInt() | b.toInt());
+}
+Value bitXor(const Value& a, const Value& b) {
+  if (!isIntegerLike(a) || !isIntegerLike(b)) return bitError("^", a, b);
+  return Value(a.toInt() ^ b.toInt());
+}
+Value shiftLeft(const Value& a, const Value& b) {
+  if (!isIntegerLike(a) || !isIntegerLike(b)) return bitError("<<", a, b);
+  if (b.toInt() < 0) {
+    raiseException("ValueError", "negative shift count");
+    return Value();
+  }
+  return Value(a.toInt() << b.toInt());
+}
+Value shiftRight(const Value& a, const Value& b) {
+  if (!isIntegerLike(a) || !isIntegerLike(b)) return bitError(">>", a, b);
+  if (b.toInt() < 0) {
+    raiseException("ValueError", "negative shift count");
+    return Value();
+  }
+  return Value(a.toInt() >> b.toInt());
+}
 
 // ── 内建 ──
 
@@ -898,7 +1025,10 @@ Value at(const Value& container, const Value& index) {
   if (container.type() == Value::Type::kString) {
     const std::string& text = container.asString();
     size_t offset = 0;
-    if (!normalizeIndex(position, utf8Length(text), offset)) return Value();
+    if (!normalizeIndex(position, utf8Length(text), offset)) {
+      raiseException("IndexError", "string index out of range");
+      return Value();
+    }
     // 按字符取：切出的是完整码点，不会把一个汉字劈成两半
     const size_t begin = utf8OffsetOfChar(text, offset);
     const size_t finish = utf8NextBoundary(text, begin);
@@ -906,7 +1036,10 @@ Value at(const Value& container, const Value& index) {
   }
   const List& list = container.asList();
   size_t offset = 0;
-  if (!normalizeIndex(position, list.size(), offset)) return Value();
+  if (!normalizeIndex(position, list.size(), offset)) {
+    raiseException("IndexError", "list index out of range");
+    return Value();
+  }
   return list[offset];
 }
 
@@ -1016,6 +1149,11 @@ Value sliceStep(const Value& container, const Value& start, const Value& end,
 }
 
 Value power(const Value& a, const Value& b) {
+  if (!asNumberLike(a) || !asNumberLike(b)) {
+    raiseException("TypeError", "unsupported operand type(s) for ** or pow(): '" +
+                                    typeName(a) + "' and '" + typeName(b) + "'");
+    return Value();
+  }
   // 整数底数 + 非负整数指数 → 整数结果。
   //
   // 不能一律返回 float：CPython 里 2 ** 10 是 int 1024，而 str() 会立刻
@@ -1034,8 +1172,18 @@ Value power(const Value& a, const Value& b) {
 }
 
 Value floorDiv(const Value& a, const Value& b) {
+  if (!asNumberLike(a) || !asNumberLike(b)) {
+    raiseException("TypeError", "unsupported operand type(s) for //: '" +
+                                    typeName(a) + "' and '" + typeName(b) + "'");
+    return Value();
+  }
   const double divisor = b.toFloat();
-  if (divisor == 0.0) return Value();
+  if (divisor == 0.0) {
+    raiseException("ZeroDivisionError",
+                   bothInt(a, b) ? "integer division or modulo by zero"
+                                 : "float floor division by zero");
+    return Value();
+  }
   // 向负无穷取整：C 的整数除法是向零截断，-7/2 会得到 -3，
   // 而 Python 是 -4。分页、网格坐标这类计算几乎都依赖后者。
   const double result = std::floor(a.toFloat() / divisor);
@@ -1144,7 +1292,13 @@ void reverseList(const Value& list) {
 
 Value dictGet(const Value& dict, const Value& key) {
   const long long index = dict.dictIndex(key);
-  if (index < 0) return Value();
+  if (index < 0) {
+    // CPython 的 KeyError 消息是 repr(key)——字符串会带引号，而 str() 不带。
+    std::string message;
+    appendRepr(message, key);
+    raiseException("KeyError", message);
+    return Value();
+  }
   return dict.dictValues()[static_cast<size_t>(index)];
 }
 
@@ -1416,18 +1570,95 @@ Value formatText(const Value& text, const Value& args) {
 Value minimum(const Value& a, const Value& b) { return lt(a, b).toBool() ? a : b; }
 Value maximum(const Value& a, const Value& b) { return gt(a, b).toBool() ? a : b; }
 
-Value parseNumber(const Value& text) {
-  const std::string& source = text.toString();
-  if (source.empty()) return Value();
+// 严格解析整串：必须从头到尾都是这个数字（允许首尾空白与下划线分隔符）。
+// 失败返回 false，调用方据此抛 ValueError——这与 CPython 的
+// `int("12abc")` 报错一致，而 strtoll 会静默停在 "a" 处返回 12。
+namespace {
 
-  // 只认「整串都是数字」：输入框里 "12abc" 应该报错而不是变成 12。
-  // strtod 会停在 a 处并返回 12，所以必须再检查剩余部分。
-  const char* begin = source.c_str();
-  char* end = nullptr;
-  const double value = std::strtod(begin, &end);
-  if (end == begin) return Value();
-  while (*end == ' ' || *end == '\t') ++end;
-  if (*end != '\0') return Value();
+bool parseIntegerText(const std::string& source, long long* out) {
+  // 去掉首尾空白（CPython 允许 "  12  "）。
+  std::size_t begin = 0;
+  std::size_t end = source.size();
+  while (begin < end && (source[begin] == ' ' || source[begin] == '\t' ||
+                         source[begin] == '\n' || source[begin] == '\r' ||
+                         source[begin] == '\f' || source[begin] == '\v')) {
+    ++begin;
+  }
+  while (end > begin && (source[end - 1] == ' ' || source[end - 1] == '\t' ||
+                         source[end - 1] == '\n' || source[end - 1] == '\r' ||
+                         source[end - 1] == '\f' || source[end - 1] == '\v')) {
+    --end;
+  }
+  if (begin >= end) return false;
+
+  std::string digits;
+  digits.reserve(end - begin);
+  for (std::size_t i = begin; i < end; ++i) {
+    const char ch = source[i];
+    // 下划线只能夹在两个数字之间（CPython 的规则），先简化成「不能在首尾」。
+    if (ch == '_') {
+      if (i == begin || i + 1 >= end) return false;
+      continue;
+    }
+    digits.push_back(ch);
+  }
+
+  const char* start = digits.c_str();
+  char* stop = nullptr;
+  const long long value = std::strtoll(start, &stop, 10);
+  if (stop == start) return false;
+  // 剩余还有字符（"12abc" 的 "abc"、「12.5」的 ".5"）就整串失败。
+  while (*stop != '\0' && (*stop == ' ' || *stop == '\t')) ++stop;
+  if (*stop != '\0') return false;
+  *out = value;
+  return true;
+}
+
+bool parseFloatText(const std::string& source, double* out) {
+  std::size_t begin = 0;
+  std::size_t end = source.size();
+  while (begin < end && (source[begin] == ' ' || source[begin] == '\t' ||
+                         source[begin] == '\n' || source[begin] == '\r' ||
+                         source[begin] == '\f' || source[begin] == '\v')) {
+    ++begin;
+  }
+  while (end > begin && (source[end - 1] == ' ' || source[end - 1] == '\t' ||
+                         source[end - 1] == '\n' || source[end - 1] == '\r' ||
+                         source[end - 1] == '\f' || source[end - 1] == '\v')) {
+    --end;
+  }
+  if (begin >= end) return false;
+
+  std::string digits;
+  digits.reserve(end - begin);
+  for (std::size_t i = begin; i < end; ++i) {
+    if (source[i] == '_') {
+      if (i == begin || i + 1 >= end) return false;
+      continue;
+    }
+    digits.push_back(source[i]);
+  }
+
+  const char* start = digits.c_str();
+  char* stop = nullptr;
+  const double value = std::strtod(start, &stop);
+  if (stop == start) return false;
+  if (*stop != '\0') return false;
+  *out = value;
+  return true;
+}
+
+}  // namespace
+
+Value parseInteger(const Value& text) {
+  long long value = 0;
+  if (!parseIntegerText(text.toString(), &value)) return Value();
+  return Value(value);
+}
+
+Value parseFloat(const Value& text) {
+  double value = 0.0;
+  if (!parseFloatText(text.toString(), &value)) return Value();
   return Value(value);
 }
 

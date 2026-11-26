@@ -9,11 +9,11 @@
 //
 // ── 与 CPython 的差异 ──
 //
-// 1. **不抛 EOFError**。AiPy 没有异常通道，stdin 到底时返回 None——与
-//    `open` 失败返回 None 是同一条约定。
-// 2. **不做编码转换**。按字节读，原样当 UTF-8 交给脚本。CPython 会按
+// 1. **不做编码转换**。按字节读，原样当 UTF-8 交给脚本。CPython 会按
 //    `sys.stdin.encoding` 解码，而这里没有那个概念；宿主负责让控制台与
 //    管道给出一致的字节序列（launcher 里切了 CP_UTF8）。
+//
+// stdin 到底时抛 `EOFError`，与 CPython 的文案一致。
 //
 // ── 为什么行尾要剥掉 ──
 //
@@ -62,7 +62,10 @@ aipy::Value inputImpl(const aipy::Value* args, int count) {
   writePrompt(prompt);
 
   std::string line;
-  if (!readLine(&line)) return aipy::Value();
+  if (!readLine(&line)) {
+    aipy::raiseException("EOFError", "EOF when reading a line");
+    return aipy::Value();
+  }
   // 去掉行尾的 `\r`：Windows 管道给的是 `\r\n`，fgetc 在 `\n` 处停下，
   // 于是 `\r` 留在了行内。
   if (!line.empty() && line.back() == '\r') line.pop_back();

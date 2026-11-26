@@ -131,7 +131,7 @@ bool CodeGen::statement(const Node& node) {
       return failAt(diag::nonlocalUnsupported(), node);
 
     case Kind::Assert:
-      return failAt(diag::assertUnsupported(), node);
+      return assertStatement(node);
 
     case Kind::Raise:
       return raiseStatement(node);
@@ -146,7 +146,7 @@ bool CodeGen::statement(const Node& node) {
       return failAt(diag::nestedFunction(node.text), node);
 
     case Kind::Delete:
-      return failAt(diag::deleteUnsupported(), node);
+      return deleteStatement(node);
 
     case Kind::Import:
     case Kind::ImportFrom:
@@ -330,6 +330,62 @@ bool CodeGen::forLoop(const Node& node) {
   for (int fixup : frame.breakFixups) {
     patchU16(static_cast<std::size_t>(fixup), exitAt);
   }
+  return true;
+}
+
+bool CodeGen::deleteStatement(const Node& node) {
+  // 每个目标发一条 DEL_LOCAL / DEL_GLOBAL：u16 槽号 + u16 名字常量号
+  // （名字只用于运行期的 NameError 消息）。
+  for (const NodePtr& target : node.children) {
+    if (target->kind != Kind::Name) {
+      return failAt(diag::nameExpected("a variable name"), *target);
+    }
+    const std::string& name = target->text;
+    if (isLocal(name)) {
+      emit("DEL_LOCAL", *target);
+      emitU16(slotOf(name));
+    } else {
+      emit("DEL_GLOBAL", *target);
+      emitU16(globalSlot(name));
+    }
+    emitU16(constIndexOfStr(name));
+  }
+  return true;
+}
+
+bool CodeGen::assertStatement(const Node& node) {
+  // `assert cond` / `assert cond, msg` 展开成：
+  //
+  //     <cond>
+  //     JUMP_IF_FALSE L_THROW   ← 条件为假时才去抛
+  //     JUMP L_END
+  //   L_THROW:
+  //     <msg>                   ← 消息（没有就不压栈）
+  //     RAISE_TYPE "AssertionError", 有消息?
+  //   L_END:
+  //
+  // 走 RAISE_TYPE 而不是先构造异常对象：类型在编译期就确定，与 raise 一致。
+  if (node.children.empty()) return failAt(diag::assertUnsupported(), node);
+
+  if (!expr(*node.children[0])) return false;
+  emit("JUMP_IF_FALSE", node);
+  const int throwFixup = static_cast<int>(block_->code.size());
+  emitU16(0);
+
+  emit("JUMP", node);
+  const int endFixup = static_cast<int>(block_->code.size());
+  emitU16(0);
+
+  patchU16(static_cast<std::size_t>(throwFixup),
+           static_cast<int>(block_->code.size()));
+  const bool hasMessage = node.children.size() > 1;
+  if (hasMessage && !expr(*node.children[1])) return false;
+  emit("RAISE_TYPE", node);
+  emitU16(constIndexOfStr("AssertionError"));
+  emitU8(hasMessage ? 1 : 0);
+
+  patchU16(static_cast<std::size_t>(endFixup),
+           static_cast<int>(block_->code.size()));
   return true;
 }
 

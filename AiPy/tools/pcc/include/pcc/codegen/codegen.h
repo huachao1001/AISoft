@@ -160,6 +160,8 @@ class CodeGen {
   bool forLoop(const Node& node);
   bool importStatement(const Node& node);
   bool raiseStatement(const Node& node);
+  bool assertStatement(const Node& node);
+  bool deleteStatement(const Node& node);
   bool tryStatement(const Node& node);
 
   // ── 表达式（expressions.cpp）──
