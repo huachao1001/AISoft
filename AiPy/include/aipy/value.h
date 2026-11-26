@@ -227,6 +227,18 @@ class Value {
   friend bool isSuper(const Value& value);
   friend Value superSelf(const Value& value);
   friend Value superClassOf(const Value& value);
+  // 生成器值：与函数值同构（kObject + 专用标记表），载荷是函数号 +
+  // 已绑好实参的局部量 + 暂停现场。
+  friend Value makeGenerator(int functionIndex, List locals);
+  friend bool isGenerator(const Value& value);
+  friend int generatorFunctionIndex(const Value& value);
+  friend int generatorPcOf(const Value& value);
+  friend bool generatorDone(const Value& value);
+  friend bool generatorStarted(const Value& value);
+  friend const List& generatorLocals(const Value& value);
+  friend const List& generatorStack(const Value& value);
+  friend void setGeneratorState(const Value& value, int pc, List locals,
+                                List stack, bool started, bool done);
 
  private:
   // ── 紧凑表示 ──
@@ -343,6 +355,16 @@ struct HeapData : DictData {
   Value boundSelf;
   // `super()` 的结果：self 与「当前类」（从它的基类开始查找）。
   Value superClass;
+  // 生成器专用载荷（kObject 里的一种）。functionIndex 复用上面的字段。
+  //
+  // 暂存现场：pc、局部量、以及这一帧在值栈上的那一段。为什么连值栈也要存：
+  // `yield` 可能出现在 for 循环体里，那时栈上正压着 [列表, 下标]，只存 pc
+  // 会在恢复时丢掉循环状态，症状是嵌套 for + yield 每次都从头开始。
+  int generatorPc = 0;
+  bool generatorDone = false;
+  bool generatorStarted = false;
+  List generatorLocals;
+  List generatorStack;
   std::atomic<std::uint32_t> refs{1};  // 1 表示「刚创建，调用方已持有」
 };
 

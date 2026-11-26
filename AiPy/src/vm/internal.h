@@ -110,6 +110,10 @@ struct Frame {
   // 实例化调用，返回时用这个对象顶替返回值。
   Value initInstance;
   bool isInitFrame = false;
+  // 这一帧是生成器函数体。`yield` 时把 pc、局部量、值栈片段写回
+  // generatorObject，然后让这一次 execute 提前返回（暂停）。
+  bool isGeneratorFrame = false;
+  Value generatorObject;
   const Function* function = nullptr;  // 模块级帧为 nullptr
   std::size_t pc = 0;
   std::size_t stackBase = 0;

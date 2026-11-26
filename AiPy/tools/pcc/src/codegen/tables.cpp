@@ -35,6 +35,7 @@ const char* const kOpNames[] = {
     "SET_ATTR",
     "INSTANTIATE",
     "MAKE_SUPER",
+    "YIELD",
 };
 
 constexpr int kOpCount = static_cast<int>(sizeof(kOpNames) / sizeof(kOpNames[0]));
@@ -43,7 +44,7 @@ constexpr int kOpCount = static_cast<int>(sizeof(kOpNames) / sizeof(kOpNames[0])
 const char* const kBuiltins[] = {
     "len", "str", "int", "float", "bool", "abs", "round", "min", "max",
     "sum", "list", "dict", "range", "print",
-    "format_text", "char_from_code", "text_of_char", "set",
+    "format_text", "char_from_code", "text_of_char", "set", "next",
 };
 
 constexpr int kBuiltinCount =

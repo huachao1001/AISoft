@@ -57,6 +57,8 @@ struct CompiledBlock {
   std::vector<std::string> paramNames;
   // 闭包捕获值的起始局部槽；-1 表示不捕获。
   int captureStart = -1;
+  // 函数体里有 `yield`：调用它得到生成器，不是返回值。
+  bool isGenerator = false;
 };
 
 // 常量。类型与值分开存，写二进制时按类型序列化。
@@ -117,6 +119,8 @@ class CodeGen {
     int kwonlyStart = -1;
     // 闭包捕获值的起始局部槽；-1 表示不捕获。
     int captureStart = -1;
+    // 函数体里有 `yield`：调用它得到生成器，不是返回值。
+    bool isGenerator = false;
     // lambda 捕获的外层名字，顺序与 MAKE_FUNCTION 压栈一致。
     std::vector<std::string> captures;
     std::vector<std::string> localNames;  // 槽号 → 名字

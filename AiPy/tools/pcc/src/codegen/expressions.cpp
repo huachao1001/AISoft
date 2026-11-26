@@ -369,11 +369,20 @@ bool CodeGen::expr(const Node& node) {
     case Kind::Await:
       return failAt(diag::unsupportedExpression("Await"), node);
 
-    case Kind::Yield:
-      return failAt(diag::unsupportedExpression("Yield"), node);
+    case Kind::Yield: {
+      // `yield` / `yield x`：求出值（没有操作数就是 None）后发 YIELD。
+      // 这一帧会被标记成生成器（见 compileFunctionBody 的 yield 检测）。
+      if (node.children.empty()) {
+        emit("NONE", node);
+      } else if (!expr(*node.children[0])) {
+        return false;
+      }
+      emit("YIELD", node);
+      return true;
+    }
 
     case Kind::YieldFrom:
-      return failAt(diag::unsupportedExpression("YieldFrom"), node);
+      return failAt("'yield from' is not supported", node);
 
     default:
       break;

@@ -151,6 +151,7 @@ std::vector<std::uint8_t> packProgram(const Program& program) {
     out.u16(function.captureStart < 0
                 ? 0xFFFF
                 : static_cast<std::uint32_t>(function.captureStart));
+    out.u16(function.isGenerator ? 1 : 0);
     out.u16(static_cast<std::uint32_t>(function.paramNames.size()));
     for (const std::string& name : function.paramNames) out.text(name);
     out.u32(static_cast<std::uint32_t>(function.code.size()));

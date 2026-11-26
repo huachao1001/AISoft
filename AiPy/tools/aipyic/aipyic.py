@@ -93,6 +93,7 @@ OPERANDS = {
     'SET_ATTR': ('u16',),
     'INSTANTIATE': ('u8',),
     'MAKE_SUPER': ('u16',),
+    'YIELD': (),
     'BUILD_TUPLE': ('u16',),
     'BUILD_SET': ('u16',),
     'DEL_LOCAL': ('u16',),

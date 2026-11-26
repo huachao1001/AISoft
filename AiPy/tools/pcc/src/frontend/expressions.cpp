@@ -577,6 +577,15 @@ NodePtr Parser::atom() {
     }
     if (token.text == "yield") {
       advance();
+      // `yield from x`：先认出这个形状再拒绝，否则会被当成
+      // `yield (from)` 而静默丢掉后面的表达式。
+      if (checkName("from")) {
+        advance();
+        auto node = make_node(Kind::YieldFrom, token.line, token.col);
+        NodePtr value = expression();
+        if (value) node->children.push_back(std::move(value));
+        return node;
+      }
       auto node = make_node(Kind::Yield, token.line, token.col);
       if (!check(TokenType::Newline) && !checkOp(")") && !checkOp("]") &&
           !checkOp(",") && !check(TokenType::End)) {

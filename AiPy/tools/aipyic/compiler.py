@@ -64,7 +64,7 @@ OPCODES = [
     # .bc 被执行成别的指令。
     'CALL_DYN', 'DICT_MERGE', 'MAKE_FUNCTION', 'CALL_VALUE',
     'CALL_VALUE_DYN', 'MAKE_CLASS', 'GET_ATTR', 'SET_ATTR', 'INSTANTIATE',
-    'MAKE_SUPER',
+    'MAKE_SUPER', 'YIELD',
 ]
 
 # 二元算子编号，与 vm.h 的 BinOp 一致。
@@ -79,7 +79,7 @@ UNOPS = ['NEG', 'NOT', 'INVERT']
 BUILTINS = [
     'len', 'str', 'int', 'float', 'bool', 'abs', 'round', 'min', 'max',
     'sum', 'list', 'dict', 'range', 'print',
-    'format_text', 'char_from_code', 'text_of_char', 'set',
+    'format_text', 'char_from_code', 'text_of_char', 'set', 'next',
 ]
 
 OP = {name: index for index, name in enumerate(OPCODES)}
@@ -138,6 +138,8 @@ class Block:
         self.kwarg_slot = -1
         self.kwonly_start = -1
         self.capture_start = -1
+        # 函数体里有 yield：调用它得到生成器，不是返回值。
+        self.is_generator = False
 
     def emit(self, op, node):
         self.lines.append((len(self.code), getattr(node, 'lineno', 0)))
@@ -921,6 +923,16 @@ class Compiler:
         saved_class = self.current_class
         dot = name.find('.')
         self.current_class = '' if dot < 0 else name[:dot]
+        # 函数体里有 yield 就是生成器（lambda 体不算外层的：它自己决定）。
+        pending = list(node.body)
+        while pending and not block.is_generator:
+            current = pending.pop()
+            if isinstance(current, ast.Lambda):
+                continue
+            if isinstance(current, (ast.Yield, ast.YieldFrom)):
+                block.is_generator = True
+                break
+            pending.extend(ast.iter_child_nodes(current))
         self.block = block
         self.loop_stack = []
         self.with_stack = []
@@ -939,8 +951,13 @@ class Compiler:
 
     def statement(self, node):
         if isinstance(node, ast.Expr):
-            if isinstance(node.value, (ast.Yield, ast.YieldFrom)):
-                raise CompileError('不支持 yield：脚本里没有生成器', self.filename, node.value)
+            if isinstance(node.value, ast.YieldFrom):
+                raise CompileError('不支持 yield from', self.filename, node.value)
+            if isinstance(node.value, ast.Yield):
+                # `yield x` 作为语句：yield 的值没人要，直接丢掉。
+                self.expr(node.value)
+                self.block.emit('POP', node)
+                return
             if isinstance(node.value, ast.Await):
                 raise CompileError('不支持 await：脚本是单线程事件循环', self.filename, node.value)
             if isinstance(node.value, ast.Call):
@@ -1722,6 +1739,18 @@ class Compiler:
             self.block.emit_u16(len(block.captures))
             return
 
+        if isinstance(node, ast.YieldFrom):
+            raise CompileError('不支持 yield from', self.filename, node)
+
+        if isinstance(node, ast.Yield):
+            # `yield` / `yield x`：求出值（没有操作数就是 None）后发 YIELD。
+            if node.value is None:
+                self.block.emit('NONE', node)
+            else:
+                self.expr(node.value)
+            self.block.emit('YIELD', node)
+            return
+
         raise CompileError('不支持表达式 %s' % type(node).__name__, self.filename, node)
 
     def slice_flags(self, node):
@@ -2097,6 +2126,7 @@ class Compiler:
                 'kwargSlot': block.kwarg_slot,
                 'kwonlyStart': block.kwonly_start,
                 'captureStart': block.capture_start,
+                'isGenerator': block.is_generator,
                 'paramNames': block.param_names(),
             }
 

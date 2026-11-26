@@ -269,7 +269,18 @@ using detail::peekExceptionStateOf;
 // exceptions），按值传会让每次进入执行循环都多一次整栈移动。实测那种
 // 形态在 Release 下会让子线程返回时崩（0xC0000409），而 Debug 正常。
 static Result execute(const Program& program, std::vector<Value>& globals,
-                      std::vector<Frame>& frames);
+                      std::vector<Frame>& frames,
+                      const List* seedStack = nullptr);
+
+// 推进生成器到下一个 yield。返回 true 表示产出了值；false 表示已结束
+// （`failed` 为真时 `errorType`/`error` 说明抛了什么）。
+//
+// 复用 execute 而不是另写一个循环：生成器体就是普通函数体，语义上没有
+// 任何差别，唯一区别是「跑到 YIELD 就退出这一次 execute，下次从 pc 续」。
+static bool advanceGenerator(const Program& program, std::vector<Value>& globals,
+                             const Value& generator, Value* out,
+                             std::string* errorType, std::string* error,
+                             bool* failed);
 
 // 进程级的全局槽。定义在这里、声明在 vm.h：所有 Machine 实例共用同一份，
 // 线程里 `global X` 才写得到主线程看得见的那个槽。
@@ -391,6 +402,19 @@ static bool pushValueFrame(const Program& program, const Value& callable,
   return true;
 }
 
+// 建一帧并压入。
+static void pushFrame(const Function& fn, std::vector<Value> locals,
+                      std::vector<Frame>& frames, std::size_t stackBase) {
+  Frame callee;
+  callee.code = &fn.code;
+  callee.lines = &fn.lines;
+  callee.function = &fn;
+  callee.pc = 0;
+  callee.stackBase = stackBase;
+  callee.locals = std::move(locals);
+  frames.push_back(std::move(callee));
+}
+
 // 执行循环本体：帧已建好，从 frames.back() 开始跑。
 //
 // 独立函数而不是成员，只是为了让 `run` 与 `callFunction` 共用同一段
@@ -401,7 +425,8 @@ static bool pushValueFrame(const Program& program, const Value& callable,
 // 同一个——子线程跑脚本函数时应该看见同一份全局状态，这与 Python 里
 // 线程共享模块全局变量的语义一致。
 static Result execute(const Program& program, std::vector<Value>& globals,
-                      std::vector<Frame>& frames) {
+                      std::vector<Frame>& frames,
+                      const List* seedStack) {
   Result result;
 
   // 「当前正在跑哪个程序」。扩展函数只拿到 `const Value*`，拿不到 Program；
@@ -419,6 +444,15 @@ static Result execute(const Program& program, std::vector<Value>& globals,
   constexpr std::size_t kStackSize = 8192;
   std::vector<Value> stack(kStackSize);
   std::size_t sp = 0;
+
+  // 恢复生成器：把暂停时存下的栈段摆回 stackBase 起，接着跑。
+  if (seedStack != nullptr && !frames.empty()) {
+    const std::size_t base = frames.back().stackBase;
+    for (std::size_t i = 0; i < seedStack->size() && base + i < kStackSize; ++i) {
+      stack[base + i] = (*seedStack)[i];
+    }
+    sp = base + seedStack->size();
+  }
 
   // 取当前帧对应的行号。没找到就说 0（宿主可以据此决定要不要显示位置）。
   const auto lineOf = [&]() -> int {
@@ -644,14 +678,15 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         }
         sp -= static_cast<std::size_t>(argc);
 
-        Frame callee;
-        callee.code = &fn.code;
-        callee.lines = &fn.lines;
-        callee.function = &fn;
-        callee.pc = 0;
-        callee.stackBase = sp;
-        callee.locals = std::move(locals);
-        frames.push_back(std::move(callee));
+        // 生成器函数：不建帧，只把已绑好的局部量塞进生成器对象。函数体
+        // 一行都不跑——`g = gen()` 与 yield 之间的先后顺序是 CPython 可
+        // 观察到的分界。
+        if (fn.isGenerator) {
+          stack[sp++] = makeGenerator(index, std::move(locals));
+          break;
+        }
+
+        pushFrame(fn, std::move(locals), frames, sp);
         break;
       }
 
@@ -799,6 +834,12 @@ static Result execute(const Program& program, std::vector<Value>& globals,
 
         sp = base;
 
+        // 生成器：只造对象，不执行函数体。捕获值已填进 locals，一并搬过去。
+        if (fn.isGenerator) {
+          stack[sp++] = makeGenerator(index, std::move(locals));
+          break;
+        }
+
         Frame callee;
         callee.code = &fn.code;
         callee.lines = &fn.lines;
@@ -809,7 +850,6 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         frames.push_back(std::move(callee));
         break;
       }
-
       case Op::kCallValueDyn: {
         // 栈上是 [可调用值, 位置实参列表, 关键字字典]。与 kCallValue 同一套
         // 绑定，只是实参的形状到运行期才知道（`f(*args, **kw)`）。
@@ -851,6 +891,12 @@ static Result execute(const Program& program, std::vector<Value>& globals,
                 static_cast<std::size_t>(fn.captureStart) + i;
             if (slot < locals.size()) locals[slot] = captures[i];
           }
+        }
+
+        // 生成器：只造对象，不执行函数体。
+        if (fn.isGenerator) {
+          stack[sp++] = makeGenerator(index, std::move(locals));
+          break;
         }
 
         Frame callee;
@@ -1086,13 +1132,62 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         Value args[8];
         if (argc > 8) return fail("内建最多 8 个参数");
         for (int i = argc - 1; i >= 0; --i) args[i] = stack[--sp];
+
+        // `next(g)`：推进一格。只能在这里做——值层拿不到 Program。
+        if (program.builtinNames[index] == "next") {
+          if (argc != 1) {
+            raiseException("TypeError", "next() takes exactly one argument (" +
+                                            std::to_string(argc) + " given)");
+            break;
+          }
+          if (!isGenerator(args[0])) {
+            raiseException("TypeError", "'" + typeName(args[0]) +
+                                            "' object is not an iterator");
+            break;
+          }
+          Value produced;
+          std::string errorType;
+          std::string error;
+          bool failed = false;
+          if (advanceGenerator(program, globals, args[0], &produced, &errorType,
+                               &error, &failed)) {
+            stack[sp++] = produced;
+            break;
+          }
+          if (failed) {
+            raiseException(errorType.empty() ? "RuntimeError" : errorType, error);
+            break;
+          }
+          raiseException("StopIteration", "");
+          break;
+        }
+
+        // 生成器先抽干成列表：内建（list/sum/len…）只认容器，而值层的
+        // iterate() 拿不到 Program，无法推进生成器。
+        for (int i = 0; i < argc; ++i) {
+          if (!isGenerator(args[i])) continue;
+          List collected;
+          Value produced;
+          std::string errorType;
+          std::string error;
+          bool failed = false;
+          while (advanceGenerator(program, globals, args[i], &produced,
+                                  &errorType, &error, &failed)) {
+            collected.push_back(produced);
+          }
+          if (failed) {
+            raiseException(errorType.empty() ? "RuntimeError" : errorType, error);
+            break;
+          }
+          args[i] = Value::list(std::move(collected));
+        }
+        if (hasPendingException()) break;
         std::string error;
         const Value value = program.builtins[index](args, argc, &error);
         if (!error.empty()) return fail(error);
         stack[sp++] = value;
         break;
       }
-
       case Op::kCallExt: {
         const std::uint16_t index = read16(code, frame.pc);
         const std::uint8_t argc = code[frame.pc + 2];
@@ -1294,14 +1389,41 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         break;
       }
 
+      case Op::kYield: {
+        // 暂停这一帧：把 pc、局部量、以及本帧在值栈上的那一段摊平进
+        // 生成器对象，然后把结果交给恢复者。
+        if (!frame.isGeneratorFrame) return fail("yield 不在生成器里（编译器 bug）");
+        Value value = sp > frame.stackBase ? stack[--sp] : Value();
+        // 本帧的栈段：stackBase..sp 之间的就是它自己的中间值。
+        List snapshot;
+        snapshot.reserve(sp > frame.stackBase ? sp - frame.stackBase : 0);
+        for (std::size_t i = frame.stackBase; i < sp; ++i) {
+          snapshot.push_back(stack[i]);
+        }
+        setGeneratorState(frame.generatorObject, static_cast<int>(frame.pc),
+                          frame.locals, std::move(snapshot), true, false);
+        sp = frame.stackBase;
+        frames.pop_back();
+        result.yielded = true;
+        result.value = value;
+        return result;
+      }
+
       case Op::kIterInit: {
+        const Value container = stack[--sp];
+        // 生成器不能物化：它的全部意义就是惰性。原样留在栈上，由
+        // ITER_NEXT 一次推进一格。
+        if (isGenerator(container)) {
+          stack[sp++] = container;
+          stack[sp++] = Value(0LL);
+          break;
+        }
         // 把容器物化成一个列表再按下标走。
         //
         // 为什么物化而不是持有迭代器：脚本里常见「遍历时改原列表」，
         // 也常见「遍历刚生成的 range」。物化一次（长度级别的一次拷贝）
         // 换来「循环变量与外层容器互不影响」，与 CPython 的
         // `for x in list` 行为一致；而 range 本来就该物化。
-        const Value container = stack[--sp];
         Value::List items = iterate(container);
         stack[sp++] = Value::list(std::move(items));
         stack[sp++] = Value(0LL);
@@ -1311,6 +1433,35 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         const std::size_t exitTarget = read16(code, frame.pc);
         frame.pc += 2;
         if (sp < 2) return fail("for 循环状态缺失（编译器 bug）");
+
+        // 生成器：栈上是 [生成器, 占位]。每次恢复一小段，直到 yield 或结束。
+        if (isGenerator(stack[sp - 2])) {
+          const Value generator = stack[sp - 2];
+          sp -= 2;
+          Value produced;
+          std::string errorType;
+          std::string error;
+          bool failed = false;
+          const bool hasValue = advanceGenerator(program, globals, generator,
+                                                &produced, &errorType, &error,
+                                                &failed);
+          if (failed) {
+            // 生成器体里的异常要出现在**调用方**的栈上，走同一条异常通道。
+            raiseException(errorType.empty() ? "RuntimeError" : errorType, error);
+            break;
+          }
+          if (!hasValue) {
+            frame.pc = exitTarget;
+            break;
+          }
+          // 把状态重新摆回 for 循环约定的 [list, index]，index 恒为 0：
+          // 生成器自己记着「跑到哪了」，这里只是让同一条 ITER_NEXT 能继续用。
+          stack[sp++] = generator;
+          stack[sp++] = Value(0LL);
+          stack[sp++] = produced;
+          break;
+        }
+
         // 栈布局：[list, index]
         const long long index = stack[sp - 1].toInt();
         const Value::List& items = stack[sp - 2].asList();
@@ -1519,6 +1670,77 @@ static Result execute(const Program& program, std::vector<Value>& globals,
 
   result.value = sp > 0 ? stack[sp - 1] : Value();
   return result;
+}
+
+// 推进生成器一格。
+//
+// 首次推进时把已绑好的局部量装进帧；之后每次用存下的 pc 与栈段续跑。
+// 这样一次 execute 只跑到下一个 YIELD 为止，惰性与副作用顺序都与 CPython
+// 一致（`g = gen()` 不执行函数体，第一次 `next` 才跑到第一个 yield）。
+static bool advanceGenerator(const Program& program, std::vector<Value>& globals,
+                             const Value& generator, Value* out,
+                             std::string* errorType, std::string* error,
+                             bool* failed) {
+  *failed = false;
+  errorType->clear();
+  error->clear();
+  if (!isGenerator(generator)) {
+    *failed = true;
+    *errorType = "TypeError";
+    *error = "'" + typeName(generator) + "' object is not a generator";
+    return false;
+  }
+  if (generatorDone(generator)) return false;
+
+  const int index = generatorFunctionIndex(generator);
+  if (index < 0 || index >= static_cast<int>(program.functions.size())) {
+    *failed = true;
+    *errorType = "RuntimeError";
+    *error = "generator function index out of range";
+    return false;
+  }
+  const Function& fn = program.functions[static_cast<std::size_t>(index)];
+
+  Frame frame;
+  frame.code = &fn.code;
+  frame.lines = &fn.lines;
+  frame.function = &fn;
+  frame.pc = static_cast<std::size_t>(generatorPcOf(generator));
+  frame.stackBase = 0;
+  frame.locals = generatorLocals(generator);
+  if (frame.locals.size() < static_cast<std::size_t>(fn.localCount)) {
+    frame.locals.resize(static_cast<std::size_t>(fn.localCount), Value());
+  }
+  frame.isGeneratorFrame = true;
+  frame.generatorObject = generator;
+
+  const bool started = generatorStarted(generator);
+  List seed = generatorStack(generator);
+  // `next()` 给 `yield` 表达式送的是 None（本语言不支持 send）。恢复时把
+  // 它补在栈顶，否则后续 POP 会对着空栈弹，sp 下溢成 SIZE_MAX——
+  // 症状是「操作数栈溢出（编译器 bug）」出现在第二次迭代。
+  if (started) seed.push_back(Value());
+
+  std::vector<Frame> frames;
+  frames.push_back(std::move(frame));
+
+  Result result = execute(program, globals, frames, started ? &seed : nullptr);
+  if (result.failed) {
+    *failed = true;
+    *errorType = resultExceptionType(result);
+    *error = result.error;
+    if (errorType->empty()) *errorType = "RuntimeError";
+    // 抛异常后生成器就结束了（CPython 同样不会让它再继续）。
+    setGeneratorState(generator, 0, List{}, List{}, true, true);
+    return false;
+  }
+  if (result.yielded) {
+    *out = result.value;
+    return true;
+  }
+  // 跑到末尾（函数体正常结束）也算结束。
+  setGeneratorState(generator, 0, List{}, List{}, true, true);
+  return false;
 }
 
 }  // namespace vm

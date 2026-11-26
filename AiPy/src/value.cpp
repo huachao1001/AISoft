@@ -28,6 +28,7 @@ const MethodTable kClassTable = {kNoMethods};
 const MethodTable kInstanceTable = {kNoMethods};
 const MethodTable kBoundMethodTable = {kNoMethods};
 const MethodTable kSuperTable = {kNoMethods};
+const MethodTable kGeneratorTable = {kNoMethods};
 
 // 数字提升：只要有一边是 float，结果就是 float。Python 的 / 永远返回 float，
 // 但 + - * % 保持 int。这里不区分来源，由调用点决定走哪个函数。
@@ -874,6 +875,73 @@ Value superSelf(const Value& value) {
 Value superClassOf(const Value& value) {
   if (!isSuper(value)) return Value();
   return value.heap_->superClass;
+}
+
+// ── 生成器 ──
+//
+// 与函数值同构：kObject + 专用标记表。载荷是函数号（复用 functionIndex）、
+// 已绑好实参的局部量、暂停现场（pc + 值栈片段）。
+//
+// 惰性到什么程度：`g = gen()` 只构造对象，一行函数体都不跑；第一次迭代
+// 才执行。这是 CPython 可观察到的分界（`gen()` 之后、`yield` 之前的打印
+// 先后顺序），也是唯一不能让步的一点。
+
+Value makeGenerator(int functionIndex, List locals) {
+  Value out;
+  out.type_ = Value::Type::kObject;
+  out.heap_ = makeHeap();
+  out.heap_->object.table = &kGeneratorTable;
+  out.heap_->functionIndex = functionIndex;
+  out.heap_->generatorLocals = std::move(locals);
+  out.heap_->generatorDone = false;
+  return out;
+}
+
+bool isGenerator(const Value& value) {
+  const ObjectData* data = value.asObject();
+  return data != nullptr && data->table == &kGeneratorTable;
+}
+
+int generatorFunctionIndex(const Value& value) {
+  if (!isGenerator(value)) return -1;
+  return value.heap_->functionIndex;
+}
+
+bool generatorDone(const Value& value) {
+  if (!isGenerator(value)) return true;
+  return value.heap_->generatorDone;
+}
+
+void setGeneratorState(const Value& value, int pc, List locals, List stack,
+                       bool started, bool done) {
+  if (!isGenerator(value)) return;
+  value.heap_->generatorPc = pc;
+  value.heap_->generatorLocals = std::move(locals);
+  value.heap_->generatorStack = std::move(stack);
+  value.heap_->generatorStarted = started;
+  value.heap_->generatorDone = done;
+}
+
+int generatorPcOf(const Value& value) {
+  if (!isGenerator(value)) return 0;
+  return value.heap_->generatorPc;
+}
+
+bool generatorStarted(const Value& value) {
+  if (!isGenerator(value)) return false;
+  return value.heap_->generatorStarted;
+}
+
+const List& generatorLocals(const Value& value) {
+  static const List empty;
+  if (!isGenerator(value)) return empty;
+  return value.heap_->generatorLocals;
+}
+
+const List& generatorStack(const Value& value) {
+  static const List empty;
+  if (!isGenerator(value)) return empty;
+  return value.heap_->generatorStack;
 }
 
 std::string exceptionType(const Value& value) {
@@ -1766,6 +1834,11 @@ std::vector<Value> iterate(const Value& container) {
   }
   if (container.isDict()) return container.dictKeys();
   if (container.type() == Value::Type::kObject) {
+    // 生成器：抽干成列表，用于 `list(g)` / `sum(g)` 这类直接消费。
+    // 不在这里调用 VM：值层不该反向依赖执行循环，真正的推进发生在
+    // kIterInit（for 循环走那条路）。这里返回空列表只是兜底，调用点
+    // 若需要抽干会先问 isGenerator。
+    if (isGenerator(container)) return out;
     // Python 的迭代协议：对象自己提供 `__iter__`。VM 仍然不知道「文件」是
     // 什么——它只按名字转发，表由 pylib 提供（与 callMethod 同一条原则）。
     // 返回的仍然物化成列表：kIterInit 本来就是这么建的栈（见 machine.cpp）。

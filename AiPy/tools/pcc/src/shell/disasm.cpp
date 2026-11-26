@@ -381,13 +381,14 @@ bool loadBytecodeFile(const std::string& path, LoadedProgram* program,
     std::uint32_t maskLow = 0, maskHigh = 0;
     std::uint16_t varargSlot = 0, kwargSlot = 0, kwonlyStart = 0, nameCount = 0;
     std::uint16_t captureStart = 0;
+    std::uint16_t isGenerator = 0;
     std::uint32_t codeLen = 0;
     if (!reader.u16(&paramCount) || !reader.u16(&localSlots) ||
         !reader.u16(&defaultCount) || !reader.u16(&defaultSlot) ||
         !reader.u32(&maskLow) || !reader.u32(&maskHigh) ||
         !reader.u16(&varargSlot) || !reader.u16(&kwargSlot) ||
         !reader.u16(&kwonlyStart) || !reader.u16(&captureStart) ||
-        !reader.u16(&nameCount)) {
+        !reader.u16(&isGenerator) || !reader.u16(&nameCount)) {
       *error = "bytecode truncated in a function header";
       return false;
     }

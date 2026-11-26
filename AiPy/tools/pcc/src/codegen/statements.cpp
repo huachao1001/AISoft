@@ -16,8 +16,14 @@ bool CodeGen::statement(const Node& node) {
   switch (node.kind) {
     case Kind::Expr: {
       const Node& value = *node.children[0];
-      if (value.kind == Kind::Yield || value.kind == Kind::YieldFrom) {
-        return failAt(diag::yieldUnsupported(), value);
+      if (value.kind == Kind::YieldFrom) {
+        return failAt("'yield from' is not supported", value);
+      }
+      if (value.kind == Kind::Yield) {
+        // `yield x` 作为语句：yield 的值没人要，直接丢掉。
+        if (!expr(value)) return false;
+        emit("POP", node);
+        return true;
       }
       if (value.kind == Kind::Await) {
         return failAt(diag::awaitUnsupported(), value);

@@ -67,7 +67,9 @@ const char* opName(Op op) {
     case Op::kGetAttr: return "get_attr";
     case Op::kSetAttr: return "set_attr";
     case Op::kInstantiate: return "instantiate";
-    case Op::kMakeSuper: return "make_super";  }
+    case Op::kMakeSuper: return "make_super";
+    case Op::kYield: return "yield";
+  }
   return "?";
 }
 

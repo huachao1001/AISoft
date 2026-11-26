@@ -165,6 +165,14 @@ enum class Op : std::uint8_t {
   // `super()`：u16 当前类名常量号。栈顶是 self（方法槽 0），压一个
   // super 值；后续 `.m(...)` 从当前类的基类开始查找。
   kMakeSuper,
+
+  // ── 生成器 ──
+  //
+  // 与文件对象同一个取舍：迭代时**物化**，一次跑完收集所有 yield 值。
+  // 不做暂停/恢复，也就不需要保存 pc 与值栈——代价是「无限生成器」不可用，
+  // 收益是执行循环完全不用改。脚本里生成器的常态是「一次遍历完」，
+  // 这个取舍与 `for line in f` 读全部剩余行是一致的。
+  kYield,  // 弹栈顶，追加到当前生成器的收集列表
 };
 
 enum class BinOp : std::uint8_t {
@@ -222,6 +230,8 @@ struct Function {
   // 闭包捕获值的起始局部槽。捕获槽紧跟在参数/vararg/kwarg 之后，按
   // MAKE_FUNCTION 压栈的顺序排列；-1 表示这个函数不捕获。
   int captureStart = -1;
+  // 这个函数体里有 `yield`。调用它不是「跑完返回」，而是造一个生成器。
+  bool isGenerator = false;
 };
 // 编译好的程序：模块级代码 + 函数表 + 常量池 + 两张调用表。
 struct Program {
@@ -263,6 +273,9 @@ struct Result {
   // 未捕获的异常值；不是异常时是 None。用 Value 而不是再存一份类型名 +
   // 消息：异常本来就是 Value，多存一份字段等于给同一样东西开两个表示。
   Value exception;
+  // 生成器暂停：执行在 YIELD 处停下，`value` 是 yield 出来的值。
+  // 只有恢复生成器的那条内部路径会看到它，`run`/`callFunction` 永远为 false。
+  bool yielded = false;
 };
 
 // 未捕获异常的类型名；`exception` 不是异常时返回空串。

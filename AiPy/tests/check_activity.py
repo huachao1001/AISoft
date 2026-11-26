@@ -204,6 +204,79 @@ CASES = [
         'print(C().who())\n',
         'A\n',
     ),
+    # ── 生成器 ──
+    (
+        '生成器逐个产出',
+        'def nums(n):\n'
+        '    i = 0\n'
+        '    while i < n:\n'
+        '        yield i * i\n'
+        '        i = i + 1\n'
+        'for v in nums(4):\n'
+        '    print(v)\n',
+        '0\n1\n4\n9\n',
+    ),
+    (
+        '生成器惰性（创建不执行）',
+        'def g():\n'
+        '    print("start")\n'
+        '    yield 1\n'
+        'print("created")\n'
+        'for v in g():\n'
+        '    print(v)\n',
+        'created\nstart\n1\n',
+    ),
+    (
+        '生成器嵌套 for',
+        'def pairs():\n'
+        '    for x in [1, 2]:\n'
+        '        for y in ["a", "bb"]:\n'
+        '            yield x * 100 + len(y)\n'
+        'for v in pairs():\n'
+        '    print(v)\n',
+        '101\n102\n201\n202\n',
+    ),
+    (
+        '生成器 break 后不再继续',
+        'def g():\n'
+        '    yield 1\n'
+        '    yield 2\n'
+        'for v in g():\n'
+        '    print(v)\n'
+        '    break\n'
+        'print("done")\n',
+        '1\ndone\n',
+    ),
+    (
+        '生成器异常向外传播',
+        'def g():\n'
+        '    yield 1\n'
+        '    raise ValueError("x")\n'
+        'try:\n'
+        '    for v in g():\n'
+        '        print(v)\n'
+        'except ValueError:\n'
+        '    print("caught")\n',
+        '1\ncaught\n',
+    ),
+    (
+        'next() 逐个取值',
+        'def g():\n'
+        '    yield "a"\n'
+        '    yield "b"\n'
+        'it = g()\n'
+        'print(next(it))\n'
+        'print(next(it))\n',
+        'a\nb\n',
+    ),
+    (
+        'list() 抽干生成器',
+        'def g():\n'
+        '    yield 1\n'
+        '    yield 2\n'
+        'print(list(g()))\n',
+        '[1, 2]\n',
+    ),
     # ── 期望被拒绝的 ──
     (
         '两个 Activity 被拒绝',

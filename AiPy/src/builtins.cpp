@@ -338,6 +338,8 @@ const Entry kBuiltinTable[] = {
     {"char_from_code", builtinCharFromCode},
     {"text_of_char", builtinTextOfChar},
     {"set", builtinSet},
+    // `next` 只是登记：真正的推进在 VM 里（值层拿不到 Program）。
+    {"next", nullptr},
 };
 
 }  // namespace builtins

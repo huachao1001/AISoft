@@ -45,6 +45,7 @@ bool CodeGen::compile(const Node& module) {
     out.kwargSlot = block.kwargSlot;
     out.kwonlyStart = block.kwonlyStart;
     out.captureStart = block.captureStart;
+    out.isGenerator = block.isGenerator;
     out.paramNames.assign(block.localNames.begin(),
                           block.localNames.begin() +
                               static_cast<std::ptrdiff_t>(block.paramCount));
@@ -705,6 +706,23 @@ bool CodeGen::compileFunctionBody(const Node& node,
     if (globalsSet_.count(name) != 0 && declaredGlobal.count(name) == 0 &&
         params.count(name) == 0) {
       return failAt(diag::missingGlobal(name), *item.second);
+    }
+  }
+
+  // 函数体里有 `yield` 就是生成器。判断放在编译之前：调用方（kCall 等）
+  // 要能在**不执行函数体**的前提下知道该造生成器对象。
+  for (std::size_t i = 0; i < node.bodyCount && !block.isGenerator; ++i) {
+    std::vector<const Node*> pending{node.children[1 + i].get()};
+    while (!pending.empty() && !block.isGenerator) {
+      const Node* current = pending.back();
+      pending.pop_back();
+      if (current->kind == Kind::Yield) {
+        block.isGenerator = true;
+        break;
+      }
+      // lambda 体不算外层函数的：它自己就是生成器与否由它自己决定。
+      if (current->kind == Kind::Lambda) continue;
+      for (const auto& child : current->children) pending.push_back(child.get());
     }
   }
 
