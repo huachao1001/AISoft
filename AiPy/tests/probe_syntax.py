@@ -95,7 +95,11 @@ CASES = [
     ('字面量', 'f-string 空', 'x = f""\n', 'ok'),
     ('字面量', 'f-string 嵌套下标', 'd = {"k": 1}\nx = f"{d[\'k\']}"\n', 'ok'),
     ('字面量', 'f-string 格式说明符', 'x = f"{1:>5}"\n', 'no'),
-    ('字面量', 'bytes', 'x = b"abc"\n', 'no'),
+    ('字面量', 'bytes', 'x = b"abc"\n', 'ok'),
+    ('字面量', 'bytes 空', 'x = b""\n', 'ok'),
+    ('字面量', 'bytes 转义', 'x = b"\\x00\\xff"\n', 'ok'),
+    ('字面量', 'bytes 拼接不报错', 'x = b"a" b"b"\n', 'ok'),
+    ('字面量', 'bytes 与 str 混拼', 'x = b"a" "b"\n', 'no'),
     ('字面量', 'Ellipsis', 'x = ...\n', 'no'),
 
     # ── 运算符 ──

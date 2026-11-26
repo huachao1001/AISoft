@@ -108,6 +108,9 @@ enum class ConstKind : std::uint8_t {
   Int = 2,
   Float = 3,
   Str = 4,
+  // 字节串常量。与 Str 分开：加载时构造的是 Value::bytes 而不是 Value(string)，
+  // 否则 b"abc" == "abc" 会成立（CPython 里是 False）。
+  Bytes = 5,
 };
 
 struct Node;

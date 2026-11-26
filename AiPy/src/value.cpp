@@ -174,8 +174,39 @@ void appendRepr(std::string& out, const Value& value) {
   out += value.toString();
 }
 
-std::string dictRepr(const List& keys, const List& values) {
-  std::string out = "{";
+// CPython 的 bytes repr：默认单引号；内容里有单引号又没有双引号时改用双引号，
+// 避免转义。不可打印字节写成 \xNN，控制字符用短转义。
+std::string bytesRepr(const std::string& text) {
+  const bool hasSingle = text.find('\'') != std::string::npos;
+  const bool hasDouble = text.find('"') != std::string::npos;
+  const char quote = (hasSingle && !hasDouble) ? '"' : '\'';
+  std::string out = "b";
+  out.push_back(quote);
+  for (const char ch : text) {
+    const unsigned char byte = static_cast<unsigned char>(ch);
+    if (byte == static_cast<unsigned char>(quote) || byte == '\\') {
+      out.push_back('\\');
+      out.push_back(static_cast<char>(byte));
+    } else if (byte == '\n') {
+      out += "\\n";
+    } else if (byte == '\r') {
+      out += "\\r";
+    } else if (byte == '\t') {
+      out += "\\t";
+    } else if (byte >= 0x20 && byte < 0x7F) {
+      out.push_back(static_cast<char>(byte));
+    } else {
+      static const char* hex = "0123456789abcdef";
+      out += "\\x";
+      out.push_back(hex[byte >> 4]);
+      out.push_back(hex[byte & 0x0F]);
+    }
+  }
+  out.push_back(quote);
+  return out;
+}
+
+std::string dictRepr(const List& keys, const List& values) {  std::string out = "{";
   for (size_t i = 0; i < keys.size(); ++i) {
     if (i > 0) out += ", ";
     appendRepr(out, keys[i]);
@@ -232,7 +263,7 @@ inline bool isHeapType(Value::Type type) {
   return type == Value::Type::kString || type == Value::Type::kList ||
          type == Value::Type::kDict || type == Value::Type::kObject ||
          type == Value::Type::kDeleted || type == Value::Type::kTuple ||
-         type == Value::Type::kSet;
+         type == Value::Type::kSet || type == Value::Type::kBytes;
 }
 
 }  // namespace
@@ -252,6 +283,7 @@ Value::Value(const Value& other) : type_(other.type_) {
       host_ = other.host_;
       break;
     case Type::kString:
+    case Type::kBytes:
     case Type::kList:
     case Type::kTuple:
     case Type::kSet:
@@ -280,6 +312,7 @@ Value::Value(Value&& other) noexcept : type_(other.type_) {
       host_ = other.host_;
       break;
     case Type::kString:
+    case Type::kBytes:
     case Type::kList:
     case Type::kTuple:
     case Type::kSet:
@@ -320,6 +353,7 @@ Value& Value::operator=(const Value& other) {
       host_ = other.host_;
       break;
     case Type::kString:
+    case Type::kBytes:
     case Type::kList:
     case Type::kTuple:
     case Type::kSet:
@@ -351,6 +385,7 @@ Value& Value::operator=(Value&& other) noexcept {
       host_ = other.host_;
       break;
     case Type::kString:
+    case Type::kBytes:
     case Type::kList:
     case Type::kTuple:
     case Type::kSet:
@@ -417,6 +452,14 @@ Value Value::set(List items) {
   return out;
 }
 
+Value Value::bytes(std::string text) {
+  Value out;
+  out.type_ = Type::kBytes;
+  out.heap_ = makeHeap();
+  out.heap_->text = std::move(text);
+  return out;
+}
+
 Value Value::deleted(std::string name) {
   Value out;
   out.type_ = Type::kDeleted;
@@ -476,7 +519,10 @@ const List& Value::dictValues() const {
 }
 
 const std::string& Value::asString() const {
-  return type_ == Type::kString && heap_ != nullptr ? heap_->text : kEmptyString;
+  // kBytes 也走这条：载荷同样是 HeapData::text，两处只差类型标记。
+  return (type_ == Type::kString || type_ == Type::kBytes) && heap_ != nullptr
+             ? heap_->text
+             : kEmptyString;
 }
 
 List* Value::mutableList() const {
@@ -510,6 +556,8 @@ bool Value::toBool() const {
     case Type::kFloat:
       return float_ != 0.0;
     case Type::kString:
+      return !asString().empty();
+    case Type::kBytes:
       return !asString().empty();
     case Type::kList:
       return heap_ != nullptr && !heap_->items.empty();
@@ -545,6 +593,10 @@ long long Value::toInt() const {
     }
     case Type::kNone:
     case Type::kList:
+    case Type::kTuple:
+    case Type::kSet:
+    case Type::kBytes:
+    case Type::kDeleted:
     case Type::kDict:
     case Type::kHost:
     case Type::kObject:
@@ -567,6 +619,10 @@ double Value::toFloat() const {
     }
     case Type::kNone:
     case Type::kList:
+    case Type::kTuple:
+    case Type::kSet:
+    case Type::kBytes:
+    case Type::kDeleted:
     case Type::kDict:
     case Type::kHost:
     case Type::kObject:
@@ -587,6 +643,10 @@ std::string Value::toString() const {
       return formatFloat(float_);
     case Type::kString:
       return asString();
+    case Type::kBytes: {
+      // CPython 的 bytes repr 带 b 前缀；非可打印字节转成 \xNN。
+      return bytesRepr(asString());
+    }
     case Type::kList:
       return listRepr(asList());
     case Type::kTuple: {
@@ -683,6 +743,7 @@ std::string typeName(const Value& value) {
     case Value::Type::kInt: return "int";
     case Value::Type::kFloat: return "float";
     case Value::Type::kString: return "str";
+    case Value::Type::kBytes: return "bytes";
     case Value::Type::kList: return "list";
     case Value::Type::kTuple: return "tuple";
     case Value::Type::kSet: return "set";
@@ -742,6 +803,9 @@ Value add(const Value& a, const Value& b) {
   if (a.type() == Value::Type::kString && b.type() == Value::Type::kString) {
     return Value(a.asString() + b.asString());
   }
+  if (a.isBytes() && b.isBytes()) {
+    return Value::bytes(a.asString() + b.asString());
+  }
   if (a.isList() && b.isList()) {
     List out = a.asList();
     const List& right = b.asList();
@@ -764,6 +828,10 @@ Value add(const Value& a, const Value& b) {
   if (a.isList()) {
     raiseException("TypeError", "can only concatenate list (not \"" +
                                     typeName(b) + "\") to list");
+    return Value();
+  }
+  if (a.isBytes()) {
+    raiseException("TypeError", "can't concat " + typeName(b) + " to bytes");
     return Value();
   }
   raiseException("TypeError", "unsupported operand type(s) for +: '" +
@@ -826,6 +894,12 @@ Value mul(const Value& a, const Value& b) {
   }
   if (a.isNumber() && b.isList()) return mul(b, a);
   if (a.isNumber() && b.isTuple()) return mul(b, a);
+  if (a.isBytes() && b.isNumber()) {
+    std::string out;
+    for (long long i = 0; i < b.toInt(); ++i) out += a.asString();
+    return Value::bytes(std::move(out));
+  }
+  if (a.isNumber() && b.isBytes()) return mul(b, a);
   raiseException("TypeError", "unsupported operand type(s) for *: '" +
                                   typeName(a) + "' and '" + typeName(b) + "'");
   return Value();
@@ -1097,6 +1171,9 @@ Value length(const Value& v) {
     case Value::Type::kString:
       // 按码点算，不按字节：中文一个字就是 1，与 Python 一致
       return Value(static_cast<long long>(utf8Length(v.asString())));
+    case Value::Type::kBytes:
+      // bytes 的 len 是字节数：b"中文" 在 CPython 里是 6。
+      return Value(static_cast<long long>(v.asString().size()));
     case Value::Type::kList:
       return Value(static_cast<long long>(v.asList().size()));
     case Value::Type::kTuple:
@@ -1181,6 +1258,16 @@ Value at(const Value& container, const Value& index) {
   if (container.isDict()) return dictGet(container, index);
 
   const long long position = index.toInt();
+  if (container.type() == Value::Type::kBytes) {
+    // bytes 的下标返回 int，不是长度为 1 的 bytes——与字符串不同。
+    const std::string& data = container.asString();
+    size_t offset = 0;
+    if (!normalizeIndex(position, data.size(), offset)) {
+      raiseException("IndexError", "index out of range");
+      return Value();
+    }
+    return Value(static_cast<long long>(static_cast<unsigned char>(data[offset])));
+  }
   if (container.type() == Value::Type::kString) {
     const std::string& text = container.asString();
     size_t offset = 0;
@@ -1204,6 +1291,20 @@ Value at(const Value& container, const Value& index) {
 }
 
 Value slice(const Value& container, const Value& start, const Value& end) {
+  if (container.type() == Value::Type::kBytes) {
+    // bytes 切片按字节，返回 bytes（不是 int）。
+    const std::string& data = container.asString();
+    const long long count = static_cast<long long>(data.size());
+    long long from = start.isNone() ? 0 : start.toInt();
+    long long to = end.isNone() ? count : end.toInt();
+    if (from < 0) from += count;
+    if (to < 0) to += count;
+    if (from < 0) from = 0;
+    if (to > count) to = count;
+    if (to <= from) return Value::bytes(std::string());
+    return Value::bytes(data.substr(static_cast<size_t>(from),
+                                    static_cast<size_t>(to - from)));
+  }
   if (container.type() == Value::Type::kString) {
     const std::string& text = container.asString();
     const long long count = static_cast<long long>(utf8Length(text));
@@ -1251,8 +1352,15 @@ Value sliceStep(const Value& container, const Value& start, const Value& end,
   if (stride == 1) return slice(container, start, end);
 
   const bool isText = container.type() == Value::Type::kString;
-  const long long count = isText ? static_cast<long long>(utf8Length(container.asString()))
-                                 : static_cast<long long>(container.asList().size());
+  const bool isBytes = container.type() == Value::Type::kBytes;
+  long long count = 0;
+  if (isText) {
+    count = static_cast<long long>(utf8Length(container.asString()));
+  } else if (isBytes) {
+    count = static_cast<long long>(container.asString().size());
+  } else {
+    count = static_cast<long long>(container.asList().size());
+  }
 
   // Python 的切片边界规则（等价于 slice.indices()）：
   //   stride > 0：默认 start=0、stop=count，钳到 [0, count]
@@ -1295,6 +1403,20 @@ Value sliceStep(const Value& container, const Value& start, const Value& end,
       }
     }
     return Value(std::move(out));
+  }
+
+  if (isBytes) {
+    const std::string& data = container.asString();
+    std::string out;
+    if (stride > 0) {
+      for (long long i = from; i < to; i += stride) out.push_back(data[static_cast<size_t>(i)]);
+    } else {
+      for (long long i = from; i > to; i += stride) {
+        if (i < 0) break;
+        out.push_back(data[static_cast<size_t>(i)]);
+      }
+    }
+    return Value::bytes(std::move(out));
   }
 
   const List& list = container.asList();
@@ -1368,6 +1490,15 @@ Value isSame(const Value& a, const Value& b) {
 
 std::vector<Value> iterate(const Value& container) {
   std::vector<Value> out;
+  if (container.type() == Value::Type::kBytes) {
+    // bytes 的迭代给 int（0-255），不是长度为 1 的 bytes。
+    const std::string& data = container.asString();
+    out.reserve(data.size());
+    for (const char ch : data) {
+      out.emplace_back(static_cast<long long>(static_cast<unsigned char>(ch)));
+    }
+    return out;
+  }
   if (container.type() == Value::Type::kString) {
     // 按字符遍历：`for ch in text` 在脚本里就是逐字，中文一个汉字一个元素。
     // 按字节遍历会得到一堆半个字的乱码片段。

@@ -520,14 +520,18 @@ NodePtr Parser::atom() {
 
     auto node = make_node(Kind::Constant, token.line, token.col);
     node->text = token.text;
-    node->constKind = ConstKind::Str;
+    node->constKind = token.isBytes ? ConstKind::Bytes : ConstKind::Str;
     node->flag = token.isBytes;
 
-    // 相邻字符串自动拼接：`"a" "b"` → `"ab"`
+    // 相邻字符串自动拼接：`"a" "b"` → `"ab"`。bytes 与 str 混拼是
+    // Python 的语法错误，这里与 CPython 同样拒绝。
     while (check(TokenType::String) && !check(TokenType::End)) {
       const Token& next = advance();
+      if (next.isBytes != node->flag) {
+        fail("cannot mix bytes and nonbytes literals");
+        return nullptr;
+      }
       node->text += next.text;
-      if (next.isBytes) node->flag = true;
     }
     return node;
   }

@@ -119,6 +119,10 @@ std::vector<std::uint8_t> packProgram(const Program& program) {
         out.u8(static_cast<std::uint16_t>(ConstType::kStr));
         out.text(constant.strValue);
         break;
+      case ConstKind::Bytes:
+        out.u8(static_cast<std::uint16_t>(ConstType::kBytes));
+        out.text(constant.strValue);
+        break;
       case ConstKind::None:
         // 编译期不会产出 None 常量（None 走 NONE 指令），但格式留了位置。
         out.u8(static_cast<std::uint16_t>(ConstType::kNone));

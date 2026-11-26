@@ -82,6 +82,7 @@ CONST_BOOL = 1
 CONST_INT = 2
 CONST_FLOAT = 3
 CONST_STR = 4
+CONST_BYTES = 5
 
 
 class Writer:
@@ -110,7 +111,8 @@ class Writer:
         self.parts.append(data)
 
     def text(self, value):
-        data = value.encode('utf-8')
+        # bytes 常量可能含任意字节（\xff 这类），不能走 UTF-8 编码。
+        data = value if isinstance(value, bytes) else value.encode('utf-8')
         self.u32(len(data))
         self.raw(data)
 
@@ -160,6 +162,9 @@ def pack(program):
             out.f64(const['value'])
         elif kind == 'str':
             out.u8(CONST_STR)
+            out.text(const['value'])
+        elif kind == 'bytes':
+            out.u8(CONST_BYTES)
             out.text(const['value'])
         else:
             raise ValueError('未知常量类型 %r' % (kind,))

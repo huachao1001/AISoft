@@ -499,6 +499,12 @@ bool CodeGen::constant(const Node& node) {
       emitU16(constIndexOfStr(node.text));
       return true;
     }
+
+    case ConstKind::Bytes: {
+      emit("CONST", node);
+      emitU16(constIndexOfBytes(node.text));
+      return true;
+    }
   }
   return failAt(diag::unsupportedLiteral(node.text), node);
 }

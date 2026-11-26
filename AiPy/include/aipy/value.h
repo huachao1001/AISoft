@@ -100,6 +100,9 @@ class Value {
     // 不用哈希表：脚本里的集合通常只有几个元素，线性查重更快也更省内存；
     // 代价是打印顺序是插入序，而 CPython 按哈希序（已在 LANGUAGE.md 记录）。
     kSet,
+    // 字节串。载荷复用 HeapData::text。必须与字符串分开：CPython 里
+    // `b"abc" == "abc"` 是 False，且下标返回 int、迭代返回 int。
+    kBytes,
     // 「这个槽没有值」——`del x` 之后的状态。CPython 里再读会 NameError，
     // 而 None 是合法的值，两者必须能区分。载荷是变量名（堆字符串），
     // 报错时要把它写进消息。
@@ -135,6 +138,7 @@ class Value {
   bool isList() const { return type_ == Type::kList; }
   bool isTuple() const { return type_ == Type::kTuple; }
   bool isSet() const { return type_ == Type::kSet; }
+  bool isBytes() const { return type_ == Type::kBytes; }
   // 序列：列表或元组。索引、切片、len、迭代、`+`/`*` 都按同一套处理，
   // 差别只在不支持原地修改（元组不可变）。
   bool isSequence() const { return type_ == Type::kList || type_ == Type::kTuple; }
@@ -165,6 +169,8 @@ class Value {
   static Value tuple(List items);
   // 集合：内部按加入顺序去重。
   static Value set(List items);
+  // 字节串。与 string 分开存放：`b"abc" == "abc"` 在 CPython 里是 False。
+  static Value bytes(std::string text);
   static Value dict(const List& keys, const List& values);
   // 「已删除」哨兵：`del x` 之后槽里放它，再读会抛 NameError。名字用于报错。
   static Value deleted(std::string name);

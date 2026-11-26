@@ -125,6 +125,7 @@ class CodeGen {
   int constIndexOfInt(long long value);
   int constIndexOfFloat(double value);
   int constIndexOfStr(const std::string& value);
+  int constIndexOfBytes(const std::string& value);
   int globalSlot(const std::string& name);
   int functionIndex(const std::string& name) const;
 

@@ -27,6 +27,7 @@ enum class ConstType : std::uint8_t {
   kInt = 2,
   kFloat = 3,
   kStr = 4,
+  kBytes = 5,
 };
 
 // 把编译结果写成二进制。返回值与 pack.write_file 一样是字节数。

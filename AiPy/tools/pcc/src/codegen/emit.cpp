@@ -138,6 +138,19 @@ int CodeGen::constIndexOfStr(const std::string& value) {
   return static_cast<int>(consts_.size()) - 1;
 }
 
+int CodeGen::constIndexOfBytes(const std::string& value) {
+  for (std::size_t i = 0; i < consts_.size(); ++i) {
+    if (consts_[i].kind == ConstKind::Bytes && consts_[i].strValue == value) {
+      return static_cast<int>(i);
+    }
+  }
+  Constant constant;
+  constant.kind = ConstKind::Bytes;
+  constant.strValue = value;
+  consts_.push_back(constant);
+  return static_cast<int>(consts_.size()) - 1;
+}
+
 int CodeGen::globalSlot(const std::string& name) {
   for (std::size_t i = 0; i < globalOrder_.size(); ++i) {
     if (globalOrder_[i] == name) return static_cast<int>(i);

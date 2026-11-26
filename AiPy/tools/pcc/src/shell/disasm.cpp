@@ -347,6 +347,15 @@ bool loadBytecodeFile(const std::string& path, LoadedProgram* program,
         program->consts.push_back(reprStr(value));
         break;
       }
+      case ConstType::kBytes: {
+        std::string value;
+        if (!reader.text(&value)) {
+          *error = "bytecode truncated in a bytes constant";
+          return false;
+        }
+        program->consts.push_back("b" + reprStr(value));
+        break;
+      }
       default:
         *error = "unknown constant type " + std::to_string(kind);
         return false;

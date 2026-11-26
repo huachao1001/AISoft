@@ -142,6 +142,7 @@ Result load(const std::uint8_t* data, std::size_t size) {
       case 2: program.consts.push_back(Value(static_cast<long long>(reader.i64()))); break;
       case 3: program.consts.push_back(Value(reader.f64())); break;
       case 4: program.consts.push_back(Value(reader.text())); break;
+      case 5: program.consts.push_back(Value::bytes(reader.text())); break;
       default:
         result.failed = true;
         result.error = "常量类型 " + std::to_string(kind) + " 未知";

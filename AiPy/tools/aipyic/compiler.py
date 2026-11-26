@@ -1449,6 +1449,10 @@ class Compiler:
             self.block.emit('CONST', node)
             self.block.emit_u16(self.const_string(value))
             return
+        if isinstance(value, bytes):
+            self.block.emit('CONST', node)
+            self.block.emit_u16(self.const_index(value))
+            return
         raise CompileError('不支持字面量 %r' % (value,), self.filename, node)
 
     # ── 算子映射 ──
@@ -1524,6 +1528,8 @@ class Compiler:
             return {'type': 'int', 'value': value}
         if isinstance(value, float):
             return {'type': 'float', 'value': value}
+        if isinstance(value, bytes):
+            return {'type': 'bytes', 'value': value}
         return {'type': 'str', 'value': value}
 
 
