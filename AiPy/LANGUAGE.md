@@ -149,21 +149,40 @@ python tests\probe_syntax.py build\final\pcc.exe build\final\aipy_run.exe
 | `x[::-1]` | 负步长（反向） |
 | `d["k"]` | 字典下标 |
 
-### 内建函数（18 个）
+### 内建函数（19 个）
 
 | 函数 | 说明 |
 |---|---|
 | `len` `str` `int` `float` `bool` | 基础 |
 | `abs` `round` `min` `max` `sum` | 数值 |
-| `list` `dict` `range` | 容器构造 |
+| `list` `dict` `range` `set` | 容器构造（`list`/`sum` 可直接吃生成器） |
 | `print` | 输出到 log sink（命令行宿主接 stdout） |
-| `format_text(tpl, list)` | 单占位符格式化，替代 f-string |
-| `parse_number(text)` | 文本转数字，失败返回 `None` |
+| `format_text(tpl, list)` | 单占位符格式化 |
 | `char_from_code` `text_of_char` | 码点与字符互转 |
+| `next(生成器)` | 推进一格，耗尽抛 `StopIteration` |
 
 ### 类
 
-只有一种形态：
+两种形态。
+
+**一、普通 Python 类**（有真正的对象模型）：
+
+```python
+class Animal:
+    def __init__(self, name):
+        self.name = name
+    def speak(self):
+        return "..."
+
+class Dog(Animal):
+    def speak(self):
+        return super().speak() + "!"
+```
+
+支持继承、多继承（MRO 深度优先左到右去重）、类属性、`a.b` 读写、
+`super().m()`。`self` 是真正的第一个形参。
+
+**二、`class X(Activity)`：脚本入口的简写形式**：
 
 ```python
 class App(Activity):
@@ -187,8 +206,8 @@ class App(Activity):
 `global`」那道检查拦下来——写 `self.` 的意图就是改实例状态。但直接写
 `x = 2`（不带 `self.`）仍然会被拒绝，因为那几乎总是漏写 `global` 的笔误。
 
-这条路径由 `aipy_activity` 测试守着（13 条：7 条实跑比对输出、6 条期望被
-拒绝），因为 `Activity` 在 CPython 里没有定义，没法塞进 `examples/`。
+这条路径由 `aipy_activity` 测试守着，因为 `Activity` 在 CPython 里没有定义，
+没法塞进 `examples/`。
 
 ### import
 
@@ -198,36 +217,50 @@ class App(Activity):
 
 ---
 
-## 不支持的部分
+## 支持面与边界
 
-### 值与字面量
+### 字面量
 
-| 写法 | 为什么不支持 |
+| 写法 | 状态 |
 |---|---|
-| 元组 `(1, 2)` | 容器只有列表和字典（沿用 AOT 路线 B6：元组当列表） |
-| 集合 `{1, 2}` | 没有 `set` |
-| f-string `f"{x}"` | 用 `format_text` 或 `+` 拼 |
-| `bytes` `b"abc"` | 没有字节串类型 |
-| `...` | 没有用途 |
+| 元组 `(1, 2)` | 支持（独立类型 `tuple`） |
+| 集合 `{1, 2}` | 支持（独立类型 `set`，按插入序去重） |
+| f-string `f"{x}"` | 支持；**不支持**格式说明符与 `!r`/`!s` |
+| `bytes` `b"abc"` | 支持 |
+| `...` | 不支持，明确报错 |
 
 ### 运算符与比较
 
-| 写法 | 替代 |
+| 写法 | 状态 |
 |---|---|
-| `a @ b` 矩阵乘 | 无 |
-| `:=` 海象 | 先赋值再用 |
-| `a is b`、`a is not b` | 用 `==`；判 `None` 也写 `== None` |
+| `a @ b` 矩阵乘 | 不支持 |
+| `:=` 海象 | 不支持，明确报错 |
+| `a is b`、`a is not b` | 支持 |
+| 切片赋值 `x[1:3] = ...` | 支持 |
+| 多维下标 `x[i][j]` | 支持（逐层下标） |
 
 ### 语句
 
-| 写法 | 替代 |
+| 写法 | 状态 |
 |---|---|
-| `del x` | 容器用 `.pop()` / `.clear()` |
-| `assert` | `if` + 显式处理 |
-| `with a, b:` | 一次只支持一个 manager；嵌套写多个 `with` |
-| `match` / `case` | 用 `if`/`elif` 链 |
-| `nonlocal` | 没有嵌套函数 |
-| `type X = int` | Python 3.12 语法，不支持 |
+| `del x` | 支持 |
+| `assert` | 支持 |
+| `with a, b:` | 支持多条目，按嵌套语义展开 |
+| `match` / `case` | 不支持，用 `if`/`elif` 链 |
+| `nonlocal` | 不支持（没有嵌套函数） |
+| `type X = int` | 不支持（Python 3.12 语法） |
+
+### 类
+
+| 写法 | 状态 |
+|---|---|
+| `class A:` | 支持 |
+| `class A(Base)`、多继承 | 支持（MRO：深度优先、左到右、去重） |
+| `a.b` 读 / `a.b = v` 写 | 支持 |
+| `A(...)` 实例化、`__init__` | 支持 |
+| `super().m()` | 支持 |
+| 类属性 `class A: x = 1` | 支持 |
+| `class X(Activity)` | 另一种入口形式：类体字段展开成模块级变量，方法展开成顶层函数 |
 
 ### 控制流
 
@@ -238,19 +271,21 @@ class App(Activity):
 
 ### 函数
 
-| 写法 | 替代 |
+| 写法 | 状态 |
 |---|---|
-| 默认参数 `def f(a=1)` | 在函数体内判断，或调用处显式传 |
-| 关键字传参 `f(a=1)` | 一律按位置传 |
-| `*args` / `**kwargs` | 参数个数固定 |
-| 仅关键字参数 `def f(*, a)` | 无 |
-| 位置-only 参数 `def f(a, /)` | 无（本来就没有关键字传参可区分） |
-| 嵌套函数 | 移到模块顶层 |
-| `lambda` | 定义具名函数 |
-| 装饰器 `@dec` | 无 |
-| 生成器 `yield` | 返回列表 |
-| `async` / `await` | 单线程，无事件循环 |
-| 函数当值 `g = f` | 没有一等函数，直接调用 |
+| 默认参数 `def f(a=1)` | 支持，在**定义处**求值（CPython 语义） |
+| 关键字传参 `f(a=1)` | 支持 |
+| `*args` / `**kwargs` | 支持 |
+| 仅关键字参数 `def f(*, a)` | 支持 |
+| 位置-only 参数 `def f(a, /)` | 不支持，明确报错 |
+| 嵌套函数 `def` 内套 `def` | 不支持，移到模块顶层 |
+| `lambda` | 支持，可作一等值传参 |
+| 装饰器 `@dec` | 支持，可多层、可带参 |
+| 生成器 `yield` | 支持，真正惰性（调用不执行函数体） |
+| `yield from` | 不支持，明确报错 |
+| `async def` / `await` | 支持；无事件循环，`await` 直接驱动协程到结束 |
+| `async for` / `async with` | 不支持，明确报错 |
+| 函数当值 `g = f` | 支持（一等函数） |
 | 函数名重新赋值 `f = 3` | 不允许，会静默破坏所有 `f()` 调用 |
 
 ### 字符串方法
