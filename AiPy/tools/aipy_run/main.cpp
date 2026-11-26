@@ -31,6 +31,11 @@ int main(int argc, char** argv) {
     std::fwrite(text.data(), 1, text.size(), stdout);
     std::fputc('\n', stdout);
   });
+  // print(end=...) 要求结尾完全可控，所以另装一条不补换行的通道。
+  aipy::setWriteSink([](const std::string& text) {
+    std::fwrite(text.data(), 1, text.size(), stdout);
+    std::fflush(stdout);
+  });
 
   std::ifstream file(argv[1], std::ios::binary);
   if (!file) {

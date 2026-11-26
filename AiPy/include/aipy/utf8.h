@@ -37,4 +37,8 @@ size_t utf8PrevBoundary(std::string_view text, size_t byteOffset);
 // 码点 → UTF-8 字节串。
 std::string utf8Encode(std::uint32_t codepoint);
 
+// byteOffset 处那个字符的码点。utf8Decode 不做合法性校验：
+// 非法首字节按 1 字节返回它的值，与上面各函数的容错约定一致。
+std::uint32_t utf8Decode(std::string_view text, size_t byteOffset);
+
 }

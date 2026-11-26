@@ -187,6 +187,18 @@ enum class Op : std::uint8_t {
   // `type(x) is int`、`isinstance(x, str)` 都要把类型名当值用，而内建名
   // 在编译期就是已知的字符串，所以直接由指令给出名字，不必进全局槽。
   kLoadType,
+
+  // 元组解包：`a, b = x` / `for a, b in ...`。
+  // u16 元素个数。弹一个序列，按顺序把 N 个元素压回栈（**第一个元素在最上**，
+  // 这样随后的 STORE 会先存最后的那个名字，见编译器侧的发射顺序）。
+  // 长度不符抛 ValueError，与 CPython 一致。
+  kUnpack,
+
+  // 带关键字实参的内建调用：u16 内建号, u8 位置实参个数, u8 关键字个数。
+  // 栈上是 [位置实参..., 键1, 值1, 键2, 值2, ...]（键是字符串常量值）。
+  // CALL_BUILTIN 保持原样（只有位置实参），因为绝大多数内建调用没有关键字，
+  // 多解一层键值对在每个 `len(x)` 上都是白花。
+  kCallBuiltinKw,
 };
 
 enum class BinOp : std::uint8_t {

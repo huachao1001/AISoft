@@ -600,6 +600,136 @@ CASES = [
         'print(type(1) is int)\n',
         'True\n5\nFalse\n',
     ),
+    # ── 元组解包 ──
+    (
+        'for 元组解包',
+        'pairs = [[1, "x"], [2, "y"]]\n'
+        'for a, b in pairs:\n'
+        '    print(a, b)\n',
+        '1 x\n2 y\n',
+    ),
+    (
+        '赋值元组解包',
+        'a, b = 1, 2\n'
+        'print(a)\n'
+        'print(b)\n'
+        'x, y = 3, 4\n'
+        'x, y = y, x\n'
+        'print(x, y)\n',
+        '1\n2\n4 3\n',
+    ),
+    (
+        'enumerate 与 zip 配合解包',
+        'for i, v in enumerate(["a", "b"]):\n'
+        '    print(i, v)\n'
+        'for n, s in zip([1, 2], ["x", "y"]):\n'
+        '    print(n, s)\n',
+        '0 a\n1 b\n1 x\n2 y\n',
+    ),
+    (
+        '解包长度不符抛 ValueError',
+        'try:\n'
+        '    a, b = [1]\n'
+        'except ValueError:\n'
+        '    print("bad")\n',
+        'bad\n',
+    ),
+    # ── 基础内建 ──
+    (
+        'sorted 与 reversed',
+        'print(sorted([3, 1, 2]))\n'
+        'print(sorted(["b", "a"]))\n'
+        'print(reversed([1, 2, 3]))\n',
+        "[1, 2, 3]\n['a', 'b']\n[3, 2, 1]\n",
+    ),
+    (
+        'any 与 all',
+        'print(any([0, 1]))\n'
+        'print(all([1, 2]))\n'
+        'print(any([]))\n'
+        'print(all([]))\n',
+        'True\nTrue\nFalse\nTrue\n',
+    ),
+    (
+        'chr / ord 往返',
+        'print(chr(65))\n'
+        'print(ord("A"))\n'
+        'print(chr(0x4E2D))\n'
+        'print(ord("中"))\n',
+        'A\n65\n中\n20013\n',
+    ),
+    (
+        'hex / bin / oct',
+        'print(hex(255))\n'
+        'print(bin(5))\n'
+        'print(oct(8))\n'
+        'print(hex(-255))\n'
+        'print(hex(0))\n',
+        '0xff\n0b101\n0o10\n-0xff\n0x0\n',
+    ),
+    (
+        'repr 与 str 的区别',
+        'print(repr("a"))\n'
+        'print(str("a"))\n'
+        'print(repr([1, "a"]))\n'
+        'print(repr((1,)))\n'
+        'print(repr(None))\n',
+        "'a'\na\n[1, 'a']\n(1,)\nNone\n",
+    ),
+    (
+        'divmod 与 pow',
+        'print(divmod(7, 2))\n'
+        'print(divmod(-7, 2))\n'
+        'print(pow(2, 10))\n'
+        'print(pow(2, 0))\n',
+        '(3, 1)\n(-4, 1)\n1024\n1\n',
+    ),
+    (
+        'tuple 构造',
+        'print(tuple([1, 2]))\n'
+        'print(tuple())\n'
+        'print(tuple("ab"))\n',
+        "(1, 2)\n()\n('a', 'b')\n",
+    ),
+    (
+        'isinstance 元组形式',
+        'class A:\n'
+        '    pass\n'
+        'class B:\n'
+        '    pass\n'
+        'print(isinstance(1, (str, int)))\n'
+        'print(isinstance([], (str, int)))\n'
+        'print(isinstance(A(), (A, B)))\n'
+        'print(isinstance(1, ()))\n',
+        'True\nFalse\nTrue\nFalse\n',
+    ),
+    # ── 内建的关键字实参 ──
+    (
+        'print 的 sep 与 end',
+        'print(1, 2, sep="-")\n'
+        'print("a", end="!")\n'
+        'print("b")\n',
+        '1-2\na!b\n',
+    ),
+    (
+        'sorted 的 reverse 关键字',
+        'print(sorted([2, 1, 3], reverse=True))\n'
+        'print(sorted([2, 1, 3]))\n',
+        '[3, 2, 1]\n[1, 2, 3]\n',
+    ),
+    (
+        'int 的 base 关键字',
+        'print(int("ff", base=16))\n'
+        'print(int("10", base=2))\n'
+        'print(int("-ff", base=16))\n',
+        '255\n2\n-255\n',
+    ),
+    (
+        'round 的 ndigits 关键字',
+        'print(round(1.234, ndigits=2))\n'
+        'print(round(1.6))\n',
+        '1.23\n2\n',
+    ),
     # ── 期望被拒绝的 ──
     (
         '两个 Activity 被拒绝',

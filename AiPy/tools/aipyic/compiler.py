@@ -65,7 +65,8 @@ OPCODES = [
     'CALL_DYN', 'DICT_MERGE', 'MAKE_FUNCTION', 'CALL_VALUE',
     'CALL_VALUE_DYN', 'MAKE_CLASS', 'GET_ATTR', 'SET_ATTR', 'INSTANTIATE',
     'MAKE_SUPER', 'YIELD', 'AWAIT',
-    'MAKE_STATIC_METHOD', 'MAKE_CLASS_METHOD', 'LOAD_TYPE',
+    'MAKE_STATIC_METHOD', 'MAKE_CLASS_METHOD', 'LOAD_TYPE', 'UNPACK',
+    'CALL_BUILTIN_KW',
 ]
 
 # 二元算子编号，与 vm.h 的 BinOp 一致。
@@ -82,6 +83,21 @@ BUILTINS = [
     'sum', 'list', 'dict', 'range', 'print',
     'format_text', 'char_from_code', 'text_of_char', 'set', 'next',
     'type', 'isinstance',
+    'sorted',
+    'reversed',
+    'zip',
+    'enumerate',
+    'any',
+    'all',
+    'chr',
+    'ord',
+    'hex',
+    'bin',
+    'oct',
+    'repr',
+    'divmod',
+    'pow',
+    'tuple',
 ]
 
 OP = {name: index for index, name in enumerate(OPCODES)}
@@ -1530,7 +1546,13 @@ class Compiler:
             self.block.emit('SET_ITEM', node)
             return
         if isinstance(target, (ast.Tuple, ast.List)):
-            raise CompileError('不支持元组解包赋值；请分开写', self.filename, target)
+            # 元组解包：栈上已有序列。UNPACK 拆成 N 个元素（第一个在最上），
+            # 随后按**从后往前**的顺序逐个 assign_target。
+            self.block.emit('UNPACK', target)
+            self.block.emit_u16(len(target.elts))
+            for element in reversed(target.elts):
+                self.assign_target(element, node)
+            return
         raise CompileError('不支持这种赋值目标', self.filename, target)
 
     def augmented(self, node):
@@ -1554,8 +1576,10 @@ class Compiler:
     def for_loop(self, node):
         if node.orelse:
             raise CompileError('不支持 for ... else', self.filename, node)
-        if not isinstance(node.target, ast.Name):
-            raise CompileError('for 的循环变量必须是单个名字', self.filename, node.target)
+        tuple_target = isinstance(node.target, (ast.Tuple, ast.List))
+        if not isinstance(node.target, ast.Name) and not tuple_target:
+            raise CompileError('for 的循环变量必须是单个名字', self.filename,
+                               node.target)
 
         self.expr(node.iter)
         self.block.emit('ITER_INIT', node)
@@ -1563,7 +1587,11 @@ class Compiler:
         self.block.emit('ITER_NEXT', node)
         exit_fixup = len(self.block.code)
         self.block.emit_u16(0)
-        self.name_store(node.target.id, node)
+        if tuple_target:
+            # ITER_NEXT 压上来的元素本身是序列，交给 assign_target 拆。
+            self.assign_target(node.target, node)
+        else:
+            self.name_store(node.target.id, node)
 
         self.loop_stack.append((loop_top, [], True))
         for statement in node.body:
@@ -2008,9 +2036,24 @@ class Compiler:
             return
 
         # 内建：len/str/range… 编译成 CALL_BUILTIN + 下标。
+        # 带关键字实参时走 CALL_BUILTIN_KW：内建签名没有形参名，由 VM 按
+        # builtins_keywords.cpp 的表把名字换成位置。
         if isinstance(node.func, ast.Name) and node.func.id in BUILTIN_INDEX:
             if node.keywords:
-                raise CompileError('不支持关键字传参；按位置传', self.filename, node)
+                for argument in node.args:
+                    self.expr(argument)
+                for keyword in node.keywords:
+                    if keyword.arg is None:
+                        raise CompileError('不支持 ** 展开到内建调用',
+                                           self.filename, node)
+                    self.block.emit('CONST', keyword)
+                    self.block.emit_u16(self.const_string(keyword.arg))
+                    self.expr(keyword.value)
+                self.block.emit('CALL_BUILTIN_KW', node)
+                self.block.emit_u16(self.builtin_index(node.func.id))
+                self.block.emit_u8(len(node.args))
+                self.block.emit_u8(len(node.keywords))
+                return
             for argument in node.args:
                 self.expr(argument)
             self.block.emit('CALL_BUILTIN', node)

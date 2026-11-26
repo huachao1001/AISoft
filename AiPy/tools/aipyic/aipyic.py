@@ -96,6 +96,8 @@ OPERANDS = {
     'YIELD': (),
     'AWAIT': (),
     'LOAD_TYPE': ('u16',),
+    'UNPACK': ('u16',),
+    'CALL_BUILTIN_KW': ('u16', 'u8', 'u8'),
     'BUILD_TUPLE': ('u16',),
     'BUILD_SET': ('u16',),
     'DEL_LOCAL': ('u16',),

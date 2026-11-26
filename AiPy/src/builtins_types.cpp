@@ -48,6 +48,32 @@ bool classHierarchyHas(const Value& cls, const std::string& wantedName,
 
 }  // namespace
 
+// 单个类型判定。wanted 不是类型时写 error 并返回 false。
+bool isInstanceOfType(const Value& value, const Value& wanted,
+                      std::string* error) {
+  if (!isBuiltinClass(wanted) && !isClass(wanted)) {
+    *error = "isinstance() arg 2 must be a type or tuple of types";
+    return false;
+  }
+
+  const std::string wantedName =
+      isBuiltinClass(wanted) ? builtinClassName(wanted) : classNameOf(wanted);
+
+  // 1. 脚本类实例：沿类层次往上找，多继承也能命中。
+  if (isInstance(value)) {
+    const Value cls = instanceClass(value);
+    if (isClass(cls) && classHierarchyHas(cls, wantedName, 0)) return true;
+  }
+
+  // 2. 异常对象：按异常类的层级判断（`isinstance(e, Exception)` 要成立）。
+  if (isException(value)) {
+    return exceptionMatches(exceptionType(value), wantedName);
+  }
+
+  // 3. 其余按类型名比。这是 CPython 里 isinstance(1, int) 的等价语义。
+  return comparableTypeName(value) == wantedName;
+}
+
 Value builtinType(const Value* args, int count, std::string* error) {
   if (count != 1) {
     *error = "type() takes exactly one argument (" + std::to_string(count) +
@@ -66,31 +92,18 @@ Value builtinIsInstance(const Value* args, int count, std::string* error) {
   const Value& value = args[0];
   const Value& wanted = args[1];
 
-  // 第二个参数只支持单个类型。元组形式（`isinstance(x, (A, B))`）等有
-  // 需求再加——现在明确报错，不静默返回 False。
-  if (!isBuiltinClass(wanted) && !isClass(wanted)) {
-    *error = "isinstance() arg 2 must be a type or tuple of types";
-    return Value();
-  }
-
-  const std::string wantedName =
-      isBuiltinClass(wanted) ? builtinClassName(wanted) : classNameOf(wanted);
-
-  // 1. 脚本类实例：沿类层次往上找，多继承也能命中。
-  if (isInstance(value)) {
-    const Value cls = instanceClass(value);
-    if (isClass(cls) && classHierarchyHas(cls, wantedName, 0)) {
-      return Value(true);
+  // 空元组是一个合法的第二参数，但它永远匹配不上——`isinstance(x, ())`
+  // 在 CPython 里返回 False 而不是报错。
+  if (wanted.isTuple()) {
+    for (const Value& candidate : wanted.asList()) {
+      if (isInstanceOfType(value, candidate, error)) return Value(true);
+      // 元素本身不是类型就报错，不继续往下试：否则
+      // `isinstance(x, (int, "bad"))` 有时返回 True、有时报错。
+      if (!error->empty()) return Value();
     }
+    return Value(false);
   }
-
-  // 2. 异常对象：按异常类的层级判断（`isinstance(e, Exception)` 要成立）。
-  if (isException(value)) {
-    return Value(exceptionMatches(exceptionType(value), wantedName));
-  }
-
-  // 3. 其余按类型名比。这是 CPython 里 isinstance(1, int) 的等价语义。
-  return Value(comparableTypeName(value) == wantedName);
+  return Value(isInstanceOfType(value, wanted, error));
 }
 
 }  // namespace builtins

@@ -113,4 +113,22 @@ std::string utf8Encode(std::uint32_t codepoint) {
   return out;
 }
 
+std::uint32_t utf8Decode(std::string_view text, size_t byteOffset) {
+  if (byteOffset >= text.size()) return 0;
+  const auto lead = static_cast<unsigned char>(text[byteOffset]);
+  const size_t len = utf8CharLength(lead);
+  if (len == 1 || byteOffset + len > text.size()) return lead;
+  std::uint32_t code = 0;
+  switch (len) {
+    case 2: code = lead & 0x1F; break;
+    case 3: code = lead & 0x0F; break;
+    default: code = lead & 0x07; break;
+  }
+  for (size_t i = 1; i < len; ++i) {
+    code = (code << 6) |
+           (static_cast<unsigned char>(text[byteOffset + i]) & 0x3F);
+  }
+  return code;
+}
+
 }

@@ -73,6 +73,8 @@ const char* opName(Op op) {
     case Op::kMakeStaticMethod: return "make_static_method";
     case Op::kMakeClassMethod: return "make_class_method";
     case Op::kLoadType: return "load_type";
+    case Op::kUnpack: return "unpack";
+    case Op::kCallBuiltinKw: return "call_builtin_kw";
   }
   return "?";
 }

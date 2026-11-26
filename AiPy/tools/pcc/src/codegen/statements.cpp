@@ -350,7 +350,15 @@ bool CodeGen::assignTarget(const Node& target, const Node& node) {
   }
 
   if (target.kind == Kind::TupleLit || target.kind == Kind::ListLit) {
-    return failAt(diag::tupleUnpackAssign(), target);
+    // 元组解包：栈上已有序列。UNPACK 把它拆成 N 个元素（第一个在最上），
+    // 随后按**从后往前**的顺序逐个 assignTarget——每个目标都会弹掉一个。
+    const std::size_t count = target.children.size();
+    emit("UNPACK", target);
+    emitU16(static_cast<int>(count));
+    for (std::size_t i = count; i > 0; --i) {
+      if (!assignTarget(*target.children[i - 1], node)) return false;
+    }
+    return true;
   }
   return failAt(diag::badAssignTarget(), target);
 }
@@ -383,7 +391,9 @@ bool CodeGen::forLoop(const Node& node) {
   if (node.orelseCount > 0) return failAt(diag::forElse(), node);
 
   const Node& target = *node.children[0];
-  if (target.kind != Kind::Name && !isSelfName(target)) {
+  const bool tupleTarget =
+      target.kind == Kind::TupleLit || target.kind == Kind::ListLit;
+  if (target.kind != Kind::Name && !isSelfName(target) && !tupleTarget) {
     return failAt(diag::loopVariableName(), target);
   }
 
@@ -393,7 +403,12 @@ bool CodeGen::forLoop(const Node& node) {
   emit("ITER_NEXT", node);
   const int exitFixup = static_cast<int>(block_->code.size());
   emitU16(0);
-  nameStore(target.text, node);
+  // 元组目标：ITER_NEXT 压上来的元素本身是序列，交给 assignTarget 拆。
+  if (tupleTarget) {
+    if (!assignTarget(target, node)) return false;
+  } else {
+    nameStore(target.text, node);
+  }
 
   loopStack_.push_back(LoopFrame{loopTop, {}, true});
   for (std::size_t i = 0; i < node.bodyCount; ++i) {

@@ -31,4 +31,25 @@ BuiltinFn builtinAt(int index);
 // 名字 → 下标，没有返回 -1。编译器用它把 `len(x)` 定成下标。
 int builtinIndexFromName(const std::string& name);
 
+// 关键字实参的名字 → 位置实参下标；这个名字的内建不接受该关键字时返回 -1。
+//
+// 内建签名统一是 `(args, count, error)`，没有形参名，所以 `print(sep="-")`
+// 这类写法要先在 VM 里按名字换成位置。表见 builtins_keywords.cpp。
+int builtinKeywordPosition(const std::string& builtin,
+                           const std::string& keyword);
+
+// 这个内建接受关键字实参吗（不接受时明确报 TypeError，与 CPython 一致）。
+bool builtinTakesKeywords(const std::string& builtin);
+
+// 仅关键字参数（sorted 的 key/reverse）：不在位置表里，但必须被接受。
+bool builtinAcceptsKeyword(const std::string& builtin,
+                           const std::string& keyword);
+
+// print 的 sep/end 形式。
+//
+// 内建签名统一是 `(args, count, error)`，放不下两个可选的尾部参数，
+// 所以 `print(a, b, sep="-", end="")` 由 VM 单独调这个入口。
+Value printWithSeparators(const Value* args, int count, const Value& sep,
+                          const Value& end);
+
 }  // namespace aipy

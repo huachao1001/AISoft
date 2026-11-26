@@ -251,6 +251,10 @@ Value builtinRange(const Value* args, int count, std::string* error) {
 
 // print：走 log sink。GUI 宿主把它接到 OutputDebugString，命令行宿主接
 // stderr——语言层不该知道自己跑在哪儿。
+//
+// 这里是**纯位置参数**形式（`print(a, b)`）。带 sep/end 的调用走
+// printWithSeparators：内建签名统一是 (args, count, error)，没有地方放
+// 两个「可选尾部参数」，硬塞进 args 会让参数个数与对象的个数混在一起。
 Value builtinPrint(const Value* args, int count, std::string*) {
   std::string text;
   for (int i = 0; i < count; ++i) {
@@ -311,6 +315,23 @@ Value builtinTextOfChar(const Value* args, int count, std::string* error) {
 Value builtinType(const Value* args, int count, std::string* error);
 Value builtinIsInstance(const Value* args, int count, std::string* error);
 
+// 容器变换与编码类，实现见 builtins_containers.cpp。
+Value builtinSorted(const Value* args, int count, std::string* error);
+Value builtinReversed(const Value* args, int count, std::string* error);
+Value builtinZip(const Value* args, int count, std::string* error);
+Value builtinEnumerate(const Value* args, int count, std::string* error);
+Value builtinAny(const Value* args, int count, std::string* error);
+Value builtinAll(const Value* args, int count, std::string* error);
+Value builtinChr(const Value* args, int count, std::string* error);
+Value builtinOrd(const Value* args, int count, std::string* error);
+Value builtinHex(const Value* args, int count, std::string* error);
+Value builtinBin(const Value* args, int count, std::string* error);
+Value builtinOct(const Value* args, int count, std::string* error);
+Value builtinRepr(const Value* args, int count, std::string* error);
+Value builtinDivmod(const Value* args, int count, std::string* error);
+Value builtinPow(const Value* args, int count, std::string* error);
+Value builtinTuple(const Value* args, int count, std::string* error);
+
 // ── 名字表 ──
 //
 // 顺序必须与 Python 侧编译器（tools/pyuic/vm_compiler.py）的 BUILTINS 一致。
@@ -347,6 +368,21 @@ const Entry kBuiltinTable[] = {
     {"next", nullptr},
     {"type", builtinType},
     {"isinstance", builtinIsInstance},
+    {"sorted", builtinSorted},
+    {"reversed", builtinReversed},
+    {"zip", builtinZip},
+    {"enumerate", builtinEnumerate},
+    {"any", builtinAny},
+    {"all", builtinAll},
+    {"chr", builtinChr},
+    {"ord", builtinOrd},
+    {"hex", builtinHex},
+    {"bin", builtinBin},
+    {"oct", builtinOct},
+    {"repr", builtinRepr},
+    {"divmod", builtinDivmod},
+    {"pow", builtinPow},
+    {"tuple", builtinTuple},
 };
 
 }  // namespace builtins
@@ -370,6 +406,25 @@ int builtinIndexFromName(const std::string& name) {
     if (name == builtins::kBuiltinTable[i].name) return i;
   }
   return -1;
+}
+
+// print 的 sep/end 形式：内建签名统一是 (args, count, error)，放不下两个
+// 可选的尾部参数，所以由 VM 的 CALL_BUILTIN_KW 单独调这个入口。
+Value printWithSeparators(const Value* args, int count, const Value& sep,
+                          const Value& end) {
+  const std::string separator = sep.isNone() ? " " : sep.toString();
+  std::string text;
+  for (int i = 0; i < count; ++i) {
+    if (i > 0) text += separator;
+    text += args[i].toString();
+  }
+  if (end.isNone()) {
+    log(Value(std::move(text)));
+    return Value();
+  }
+  text += end.toString();
+  writeRaw(text);
+  return Value();
 }
 
 }  // namespace aipy

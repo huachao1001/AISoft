@@ -599,11 +599,37 @@ Value textOfChar(const Value& codepoint);
 // ── 其它内建 ──
 Value minimum(const Value& a, const Value& b);
 Value maximum(const Value& a, const Value& b);
+
+// ── 排序 / 拼接（sorted / reversed / zip / enumerate）──
+//
+// 都在值层而不是内建里，因为它们是纯容器操作，与具体能力无关。
+// 与 `list.sort()` 共用同一套比较规则（见 sortList）。
+Value sortedCopy(const Value& items, const Value& key, bool reverse);
+Value reversedCopy(const Value& items);
+Value zipOf(const Value& left, const Value& right);
+Value enumerateOf(const Value& items, const Value& start);
+
+// ── 编码 / 进制（chr / ord / hex / bin / oct）──
+Value chrOf(const Value& codepoint);
+Value ordOf(const Value& text);
+Value intToBase(const Value& number, int base);
+
+// ── 聚合（any / all）──
+Value anyOf(const Value& items);
+Value allOf(const Value& items);
+
+// CPython 的 repr()：字符串带引号、容器递归。与 toString 的区别就在这里。
+std::string reprOf(const Value& value);
+
+// dict(pairs) / tuple(iterable)
+Value dictFromPairs(const Value& pairs);
 // 字符串 → 数字，只认整串都是数字（"12abc" 返回 None 而不是 12）
 // 文本 → 整数；整串必须是整数，失败返回 None（调用方抛 ValueError）。
 Value parseInteger(const Value& text);
 // 文本 → 浮点；整串必须是数字，失败返回 None。
 Value parseFloat(const Value& text);
+// int(text, base)：base 为 2..36。文本非法时抛 ValueError，与 CPython 一致。
+Value integerFromBase(const Value& text, long long base);
 // 码点 → UTF-8 字符
 Value charFromCode(const Value& codepoint);
 // 调试输出。默认写 stderr；宿主可以装自己的 sink（GUI 程序里 stderr
@@ -612,6 +638,13 @@ Value charFromCode(const Value& codepoint);
 using LogSink = std::function<void(const std::string&)>;
 void setLogSink(LogSink sink);
 void log(const Value& value);
+
+// 原样写出，**不追加换行**。log() 的宿主实现会补一个 '\n'，而
+// `print(x, end="")` 要求结尾完全可控，所以另开一条通道。
+// 不设 sink 时写 stderr，与 log 的默认一致。
+using WriteSink = std::function<void(const std::string&)>;
+void setWriteSink(WriteSink sink);
+void writeRaw(const std::string& text);
 
 // 诊断输出：pylib 的失败原因走这里，**不走 log**。
 //

@@ -18,6 +18,8 @@
 //   4. 任何 return 都要先把返回值从当前帧的栈区里取出来，再回到上一帧。
 #include "vm/internal.h"
 
+#include "aipy/builtins.h"
+
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -463,6 +465,162 @@ static void pushFrame(const Function& fn, std::vector<Value> locals,
   callee.stackBase = stackBase;
   callee.locals = std::move(locals);
   frames.push_back(std::move(callee));
+}
+
+// 调一个内建。CALL_BUILTIN 与 CALL_BUILTIN_KW 共用这一段，避免两份
+// 「抽干生成器 / next 特例」慢慢分叉。
+//
+// `sep` / `end` 只对 print 有意义：空 Value 表示「没给」。print 的默认
+// 分隔符与结尾由 print 自己补，所以这里只在非空时把参数个数撑到它们的位置。
+//
+// 返回 false 表示异常已抛出（raiseException），调用方不要再压返回值。
+// 关键字实参：`names[i]` 对应 `values[i]`。仅关键字参数（sorted 的
+// key/reverse）就靠它传，不能靠加长 args——那会让 argc 与实际位置实参
+// 个数混淆，内建自己无法区分。
+struct KeywordArgs {
+  const std::string* names = nullptr;
+  const Value* values = nullptr;
+  int count = 0;
+};
+
+static bool invokeBuiltin(const Program& program, std::vector<Value>& globals,
+                          std::uint16_t index, Value* args, int argc,
+                          const KeywordArgs& keywords, Value* out,
+                          std::string* failure) {
+  failure->clear();
+  // `next(g)`：推进一格。只能在这里做——值层拿不到 Program。
+  if (program.builtinNames[index] == "next") {
+    if (argc != 1) {
+      raiseException("TypeError", "next() takes exactly one argument (" +
+                                      std::to_string(argc) + " given)");
+      return false;
+    }
+    if (!isGenerator(args[0])) {
+      raiseException("TypeError", "'" + typeName(args[0]) +
+                                      "' object is not an iterator");
+      return false;
+    }
+    Value produced;
+    std::string errorType;
+    std::string error;
+    bool failed = false;
+    if (advanceGenerator(program, globals, args[0], &produced, &errorType,
+                         &error, &failed)) {
+      *out = produced;
+      return true;
+    }
+    if (failed) {
+      raiseException(errorType.empty() ? "RuntimeError" : errorType, error);
+      return false;
+    }
+    raiseException("StopIteration", "");
+    return false;
+  }
+
+  // 生成器先抽干成列表：内建（list/sum/len…）只认容器，而值层的
+  // iterate() 拿不到 Program，无法推进生成器。
+  for (int i = 0; i < argc; ++i) {
+    if (!isGenerator(args[i])) continue;
+    List collected;
+    Value produced;
+    std::string errorType;
+    std::string error;
+    bool failed = false;
+    while (advanceGenerator(program, globals, args[i], &produced, &errorType,
+                            &error, &failed)) {
+      collected.push_back(produced);
+    }
+    if (failed) {
+      raiseException(errorType.empty() ? "RuntimeError" : errorType, error);
+      return false;
+    }
+    args[i] = Value::list(std::move(collected));
+  }
+
+  const std::string& builtinName = program.builtinNames[index];
+
+  // print 的 sep/end。
+  if (builtinName == "print") {
+    Value sep;
+    Value end;
+    for (int i = 0; i < keywords.count; ++i) {
+      if (keywords.names[i] == "sep") {
+        sep = keywords.values[i];
+      } else if (keywords.names[i] == "end") {
+        end = keywords.values[i];
+      }
+    }
+    *out = aipy::printWithSeparators(args, argc, sep, end);
+    return true;
+  }
+
+  // sorted 的 key / reverse 是仅关键字参数。
+  if (builtinName == "sorted") {
+    if (argc != 1) {
+      *failure = "sorted expected 1 argument, got " + std::to_string(argc);
+      return false;
+    }
+    Value key;
+    bool reverse = false;
+    for (int i = 0; i < keywords.count; ++i) {
+      if (keywords.names[i] == "key") {
+        key = keywords.values[i];
+      } else if (keywords.names[i] == "reverse") {
+        reverse = keywords.values[i].toBool();
+      }
+    }
+    *out = sortedCopy(args[0], key, reverse);
+    return true;
+  }
+
+  // round(x, ndigits=None) / enumerate(iterable, start=0) / str(object='')
+  // 这几个的关键字就是它们的位置参数别名，直接换成位置。
+  if (builtinName == "round" || builtinName == "enumerate" ||
+      builtinName == "str") {
+    for (int i = 0; i < keywords.count; ++i) {
+      int position = -1;
+      if (builtinName == "round" && keywords.names[i] == "ndigits") position = 1;
+      if (builtinName == "enumerate" && keywords.names[i] == "start") position = 1;
+      if (builtinName == "str" && keywords.names[i] == "object") position = 0;
+      if (position < 0) continue;
+      while (argc <= position) args[argc++] = Value();
+      args[position] = keywords.values[i];
+    }
+  }
+
+  // int 的 base 是仅关键字参数。
+  if (builtinName == "int") {
+    if (argc != 1) {
+      *failure = "int expected 1 argument, got " + std::to_string(argc);
+      return false;
+    }
+    long long base = 10;
+    for (int i = 0; i < keywords.count; ++i) {
+      if (keywords.names[i] == "base") base = keywords.values[i].toInt();
+    }
+    if (base == 10) {
+      // 走原来的实现（含错误消息）。
+      std::string error;
+      const Value value = program.builtins[index](args, argc, &error);
+      if (!error.empty()) {
+        *failure = error;
+        return false;
+      }
+      *out = value;
+      return true;
+    }
+    *out = integerFromBase(args[0], base);
+    return true;
+  }
+
+  std::string error;
+  const Value value = program.builtins[index](args, argc, &error);
+  if (!error.empty()) {
+    *failure = error;
+    return false;
+  }
+  *out = value;
+  return true;
 }
 
 // 执行循环本体：帧已建好，从 frames.back() 开始跑。
@@ -1191,68 +1349,94 @@ static Result execute(const Program& program, std::vector<Value>& globals,
 
       case Op::kCallBuiltin: {
         const std::uint16_t index = read16(code, frame.pc);
-        const std::uint8_t argc = code[frame.pc + 2];
+        const int argc = code[frame.pc + 2];
         frame.pc += 3;
         if (index >= program.builtins.size()) return fail("内建号越界（编译器 bug）");
-        Value args[8];
         if (argc > 8) return fail("内建最多 8 个参数");
+        Value args[8];
         for (int i = argc - 1; i >= 0; --i) args[i] = stack[--sp];
+        Value produced;
+        std::string failure;
+        if (!invokeBuiltin(program, globals, index, args, argc, KeywordArgs(),
+                           &produced, &failure)) {
+          if (!failure.empty()) return fail(failure);
+          break;
+        }
+        stack[sp++] = produced;
+        break;
+      }
 
-        // `next(g)`：推进一格。只能在这里做——值层拿不到 Program。
-        if (program.builtinNames[index] == "next") {
-          if (argc != 1) {
-            raiseException("TypeError", "next() takes exactly one argument (" +
-                                            std::to_string(argc) + " given)");
-            break;
-          }
-          if (!isGenerator(args[0])) {
-            raiseException("TypeError", "'" + typeName(args[0]) +
-                                            "' object is not an iterator");
-            break;
-          }
-          Value produced;
-          std::string errorType;
-          std::string error;
-          bool failed = false;
-          if (advanceGenerator(program, globals, args[0], &produced, &errorType,
-                               &error, &failed)) {
-            stack[sp++] = produced;
-            break;
-          }
-          if (failed) {
-            raiseException(errorType.empty() ? "RuntimeError" : errorType, error);
-            break;
-          }
-          raiseException("StopIteration", "");
+      case Op::kCallBuiltinKw: {
+        // 栈上是 [位置实参..., 键, 值, 键, 值, ...]。
+        const std::uint16_t index = read16(code, frame.pc);
+        const int positional = code[frame.pc + 2];
+        const int keywordCount = code[frame.pc + 3];
+        frame.pc += 4;
+        if (index >= program.builtins.size()) return fail("内建号越界（编译器 bug）");
+        if (positional + keywordCount > 8) return fail("内建最多 8 个参数");
+
+        const std::string& name = program.builtinNames[index];
+        if (!builtinTakesKeywords(name)) {
+          raiseException("TypeError", name + "() takes no keyword arguments");
           break;
         }
 
-        // 生成器先抽干成列表：内建（list/sum/len…）只认容器，而值层的
-        // iterate() 拿不到 Program，无法推进生成器。
-        for (int i = 0; i < argc; ++i) {
-          if (!isGenerator(args[i])) continue;
-          List collected;
-          Value produced;
-          std::string errorType;
-          std::string error;
-          bool failed = false;
-          while (advanceGenerator(program, globals, args[i], &produced,
-                                  &errorType, &error, &failed)) {
-            collected.push_back(produced);
+        // 栈顶是最后压的键值对，所以先把关键字全部弹出来（同时记住每个
+        // 关键字要落在哪个位置），再弹位置实参。
+        Value keywordValues[8];
+        std::string keywordNames[8];
+        for (int i = keywordCount - 1; i >= 0; --i) {
+          keywordValues[i] = stack[--sp];
+          keywordNames[i] = stack[--sp].asString();
+        }
+
+        Value args[8];
+        for (int i = positional - 1; i >= 0; --i) args[i] = stack[--sp];
+        int argc = positional;
+
+        // 关键字只做合法性校验，不在这里增补位置——仅关键字参数
+        // （sorted 的 key/reverse）由 invokeBuiltin 按名字取，不能占用
+        // 位置槽，否则 argc 会虚增。
+        Value sep;   // 只有 print 用；空 Value 表示「没给」
+        Value end;
+        for (int i = 0; i < keywordCount; ++i) {
+          const std::string& key = keywordNames[i];
+          if (name == "print") {
+            if (key == "sep") {
+              sep = keywordValues[i];
+            } else if (key == "end") {
+              end = keywordValues[i];
+            } else {
+              raiseException("TypeError", "print() got an unexpected keyword "
+                                          "argument '" + key + "'");
+              break;
+            }
+            continue;
           }
-          if (failed) {
-            raiseException(errorType.empty() ? "RuntimeError" : errorType, error);
+          if (builtinKeywordPosition(name, key) < 0 &&
+              !builtinAcceptsKeyword(name, key)) {
+            raiseException("TypeError", name + "() got an unexpected keyword "
+                                            "argument '" + key + "'");
             break;
           }
-          args[i] = Value::list(std::move(collected));
         }
         if (hasPendingException()) break;
-        std::string error;
-        const Value value = program.builtins[index](args, argc, &error);
-        if (!error.empty()) return fail(error);
-        stack[sp++] = value;
+
+        Value produced;
+        std::string failure;
+        KeywordArgs keywordArgs;
+        keywordArgs.names = keywordNames;
+        keywordArgs.values = keywordValues;
+        keywordArgs.count = keywordCount;
+        if (!invokeBuiltin(program, globals, index, args, argc, keywordArgs,
+                           &produced, &failure)) {
+          if (!failure.empty()) return fail(failure);
+          break;
+        }
+        stack[sp++] = produced;
         break;
       }
+
       case Op::kCallExt: {
         const std::uint16_t index = read16(code, frame.pc);
         const std::uint8_t argc = code[frame.pc + 2];
@@ -1573,6 +1757,38 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         frame.pc += 2;
         if (nameIndex >= program.consts.size()) return fail("类型名越界（编译器 bug）");
         stack[sp++] = makeBuiltinClass(program.consts[nameIndex].asString());
+        break;
+      }
+
+      case Op::kUnpack: {
+        // u16 元素个数。弹一个序列，把前 N 个元素压回栈（第一个在最上，
+        // 这样紧跟其后的 STORE 会依次存倒数第一个名字…… 见编译器侧的
+        // 反向发射顺序）。
+        const std::uint16_t wanted = read16(code, frame.pc);
+        frame.pc += 2;
+        if (sp < 1) return fail("元组解包缺少值（编译器 bug）");
+        const Value source = stack[--sp];
+        const Value::List items = iterate(source);
+        if (items.size() != wanted) {
+          // CPython 区分「不够」和「太多」两种消息。
+          const std::string expected = std::to_string(wanted);
+          const std::string got = std::to_string(items.size());
+          if (items.size() < wanted) {
+            raiseException("ValueError", "not enough values to unpack (expected " +
+                                             expected + ", got " + got + ")");
+          } else {
+            raiseException("ValueError", "too many values to unpack (expected " +
+                                             expected + ")");
+          }
+          break;
+        }
+        // 顺序很关键：随后的 STORE 是从**栈顶**逐个取值的，而编译器按
+        // 「从后往前」分配目标（`a, b = x` 先存 b 再存 a）。所以第一个
+        // 元素必须最后压（在栈顶），最后一个元素先压。
+        for (const Value& item : items) {
+          if (sp >= kStackSize) return fail("操作数栈溢出");
+          stack[sp++] = item;
+        }
         break;
       }
 

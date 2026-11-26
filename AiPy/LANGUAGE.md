@@ -66,6 +66,7 @@ python tests\probe_syntax.py build\final\pcc.exe build\final\aipy_run.exe
 | `a = b = 1` | 链式赋值 |
 | `x += 1` 等 | `+=` `-=` `*=` 等增量赋值 |
 | `x[0] = 1` | 下标赋值（含切片赋值 `x[1:3] = ...`） |
+| `a, b = 1, 2` | 元组解包；`for a, b in pairs:` 同样支持 |
 | `x: int = 1` | 支持；注解本身被忽略（没有 `__annotations__`） |
 | `pass` | |
 | `global x` | 函数内改模块级变量必须声明 |
@@ -153,19 +154,28 @@ traceback 对象）。`with [1, 2]:` 会报「list 不支持上下文管理器�
 | `x[::-1]` | 负步长（反向） |
 | `d["k"]` | 字典下标 |
 
-### 内建函数（21 个）
+### 内建函数（36 个）
 
 | 函数 | 说明 |
 |---|---|
 | `len` `str` `int` `float` `bool` | 基础 |
 | `abs` `round` `min` `max` `sum` | 数值 |
-| `list` `dict` `range` `set` | 容器构造（`list`/`sum` 可直接吃生成器） |
-| `print` | 输出到 log sink（命令行宿主接 stdout） |
+| `list` `dict` `range` `set` `tuple` | 容器构造（`list`/`sum` 可直接吃生成器） |
+| `print` | 输出到 log sink；支持 `sep=` / `end=` |
 | `format_text(tpl, list)` | 单占位符格式化 |
-| `char_from_code` `text_of_char` | 码点与字符互转 |
+| `char_from_code` `text_of_char` `chr` `ord` | 码点与字符互转 |
+| `hex` `bin` `oct` | 整数转进制字符串（负数保号） |
+| `repr` | 带引号的表示；`str` 不带引号 |
+| `divmod` `pow` | 整数商余 / 幂 |
 | `next(生成器)` | 推进一格，耗尽抛 `StopIteration` |
 | `type(x)` | 返回 `<class 'int'>` 形式的类型值，脚本类带 `__main__.` 前缀 |
-| `isinstance(x, T)` | 认脚本类的继承链与异常层级；`T` 暂不支持元组形式 |
+| `isinstance(x, T)` | 认继承链与异常层级；`T` 支持元组形式 `(A, B)` |
+| `sorted` `reversed` `zip` `enumerate` | 容器变换，都返回列表 |
+| `any` `all` | 真值聚合 |
+
+内建接受的关键字实参（其余内建收到关键字会明确报 `TypeError`，与 CPython 一致）：
+`print(sep=, end=)`、`sorted(key=, reverse=)`、`int(base=)`、`round(ndigits=)`、
+`str(object=)`、`enumerate(start=)`。
 
 ### 类
 
@@ -313,9 +323,9 @@ class App(Activity):
 
 ### 内建函数
 
-`sorted` `enumerate` `zip` `map` `filter` `any` `all` `reversed`
-`help` `dir` `id` `hash` `repr`
-`chr` `ord` `bin` `hex` `oct` `divmod` `pow` `sum(生成器)` 全部不支持。
+`map` `filter` `help` `dir` `id` `hash` `sum(生成器)` 全部不支持。
+`reversed` / `enumerate` / `zip` 返回**列表**（CPython 返回惰性迭代器），
+因为本语言没有迭代器对象；`print` 它们得到 `[...]` 而不是 `<... object at 0x...>`。
 
 内建类型名（`int` `str` `list` `dict` `ValueError` 等）在**值位置**是可用的：
 `type(x) is int`、`isinstance(x, str)`、`f(int)` 都成立。调用位置仍然是内建

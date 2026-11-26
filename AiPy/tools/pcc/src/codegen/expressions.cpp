@@ -668,15 +668,48 @@ bool CodeGen::call(const Node& node) {
   // 内建的判断必须先于脚本函数（与 Python 版同序）。
   if ((func.kind == Kind::Name || selfCall) &&
       Tables::isBuiltin(calleeName)) {
-    if (total != node.argsCount) {
+    // 关键字实参：`print(sep="-")`、`sorted(reverse=True)`。内建签名没有
+    // 形参名，所以另发 CALL_BUILTIN_KW，由 VM 按 builtins_keywords.cpp
+    // 的表把名字换成位置。
+    std::size_t keywordCount = 0;
+    for (std::size_t i = 0; i < total; ++i) {
+      if (node.children[1 + i]->kind == Kind::Keyword) ++keywordCount;
+    }
+    if (keywordCount == 0) {
+      if (total != node.argsCount) {
+        return failAt(diag::keywordArguments(), node);
+      }
+      for (std::size_t i = 0; i < total; ++i) {
+        if (!expr(*node.children[1 + i])) return false;
+      }
+      emit("CALL_BUILTIN", node);
+      emitU16(builtinIndex(calleeName));
+      emitU8(static_cast<int>(total));
+      return true;
+    }
+
+    // 位置实参先压（保持源码顺序），再按源码顺序压 [键, 值] 对。
+    const std::size_t positional = total - keywordCount;
+    if (positional != node.argsCount) {
+      // `f(a=1, *args)` 这种混合形式暂不支持；位置个数对不上就报错。
       return failAt(diag::keywordArguments(), node);
     }
     for (std::size_t i = 0; i < total; ++i) {
-      if (!expr(*node.children[1 + i])) return false;
+      const Node& argument = *node.children[1 + i];
+      if (argument.kind == Kind::Keyword) continue;
+      if (!expr(argument)) return false;
     }
-    emit("CALL_BUILTIN", node);
+    for (std::size_t i = 0; i < total; ++i) {
+      const Node& argument = *node.children[1 + i];
+      if (argument.kind != Kind::Keyword) continue;
+      emit("CONST", argument);
+      emitU16(constIndexOfStr(argument.text));
+      if (!expr(*argument.children[0])) return false;
+    }
+    emit("CALL_BUILTIN_KW", node);
     emitU16(builtinIndex(calleeName));
-    emitU8(static_cast<int>(total));
+    emitU8(static_cast<int>(positional));
+    emitU8(static_cast<int>(keywordCount));
     return true;
   }
 

@@ -2015,6 +2015,158 @@ void reverseList(const Value& list) {
   if (List* items = list.mutableList()) std::reverse(items->begin(), items->end());
 }
 
+// ── 排序 / 拼接 ──
+
+Value sortedCopy(const Value& items, const Value& key, bool reverse) {
+  // key 是脚本函数：值层调不了（需要 Program），所以带 key 的排序由 VM
+  // 在做内建调用前先算好键再传进来——这里只收「键列表」或 None。
+  List out = iterate(items);
+  if (key.isNone()) {
+    std::stable_sort(out.begin(), out.end(),
+                     [](const Value& a, const Value& b) {
+                       return compareValues(a, b) < 0;
+                     });
+  } else {
+    // key 已经是「与 out 等长的键列表」：按下标排序，保证稳定。
+    const List keys = iterate(key);
+    std::vector<std::size_t> order(out.size());
+    for (std::size_t i = 0; i < order.size(); ++i) order[i] = i;
+    std::stable_sort(order.begin(), order.end(),
+                     [&keys](std::size_t a, std::size_t b) {
+                       return compareValues(keys[a], keys[b]) < 0;
+                     });
+    List sorted;
+    sorted.reserve(out.size());
+    for (std::size_t index : order) sorted.push_back(out[index]);
+    out = std::move(sorted);
+  }
+  if (reverse) std::reverse(out.begin(), out.end());
+  return Value::list(std::move(out));
+}
+
+Value reversedCopy(const Value& items) {
+  List out = iterate(items);
+  std::reverse(out.begin(), out.end());
+  return Value::list(std::move(out));
+}
+
+Value zipOf(const Value& left, const Value& right) {
+  const List a = iterate(left);
+  const List b = iterate(right);
+  const std::size_t count = a.size() < b.size() ? a.size() : b.size();
+  List out;
+  out.reserve(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    out.push_back(Value::tuple({a[i], b[i]}));
+  }
+  return Value::list(std::move(out));
+}
+
+Value enumerateOf(const Value& items, const Value& start) {
+  const List source = iterate(items);
+  const long long base = start.isNone() ? 0 : start.toInt();
+  List out;
+  out.reserve(source.size());
+  for (std::size_t i = 0; i < source.size(); ++i) {
+    out.push_back(Value::tuple({Value(base + static_cast<long long>(i)),
+                                source[i]}));
+  }
+  return Value::list(std::move(out));
+}
+
+// ── 编码 / 进制 ──
+
+Value chrOf(const Value& codepoint) {
+  const long long code = codepoint.toInt();
+  if (code < 0 || code > 0x10FFFF) {
+    raiseException("ValueError", "chr() arg not in range(0x110000)");
+    return Value();
+  }
+  return Value(utf8Encode(static_cast<std::uint32_t>(code)));
+}
+
+Value ordOf(const Value& text) {
+  if (text.type() != Value::Type::kString) {
+    raiseException("TypeError", "ord() expected string of length 1, but " +
+                                    typeName(text) + " found");
+    return Value();
+  }
+  const std::string& source = text.asString();
+  if (source.empty()) {
+    raiseException("TypeError", "ord() expected a character, but string of "
+                                "length 0 found");
+    return Value();
+  }
+  // 只接受「一个字符」：按 UTF-8 边界切第一个字符，若后面还有内容就是
+  // 多字符输入，CPython 同样报 TypeError。
+  const std::size_t next = utf8NextBoundary(source, 0);
+  if (next != source.size()) {
+    raiseException("TypeError", "ord() expected a character, but string of "
+                                "length " + std::to_string(utf8Length(source)) +
+                                    " found");
+    return Value();
+  }
+  return Value(static_cast<long long>(utf8Decode(source, 0)));
+}
+
+Value intToBase(const Value& number, int base) {
+  const long long value = number.toInt();
+  const char* prefix = base == 16 ? "0x" : (base == 8 ? "0o" : "0b");
+  if (value == 0) return Value(std::string(prefix) + "0");
+  const bool negative = value < 0;
+  // 用 unsigned 避免对 LLONG_MIN 取负溢出。
+  unsigned long long magnitude =
+      negative ? 0ULL - static_cast<unsigned long long>(value)
+               : static_cast<unsigned long long>(value);
+  std::string digits;
+  const char* alphabet = "0123456789abcdef";
+  while (magnitude > 0) {
+    digits.push_back(alphabet[magnitude % static_cast<unsigned>(base)]);
+    magnitude /= static_cast<unsigned>(base);
+  }
+  std::reverse(digits.begin(), digits.end());
+  return Value((negative ? "-" : "") + std::string(prefix) + digits);
+}
+
+// ── 聚合 ──
+
+Value anyOf(const Value& items) {
+  for (const Value& item : iterate(items)) {
+    if (item.toBool()) return Value(true);
+  }
+  return Value(false);
+}
+
+Value allOf(const Value& items) {
+  for (const Value& item : iterate(items)) {
+    if (!item.toBool()) return Value(false);
+  }
+  return Value(true);
+}
+
+std::string reprOf(const Value& value) {
+  std::string out;
+  appendRepr(out, value);
+  return out;
+}
+
+Value dictFromPairs(const Value& pairs) {
+  List keys;
+  List values;
+  for (const Value& pair : iterate(pairs)) {
+    const List item = iterate(pair);
+    if (item.size() != 2) {
+      raiseException("ValueError",
+                     "dictionary update sequence element has length " +
+                         std::to_string(item.size()) + ", but 2 is required");
+      return Value();
+    }
+    keys.push_back(item[0]);
+    values.push_back(item[1]);
+  }
+  return Value::dict(keys, values);
+}
+
 // ── 字典 ──
 
 Value dictGet(const Value& dict, const Value& key) {
@@ -2389,6 +2541,73 @@ Value parseFloat(const Value& text) {
   return Value(value);
 }
 
+Value integerFromBase(const Value& text, long long base) {
+  if (base < 2 || base > 36) {
+    raiseException("ValueError", "int() base must be >= 2 and <= 36, or 0");
+    return Value();
+  }
+  std::string source = text.toString();
+  // 跳过首尾空白（CPython 允许 "  ff  "）。
+  std::size_t begin = 0;
+  std::size_t end = source.size();
+  while (begin < end && std::isspace(static_cast<unsigned char>(source[begin]))) ++begin;
+  while (end > begin && std::isspace(static_cast<unsigned char>(source[end - 1]))) --end;
+  source = source.substr(begin, end - begin);
+
+  bool negative = false;
+  std::size_t index = 0;
+  if (index < source.size() && (source[index] == '+' || source[index] == '-')) {
+    negative = source[index] == '-';
+    ++index;
+  }
+  // 允许 0x/0o/0b 前缀（base 匹配时）。
+  if (index + 1 < source.size() && source[index] == '0') {
+    const char marker = source[index + 1];
+    const long long prefixBase = marker == 'x' || marker == 'X' ? 16
+                               : marker == 'o' || marker == 'O' ? 8
+                               : marker == 'b' || marker == 'B' ? 2 : 0;
+    if (prefixBase != 0 && prefixBase == base) index += 2;
+  }
+  if (index >= source.size()) {
+    raiseException("ValueError",
+                   "invalid literal for int() with base " +
+                       std::to_string(base) + ": '" + text.toString() + "'");
+    return Value();
+  }
+
+  long long value = 0;
+  bool sawDigit = false;
+  for (; index < source.size(); ++index) {
+    const char ch = source[index];
+    if (ch == '_') continue;  // 允许下划线分隔
+    int digit;
+    if (ch >= '0' && ch <= '9') {
+      digit = ch - '0';
+    } else if (ch >= 'a' && ch <= 'z') {
+      digit = ch - 'a' + 10;
+    } else if (ch >= 'A' && ch <= 'Z') {
+      digit = ch - 'A' + 10;
+    } else {
+      digit = -1;
+    }
+    if (digit < 0 || digit >= base) {
+      raiseException("ValueError",
+                     "invalid literal for int() with base " +
+                         std::to_string(base) + ": '" + text.toString() + "'");
+      return Value();
+    }
+    value = value * base + digit;
+    sawDigit = true;
+  }
+  if (!sawDigit) {
+    raiseException("ValueError",
+                   "invalid literal for int() with base " +
+                       std::to_string(base) + ": '" + text.toString() + "'");
+    return Value();
+  }
+  return Value(negative ? -value : value);
+}
+
 Value charFromCode(const Value& codepoint) {
   return Value(utf8Encode(static_cast<std::uint32_t>(codepoint.toInt())));
 }
@@ -2420,6 +2639,27 @@ void setLogSink(LogSink sink) {
 }
 
 void log(const Value& value) { logSink()(value.toString()); }
+
+namespace {
+
+// `print(end=...)` 的通道。默认空表示「没装」——那时退回 logSink 并把
+// 结尾的换行去掉，保持「没装 write sink 也能用」。
+WriteSink& writeSink() {
+  static WriteSink sink;
+  return sink;
+}
+
+}  // namespace
+
+void setWriteSink(WriteSink sink) { writeSink() = std::move(sink); }
+
+void writeRaw(const std::string& text) {
+  if (writeSink() != nullptr) {
+    writeSink()(text);
+    return;
+  }
+  std::fwrite(text.data(), 1, text.size(), stderr);
+}
 
 // ── 诊断输出 ──
 //

@@ -154,6 +154,8 @@ bool shapesOf(const std::string& name, std::vector<char>* shapes,
               std::string* error) {
   static const char* const kTwoU16[] = {"CALL", "CALL_BUILTIN", "CALL_METHOD",
                                         "CALL_EXT", "RAISE_TYPE", nullptr};
+  // u16 + u8 + u8：CALL_BUILTIN_KW 的内建号 / 位置实参个数 / 关键字个数。
+  static const char* const kU16U8U8[] = {"CALL_BUILTIN_KW", nullptr};
   static const char* const kU16Pair[] = {"EXC_MATCH", "DEL_LOCAL", "DEL_GLOBAL",
                                          "MAKE_FUNCTION", "WITH_ENTER",
                                          nullptr};
@@ -162,7 +164,7 @@ bool shapesOf(const std::string& name, std::vector<char>* shapes,
       "JUMP", "JUMP_IF_FALSE", "JUMP_IF_FALSE_KEEP", "JUMP_IF_TRUE_KEEP",
       "BUILD_LIST", "BUILD_DICT", "ITER_NEXT", "WITH_EXIT",
       "SETUP_EXC", "BUILD_TUPLE", "BUILD_SET", "CALL_DYN",
-      "MAKE_SUPER", "GET_ATTR", "SET_ATTR", "LOAD_TYPE",
+      "MAKE_SUPER", "GET_ATTR", "SET_ATTR", "LOAD_TYPE", "UNPACK",
       nullptr};
   static const char* const kU8[] = {"BIN", "CMP", "UNARY", "INPLACE", "SLICE",
                                     "SET_SLICE", "CALL_VALUE", "INSTANTIATE",
@@ -182,6 +184,12 @@ bool shapesOf(const std::string& name, std::vector<char>* shapes,
   for (const char* const* it = kU16Pair; *it != nullptr; ++it) {
     if (name == *it) {
       *shapes = {'u', 'u'};  // 两个 u16
+      return true;
+    }
+  }
+  for (const char* const* it = kU16U8U8; *it != nullptr; ++it) {
+    if (name == *it) {
+      *shapes = {'u', 'b', 'b'};
       return true;
     }
   }
