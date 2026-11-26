@@ -59,7 +59,7 @@ OPCODES = [
     'WITH_ENTER', 'WITH_EXIT',
     'SETUP_EXC', 'POP_EXC', 'RAISE', 'RAISE_TYPE', 'RERAISE',
     'EXC_MATCH', 'CURRENT_EXC', 'CLEAR_EXC',
-    'DEL_LOCAL', 'DEL_GLOBAL',
+    'DEL_LOCAL', 'DEL_GLOBAL', 'BUILD_TUPLE',
 ]
 
 # 二元算子编号，与 vm.h 的 BinOp 一致。
@@ -1291,8 +1291,11 @@ class Compiler:
             raise CompileError('f-string 暂不支持字节码路线', self.filename, node)
 
         if isinstance(node, ast.Tuple):
-            raise CompileError('元组会被当成列表（见 SUPPORT.md B6），'
-                               '但字节码路线只支持列表字面量', self.filename, node)
+            for element in node.elts:
+                self.expr(element)
+            self.block.emit('BUILD_TUPLE', node)
+            self.block.emit_u16(len(node.elts))
+            return
 
         raise CompileError('不支持表达式 %s' % type(node).__name__, self.filename, node)
 

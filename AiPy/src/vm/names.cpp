@@ -55,6 +55,7 @@ const char* opName(Op op) {
     case Op::kClearExc: return "clear_exc";
     case Op::kDelLocal: return "del_local";
     case Op::kDelGlobal: return "del_global";
+    case Op::kBuildTuple: return "build_tuple";
   }
   return "?";
 }

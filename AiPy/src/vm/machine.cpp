@@ -541,6 +541,17 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         break;
       }
 
+      case Op::kBuildTuple: {
+        const std::uint16_t count = read16(code, frame.pc);
+        frame.pc += 2;
+        Value::List items;
+        items.reserve(count);
+        for (int i = count; i > 0; --i) items.push_back(stack[sp - static_cast<std::size_t>(i)]);
+        sp -= count;
+        stack[sp++] = Value::tuple(std::move(items));
+        break;
+      }
+
       case Op::kBuildDict: {
         const std::uint16_t pairs = read16(code, frame.pc);
         frame.pc += 2;

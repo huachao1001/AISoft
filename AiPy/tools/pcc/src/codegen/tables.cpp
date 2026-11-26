@@ -22,7 +22,7 @@ const char* const kOpNames[] = {
     "WITH_ENTER", "WITH_EXIT",
     "SETUP_EXC", "POP_EXC", "RAISE", "RAISE_TYPE", "RERAISE",
     "EXC_MATCH", "CURRENT_EXC", "CLEAR_EXC",
-    "DEL_LOCAL", "DEL_GLOBAL",
+    "DEL_LOCAL", "DEL_GLOBAL", "BUILD_TUPLE",
 };
 
 constexpr int kOpCount = static_cast<int>(sizeof(kOpNames) / sizeof(kOpNames[0]));

@@ -93,6 +93,9 @@ class Value {
     // 才成立。表由 pylib 注册（见 MethodTable），VM 只负责按名字转发，
     // 所以这里不含任何具体能力——符合「核心 VM 只认 Python 语法」。
     kObject,
+    // 元组。与列表共用 HeapData::items 载荷，但类型独立：CPython 里
+    // `(1,2) == [1,2]` 是 False，混成一体会在比较与打印上静默出错。
+    kTuple,
     // 「这个槽没有值」——`del x` 之后的状态。CPython 里再读会 NameError，
     // 而 None 是合法的值，两者必须能区分。载荷是变量名（堆字符串），
     // 报错时要把它写进消息。
@@ -126,8 +129,14 @@ class Value {
   bool isNumber() const { return type_ == Type::kInt || type_ == Type::kFloat; }
   bool isDict() const { return type_ == Type::kDict; }
   bool isList() const { return type_ == Type::kList; }
+  bool isTuple() const { return type_ == Type::kTuple; }
+  // 序列：列表或元组。索引、切片、len、迭代、`+`/`*` 都按同一套处理，
+  // 差别只在不支持原地修改（元组不可变）。
+  bool isSequence() const { return type_ == Type::kList || type_ == Type::kTuple; }
   // 列表或字典：`for x in y` 与 `len(y)` 都接受两种容器
-  bool isContainer() const { return type_ == Type::kList || type_ == Type::kDict; }
+  bool isContainer() const {
+    return type_ == Type::kList || type_ == Type::kDict || type_ == Type::kTuple;
+  }
 
   Host asHost() const { return type_ == Type::kHost ? host_ : nullptr; }
   // 非列表时返回一个空列表（静态对象，避免悬空引用）
@@ -147,6 +156,7 @@ class Value {
 
   // ── 构造与查询 ──
   static Value list(List items);
+  static Value tuple(List items);
   static Value dict(const List& keys, const List& values);
   // 「已删除」哨兵：`del x` 之后槽里放它，再读会抛 NameError。名字用于报错。
   static Value deleted(std::string name);

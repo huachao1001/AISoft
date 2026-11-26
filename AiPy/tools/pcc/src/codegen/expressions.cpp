@@ -231,8 +231,14 @@ bool CodeGen::expr(const Node& node) {
     case Kind::JoinedStr:
       return failAt(diag::fstringUnsupported(), node);
 
-    case Kind::TupleLit:
-      return failAt(diag::tupleLiteralUnsupported(), node);
+    case Kind::TupleLit: {
+      for (const auto& element : node.children) {
+        if (!expr(*element)) return false;
+      }
+      emit("BUILD_TUPLE", node);
+      emitU16(static_cast<int>(node.children.size()));
+      return true;
+    }
 
     case Kind::Slice:
       // 切片只能出现在下标里；单独出现是 `x[0:1] = v` 这类被拒的写法。

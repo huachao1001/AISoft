@@ -231,7 +231,7 @@ void release(HeapData* heap) {
 inline bool isHeapType(Value::Type type) {
   return type == Value::Type::kString || type == Value::Type::kList ||
          type == Value::Type::kDict || type == Value::Type::kObject ||
-         type == Value::Type::kDeleted;
+         type == Value::Type::kDeleted || type == Value::Type::kTuple;
 }
 
 }  // namespace
@@ -252,6 +252,7 @@ Value::Value(const Value& other) : type_(other.type_) {
       break;
     case Type::kString:
     case Type::kList:
+    case Type::kTuple:
     case Type::kDict:
     case Type::kObject:
     case Type::kDeleted:
@@ -278,6 +279,7 @@ Value::Value(Value&& other) noexcept : type_(other.type_) {
       break;
     case Type::kString:
     case Type::kList:
+    case Type::kTuple:
     case Type::kDict:
     case Type::kObject:
     case Type::kDeleted:
@@ -316,6 +318,7 @@ Value& Value::operator=(const Value& other) {
       break;
     case Type::kString:
     case Type::kList:
+    case Type::kTuple:
     case Type::kDict:
     case Type::kObject:
     case Type::kDeleted:
@@ -345,6 +348,7 @@ Value& Value::operator=(Value&& other) noexcept {
       break;
     case Type::kString:
     case Type::kList:
+    case Type::kTuple:
     case Type::kDict:
     case Type::kObject:
     case Type::kDeleted:
@@ -392,6 +396,14 @@ Value Value::list(List items) {
   return out;
 }
 
+Value Value::tuple(List items) {
+  Value out;
+  out.type_ = Type::kTuple;
+  out.heap_ = makeHeap();
+  out.heap_->items = std::move(items);
+  return out;
+}
+
 Value Value::deleted(std::string name) {
   Value out;
   out.type_ = Type::kDeleted;
@@ -433,7 +445,9 @@ ObjectData* Value::asObject() const {
 // ── 取值 ──
 
 const List& Value::asList() const {
-  if (type_ == Type::kList && heap_ != nullptr) return heap_->items;
+  if ((type_ == Type::kList || type_ == Type::kTuple) && heap_ != nullptr) {
+    return heap_->items;
+  }
   return kEmptyList;
 }
 
@@ -484,6 +498,8 @@ bool Value::toBool() const {
     case Type::kString:
       return !asString().empty();
     case Type::kList:
+      return heap_ != nullptr && !heap_->items.empty();
+    case Type::kTuple:
       return heap_ != nullptr && !heap_->items.empty();
     case Type::kDict:
       return heap_ != nullptr && !heap_->keys.empty();
@@ -557,6 +573,18 @@ std::string Value::toString() const {
       return asString();
     case Type::kList:
       return listRepr(asList());
+    case Type::kTuple: {
+      // CPython 的元组 repr：单元素带尾逗号 `(1,)`，空元组 `()`。
+      std::string out = "(";
+      const List& items = asList();
+      for (std::size_t i = 0; i < items.size(); ++i) {
+        if (i > 0) out += ", ";
+        appendRepr(out, items[i]);
+      }
+      if (items.size() == 1) out += ",";
+      out += ")";
+      return out;
+    }
     case Type::kDict:
       return dictRepr(dictKeys(), dictValues());
     case Type::kHost:
@@ -628,9 +656,11 @@ std::string typeName(const Value& value) {
     case Value::Type::kFloat: return "float";
     case Value::Type::kString: return "str";
     case Value::Type::kList: return "list";
+    case Value::Type::kTuple: return "tuple";
     case Value::Type::kDict: return "dict";
     case Value::Type::kHost: return "host";
     case Value::Type::kObject: return "object";
+    case Value::Type::kDeleted: return "NoneType";
   }
   return "object";
 }
@@ -689,6 +719,12 @@ Value add(const Value& a, const Value& b) {
     out.insert(out.end(), right.begin(), right.end());
     return Value::list(std::move(out));
   }
+  if (a.isTuple() && b.isTuple()) {
+    List out = a.asList();
+    const List& right = b.asList();
+    out.insert(out.end(), right.begin(), right.end());
+    return Value::tuple(std::move(out));
+  }
   // 类型不匹配一律抛 TypeError，文案照抄 CPython：静默把数字转成字符串
   // 会让 `1 + "x"` 在迁移回 CPython 时突然崩，而兼容性是本项目的全部意义。
   if (a.type() == Value::Type::kString) {
@@ -738,7 +774,14 @@ Value mul(const Value& a, const Value& b) {
     for (long long i = 0; i < b.toInt(); ++i) out.insert(out.end(), source.begin(), source.end());
     return Value::list(std::move(out));
   }
+  if (a.isTuple() && b.isNumber()) {
+    List out;
+    const List& source = a.asList();
+    for (long long i = 0; i < b.toInt(); ++i) out.insert(out.end(), source.begin(), source.end());
+    return Value::tuple(std::move(out));
+  }
   if (a.isNumber() && b.isList()) return mul(b, a);
+  if (a.isNumber() && b.isTuple()) return mul(b, a);
   raiseException("TypeError", "unsupported operand type(s) for *: '" +
                                   typeName(a) + "' and '" + typeName(b) + "'");
   return Value();
@@ -821,7 +864,7 @@ Value eq(const Value& a, const Value& b) {
     return Value(numberOf(a) == numberOf(b));
   }
   if (a.type() != b.type()) return Value(false);
-  if (a.isList()) {
+  if (a.isList() || a.isTuple()) {
     const List& left = a.asList();
     const List& right = b.asList();
     if (left.size() != right.size()) return Value(false);
@@ -944,6 +987,8 @@ Value length(const Value& v) {
       return Value(static_cast<long long>(utf8Length(v.asString())));
     case Value::Type::kList:
       return Value(static_cast<long long>(v.asList().size()));
+    case Value::Type::kTuple:
+      return Value(static_cast<long long>(v.asList().size()));
     case Value::Type::kDict:
       return Value(static_cast<long long>(v.dictKeys().size()));
     default:
@@ -1037,7 +1082,8 @@ Value at(const Value& container, const Value& index) {
   const List& list = container.asList();
   size_t offset = 0;
   if (!normalizeIndex(position, list.size(), offset)) {
-    raiseException("IndexError", "list index out of range");
+    raiseException("IndexError", container.isTuple() ? "tuple index out of range"
+                                                     : "list index out of range");
     return Value();
   }
   return list[offset];
@@ -1067,9 +1113,13 @@ Value slice(const Value& container, const Value& start, const Value& end) {
   if (to < 0) to += count;
   if (from < 0) from = 0;
   if (to > count) to = count;
-  if (to <= from) return Value::list(List{});
-  return Value::list(List(list.begin() + static_cast<long long>(from),
-                          list.begin() + static_cast<long long>(to)));
+  if (to <= from) {
+    return container.isTuple() ? Value::tuple(List{}) : Value::list(List{});
+  }
+  List sliced(list.begin() + static_cast<long long>(from),
+              list.begin() + static_cast<long long>(to));
+  return container.isTuple() ? Value::tuple(std::move(sliced))
+                             : Value::list(std::move(sliced));
 }
 
 // 带步长的切片。Python 的 `x[a:b:c]` 里 c 可以是负数（反向），
@@ -1145,7 +1195,8 @@ Value sliceStep(const Value& container, const Value& start, const Value& end,
       out.push_back(list[static_cast<size_t>(i)]);
     }
   }
-  return Value::list(std::move(out));
+  return container.isTuple() ? Value::tuple(std::move(out))
+                             : Value::list(std::move(out));
 }
 
 Value power(const Value& a, const Value& b) {

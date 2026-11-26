@@ -108,6 +108,7 @@ enum class Op : std::uint8_t {
   // 与 CPython 一致——赋 None 是不够的，None 是合法值。
   kDelLocal,   // u16 槽号
   kDelGlobal,  // u16 槽号
+  kBuildTuple, // u16 元素个数：从栈上取 N 个元素建成元组
 };
 
 enum class BinOp : std::uint8_t {
