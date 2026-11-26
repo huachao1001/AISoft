@@ -512,6 +512,70 @@ bool CodeGen::callDynamic(const Node& node, int index) {
   return true;
 }
 
+bool CodeGen::callValueArgs(const Node& node) {
+  // 通用「按值调用」的实参编码：
+  //   没有 `*`/`**` → 直接压实参，CALL_VALUE u8
+  //   有 `*`/`**`   → 压 [位置列表, 关键字字典]，CALL_VALUE_DYN
+  // 调用方负责先把「可调用值」压在栈底。
+  bool dynamic = false;
+  for (std::size_t i = 0; i < node.children.size() - 1; ++i) {
+    if (node.children[1 + i]->kind == Kind::Starred) dynamic = true;
+    if (node.children[1 + i]->kind == Kind::Keyword) dynamic = true;
+  }
+
+  const std::size_t total = node.children.size() - 1;
+  if (!dynamic) {
+    for (std::size_t i = 0; i < total; ++i) {
+      if (!expr(*node.children[1 + i])) return false;
+    }
+    emit("CALL_VALUE", node);
+    emitU8(static_cast<int>(total));
+    return true;
+  }
+
+  emit("BUILD_LIST", node);
+  emitU16(0);
+  for (std::size_t i = 0; i < total; ++i) {
+    const Node& argument = *node.children[1 + i];
+    if (argument.kind == Kind::Keyword) continue;
+    if (argument.kind == Kind::Starred) {
+      if (argument.flag) continue;  // `**` 走下半段
+      if (!expr(*argument.children[0])) return false;
+      emit("CALL_BUILTIN", argument);
+      emitU16(builtinIndex("list"));
+      emitU8(1);
+      emit("BIN", argument);
+      emitU8(0);  // BinOp::kAdd
+      continue;
+    }
+    if (!expr(argument)) return false;
+    emit("BUILD_LIST", argument);
+    emitU16(1);
+    emit("BIN", argument);
+    emitU8(0);
+  }
+
+  emit("BUILD_DICT", node);
+  emitU16(0);
+  for (std::size_t i = 0; i < total; ++i) {
+    const Node& argument = *node.children[1 + i];
+    if (argument.kind == Kind::Keyword) {
+      emit("DUP", argument);
+      emit("CONST", argument);
+      emitU16(constIndexOfStr(argument.text));
+      if (!expr(*argument.children[0])) return false;
+      emit("SET_ITEM", argument);
+      continue;
+    }
+    if (argument.kind != Kind::Starred || !argument.flag) continue;
+    if (!expr(*argument.children[0])) return false;
+    emit("DICT_MERGE", argument);
+  }
+
+  emit("CALL_VALUE_DYN", node);
+  return true;
+}
+
 bool CodeGen::call(const Node& node) {
   const Node& func = *node.children[0];
   const std::size_t total = node.children.size() - 1;
@@ -552,16 +616,8 @@ bool CodeGen::call(const Node& node) {
   // 放在裸名分支之前：否则会被当成扩展函数，运行期报「没有链接进来」。
   if (func.kind == Kind::Name || selfCall) {
     if (isLocal(calleeName) || globalsSet_.count(calleeName) != 0) {
-      if (total != node.argsCount) {
-        return failAt(diag::keywordArguments(), node);
-      }
       nameTarget(calleeName, func);
-      for (std::size_t i = 0; i < total; ++i) {
-        if (!expr(*node.children[1 + i])) return false;
-      }
-      emit("CALL_VALUE", node);
-      emitU8(static_cast<int>(total));
-      return true;
+      return callValueArgs(node);
     }
   }
 
@@ -646,16 +702,8 @@ bool CodeGen::call(const Node& node) {
 
   // 其它任何表达式当调用目标：`f()(1)`、`(lambda x: x)(1)`。
   // 先求值拿到函数值，再按值调用——与「调用变量」同一套指令。
-  if (total != node.argsCount) {
-    return failAt(diag::keywordArguments(), node);
-  }
   if (!expr(func)) return false;
-  for (std::size_t i = 0; i < total; ++i) {
-    if (!expr(*node.children[1 + i])) return false;
-  }
-  emit("CALL_VALUE", node);
-  emitU8(static_cast<int>(total));
-  return true;
+  return callValueArgs(node);
 }
 
 bool CodeGen::constant(const Node& node) {

@@ -751,6 +751,60 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         break;
       }
 
+      case Op::kCallValueDyn: {
+        // 栈上是 [可调用值, 位置实参列表, 关键字字典]。与 kCallValue 同一套
+        // 绑定，只是实参的形状到运行期才知道（`f(*args, **kw)`）。
+        const Value keywords = stack[--sp];
+        const Value positionals = stack[--sp];
+        const Value callable = stack[--sp];
+        const int index = functionIndexOf(callable);
+        if (index < 0) {
+          raiseException("TypeError", "'" + typeName(callable) +
+                                          "' object is not callable");
+          break;
+        }
+        if (index >= static_cast<int>(program.functions.size())) {
+          return fail("函数号越界（编译器 bug）");
+        }
+        if (frames.size() >= static_cast<std::size_t>(Machine::kMaxCallDepth)) {
+          return fail("调用层数超过 " + std::to_string(Machine::kMaxCallDepth) +
+                      "，脚本里可能有无限递归");
+        }
+        const Function& fn = program.functions[static_cast<std::size_t>(index)];
+
+        std::vector<Value> locals(static_cast<std::size_t>(fn.localCount), Value());
+        const Value defaults =
+            fn.defaultSlot >= 0 && fn.defaultSlot < static_cast<int>(globals.size())
+                ? globals[static_cast<std::size_t>(fn.defaultSlot)]
+                : Value();
+        std::string bindError;
+        if (!bindArguments(fn, defaults, positionals.asList(),
+                           keywords.dictKeys(), keywords.dictValues(), &locals,
+                           &bindError)) {
+          raiseException("TypeError", fn.name + "() " + bindError);
+          break;
+        }
+
+        const List& captures = functionCaptures(callable);
+        if (!captures.empty() && fn.captureStart >= 0) {
+          for (std::size_t i = 0; i < captures.size(); ++i) {
+            const std::size_t slot =
+                static_cast<std::size_t>(fn.captureStart) + i;
+            if (slot < locals.size()) locals[slot] = captures[i];
+          }
+        }
+
+        Frame callee;
+        callee.code = &fn.code;
+        callee.lines = &fn.lines;
+        callee.function = &fn;
+        callee.pc = 0;
+        callee.stackBase = sp;
+        callee.locals = std::move(locals);
+        frames.push_back(std::move(callee));
+        break;
+      }
+
       case Op::kCallBuiltin: {
         const std::uint16_t index = read16(code, frame.pc);
         const std::uint8_t argc = code[frame.pc + 2];

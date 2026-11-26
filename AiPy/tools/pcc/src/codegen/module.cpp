@@ -252,12 +252,11 @@ bool CodeGen::buildSignature(const Node& node, const std::string& name,
 }
 
 bool CodeGen::registerFunction(const Node& node) {
-  if (functionIndex(node.text) >= 0) {
+  if (rawFunctionIndex(node.text) >= 0) {
     return failAt(diag::duplicateFunction(node.text), node);
   }
-  if (node.decoratorCount > 0) {
-    return failAt(diag::decoratorUnsupported(), node);
-  }
+  // 带装饰器的名字运行期装的是装饰器返回值，按名调用要走 CALL_VALUE。
+  if (node.decoratorCount > 0) decoratedNames_.insert(node.text);
 
   // 方法（在 Activity 里）去掉第一个 self 参数。
   const Node& args = *node.children[0];
@@ -423,7 +422,7 @@ bool CodeGen::emitDefaultValues(const Node& node, Block& block) {
   // CPython 在**执行到 def 这一句时**求值默认参数。所以这段代码必须发在
   // def 语句自己的位置，而不能提到模块级之前。
   const Node& args = *node.children[0];
-  const int index = functionIndex(node.text);
+  const int index = rawFunctionIndex(node.text);
   if (index < 0) return failAt(diag::nestedFunction(node.text), node);
   const Block& target =
       blocks_[static_cast<std::size_t>(
@@ -499,8 +498,43 @@ bool CodeGen::emitLambdaDefaults(const Node& node, const Block& callee) {
   return true;
 }
 
+bool CodeGen::applyDecorators(const Node& node) {
+  // `@a @b def f` 等价于 `f = a(b(f))`：最靠近 def 的装饰器先应用。
+  //
+  // 每轮都要拿到「当前值」，所以先造出函数值放进一个隐藏全局槽，然后
+  // 从最内层装饰器开始逐层调用，结果写回同一个槽。槽名带前缀，避免与
+  // 脚本变量撞名；它也进 globalNames，热加载会一并搬。
+  const int funcIndex = rawFunctionIndex(node.text);
+  if (funcIndex < 0) return failAt(diag::nestedFunction(node.text), node);
+  const int slot = globalSlot(std::string("\x01", 1) + "decorated:" + node.text);
+
+  emit("MAKE_FUNCTION", node);
+  emitU16(funcIndex);
+  emitU16(0);
+  emit("STORE_GLOBAL", node);
+  emitU16(slot);
+
+  // 逆序：decorators[0] 是最外层（最靠近 @ 的第一行），最后应用。
+  for (std::size_t i = node.decorators.size(); i > 0; --i) {
+    const Node& decorator = *node.decorators[i - 1];
+    if (!expr(decorator)) return false;      // 装饰器可调用值
+    emit("LOAD_GLOBAL", node);
+    emitU16(slot);                            // 当前值作实参
+    emit("CALL_VALUE", node);
+    emitU8(1);
+    emit("STORE_GLOBAL", node);
+    emitU16(slot);
+  }
+
+  // 最终值落进脚本里的函数名。
+  emit("LOAD_GLOBAL", node);
+  emitU16(slot);
+  nameStore(node.text, node);
+  return true;
+}
+
 bool CodeGen::compileFunctionBody(const Node& node) {
-  const int index = functionIndex(node.text);
+  const int index = rawFunctionIndex(node.text);
   if (index < 0) return failAt(diag::duplicateFunction(node.text), node);
 
   FunctionEntry& entry = functions_[static_cast<std::size_t>(index)];

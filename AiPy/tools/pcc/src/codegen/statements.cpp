@@ -147,7 +147,9 @@ bool CodeGen::statement(const Node& node) {
       // CPython 在**执行到这一句时**求值默认参数，所以位置必须在这里。
       // 函数体里的 def 仍然拒绝——嵌套函数要闭包，而语言里没有。
       if (block_ != &module_) return failAt(diag::nestedFunction(node.text), node);
-      return emitDefaultValues(node, *block_);
+      if (!emitDefaultValues(node, *block_)) return false;
+      if (node.decoratorCount > 0) return applyDecorators(node);
+      return true;
 
     case Kind::Delete:
       return deleteStatement(node);

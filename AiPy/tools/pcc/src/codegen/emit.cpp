@@ -161,6 +161,12 @@ int CodeGen::globalSlot(const std::string& name) {
 }
 
 int CodeGen::functionIndex(const std::string& name) const {
+  // 被装饰的名字运行期装的是装饰器返回值，不能按名解析成函数号。
+  if (decoratedNames_.count(name) != 0) return -1;
+  return rawFunctionIndex(name);
+}
+
+int CodeGen::rawFunctionIndex(const std::string& name) const {
   for (std::size_t i = 0; i < functionNames_.size(); ++i) {
     if (functionNames_[i] == name) return static_cast<int>(i);
   }

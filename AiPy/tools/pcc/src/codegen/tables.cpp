@@ -29,6 +29,7 @@ const char* const kOpNames[] = {
     "DICT_MERGE",
     "MAKE_FUNCTION",
     "CALL_VALUE",
+    "CALL_VALUE_DYN",
 };
 
 constexpr int kOpCount = static_cast<int>(sizeof(kOpNames) / sizeof(kOpNames[0]));

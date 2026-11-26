@@ -63,6 +63,7 @@ OPCODES = [
     # 追加在末尾：Op 的数值就是字节码里的操作码，插到中间会让已生成的
     # .bc 被执行成别的指令。
     'CALL_DYN', 'DICT_MERGE', 'MAKE_FUNCTION', 'CALL_VALUE',
+    'CALL_VALUE_DYN',
 ]
 
 # 二元算子编号，与 vm.h 的 BinOp 一致。
@@ -253,6 +254,9 @@ class Compiler:
         self.function_by_name = {}
         # lambda 没有名字，函数表里用 <lambda>N 做唯一标识（只用于报错）。
         self.lambda_counter = 0
+        # 带装饰器的 def：名字运行期装的是装饰器返回值，不能再按名解析成
+        # 函数号，调用得走按值调用。
+        self.decorated_names = set()
         # 等待编译函数体的 lambda 下标：登记发生在编译某个函数体/模块语句
         # 的中途，函数体要等所有全局槽就位后再编。
         self.pending_lambdas = []
@@ -547,8 +551,8 @@ class Compiler:
         if node.name in self.function_by_name:
             raise CompileError('函数 "%s" 定义了两次' % node.name, self.filename, node)
         if node.decorator_list:
-            raise CompileError('不支持装饰器：脚本里没有一等函数', self.filename,
-                               node.decorator_list[0])
+            # 带装饰器的名字运行期装的是装饰器返回值，按名调用要走按值调用。
+            self.decorated_names.add(node.name)
 
         args = node.args
         # 位置-only 参数（`def f(a, /)`）仍然拒绝：它在语法上分隔了「只按
@@ -761,6 +765,30 @@ class Compiler:
             self.loop_stack = saved_loops
             self.block = saved
 
+    def apply_decorators(self, node):
+        """`@a @b def f` 等价于 `f = a(b(f))`，最靠近 def 的先应用。"""
+        index = self.function_by_name[node.name]
+        slot = self.global_slot('\x01decorated:' + node.name)
+
+        self.module.emit('MAKE_FUNCTION', node)
+        self.module.emit_u16(index)
+        self.module.emit_u16(0)
+        self.module.emit('STORE_GLOBAL', node)
+        self.module.emit_u16(slot)
+
+        for decorator in reversed(node.decorator_list):
+            self.expr(decorator)
+            self.module.emit('LOAD_GLOBAL', node)
+            self.module.emit_u16(slot)
+            self.module.emit('CALL_VALUE', node)
+            self.module.emit_u8(1)
+            self.module.emit('STORE_GLOBAL', node)
+            self.module.emit_u16(slot)
+
+        self.module.emit('LOAD_GLOBAL', node)
+        self.module.emit_u16(slot)
+        self.name_store(node.name, node)
+
     def compile_function_body(self, node):
         """编译已经登记过的函数体。
 
@@ -845,6 +873,8 @@ class Compiler:
                 default is not None for default in node.args.kw_defaults)
             if has_defaults:
                 self.emit_default_values(node)
+            if node.decorator_list:
+                self.apply_decorators(node)
             return
 
         if isinstance(node, ast.Pass):
@@ -1378,7 +1408,9 @@ class Compiler:
                 raise CompileError('内建函数 %s 不能当值使用' % node.id,
                                    self.filename, node)
             # 脚本函数出现在值的位置（`g = f`、`f(func)` 的实参）就是取函数值。
-            if node.id in self.function_by_name:
+            # 带装饰器的名字存的是装饰器返回值，读它就是读变量。
+            if (node.id in self.function_by_name and
+                    node.id not in self.decorated_names):
                 self.block.emit('MAKE_FUNCTION', node)
                 self.block.emit_u16(self.function_by_name[node.id])
                 self.block.emit_u16(0)
@@ -1648,6 +1680,62 @@ class Compiler:
         self.block.emit('CALL_DYN', node)
         self.block.emit_u16(index)
 
+    def call_value_dyn(self, node):
+        """按值调用的动态版本：可调用值已在栈底，再压 [位置列表, 关键字字典]。
+
+        与 call_dynamic 同构，只是末尾不发函数号——目标到运行期才知道。
+        """
+        self.block.emit('BUILD_LIST', node)
+        self.block.emit_u16(0)
+        for argument in node.args:
+            if isinstance(argument, ast.Starred):
+                self.expr(argument.value)
+                self.block.emit('CALL_BUILTIN', argument)
+                self.block.emit_u16(self.builtin_index('list'))
+                self.block.emit_u8(1)
+            else:
+                self.expr(argument)
+                self.block.emit('BUILD_LIST', argument)
+                self.block.emit_u16(1)
+            self.block.emit('BIN', argument)
+            self.block.emit_u8(BINOPS.index('ADD'))
+
+        self.block.emit('BUILD_DICT', node)
+        self.block.emit_u16(0)
+        for keyword in node.keywords:
+            if keyword.arg is not None:
+                self.block.emit('DUP', keyword.value)
+                self.block.emit('CONST', keyword.value)
+                self.block.emit_u16(self.const_string(keyword.arg))
+                self.expr(keyword.value)
+                self.block.emit('SET_ITEM', keyword.value)
+            else:
+                self.expr(keyword.value)
+                self.block.emit('DICT_MERGE', keyword.value)
+
+        self.block.emit('CALL_VALUE_DYN', node)
+
+    def call_value_args(self, node):
+        """按值调用的实参编码（可调用值已在栈底）。
+
+        没有 `*`/`**` 就直接压实参；有展开就压 [位置列表, 关键字字典]。
+        """
+        dynamic = False
+        for argument in node.args:
+            if isinstance(argument, ast.Starred):
+                dynamic = True
+        if node.keywords:
+            dynamic = True
+
+        if not dynamic:
+            for argument in node.args:
+                self.expr(argument)
+            self.block.emit('CALL_VALUE', node)
+            self.block.emit_u8(len(node.args))
+            return
+
+        self.call_value_dyn(node)
+
     def call(self, node):
         # 内建：len/str/range… 编译成 CALL_BUILTIN + 下标。
         if isinstance(node.func, ast.Name) and node.func.id in BUILTIN_INDEX:
@@ -1662,7 +1750,10 @@ class Compiler:
 
         # 脚本内函数：CALL + 函数号。关键字参数在编译期重排成位置顺序：
         # 脚本函数的签名已知，VM 不需要认识关键字。
-        if isinstance(node.func, ast.Name) and node.func.id in self.function_by_name:
+        # 带装饰器的名字不走这里：它运行期装的是装饰器返回值。
+        if (isinstance(node.func, ast.Name) and
+                node.func.id in self.function_by_name and
+                node.func.id not in self.decorated_names):
             entry = self.functions[self.function_by_name[node.func.id]]
             block = entry['block']
             params = []
@@ -1742,14 +1833,8 @@ class Compiler:
             is_variable = (self.is_local(node.func.id) or
                            node.func.id in self.globals)
             if is_variable:
-                if node.keywords:
-                    raise CompileError('不支持关键字传参；按位置传', self.filename, node)
                 self.name_target(node.func.id, node.func)
-                for argument in node.args:
-                    self.expr(argument)
-                self.block.emit('CALL_VALUE', node)
-                self.block.emit_u8(len(node.args))
-                return
+                return self.call_value_args(node)
 
         # 裸名：可能是库注册的内建（`open`）
         #
@@ -1802,14 +1887,8 @@ class Compiler:
 
         # 其它任何表达式当调用目标：`f()(1)`、`(lambda x: x)(1)`。
         # 先求值拿到函数值，再按值调用——与「调用变量」同一套指令。
-        if node.keywords:
-            raise CompileError('不支持关键字传参；按位置传', self.filename, node)
         self.expr(node.func)
-        for argument in node.args:
-            self.expr(argument)
-        self.block.emit('CALL_VALUE', node)
-        self.block.emit_u8(len(node.args))
-        return
+        return self.call_value_args(node)
 
     def constant(self, node):
         value = node.value

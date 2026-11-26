@@ -135,6 +135,10 @@ enum class Op : std::uint8_t {
   // 调用栈顶的函数值：栈上是 [可调用值, 位置实参...]，u8 是实参个数。
   // `g(1)` 里的 g 到运行期才知道指向哪个函数，所以不能编成 CALL + 函数号。
   kCallValue,
+
+  // 按值调用的动态版本：栈上是 [可调用值, 位置实参列表, 关键字字典]。
+  // `f(*args, **kw)` 里 f 是变量时的形状。
+  kCallValueDyn,
 };
 
 enum class BinOp : std::uint8_t {

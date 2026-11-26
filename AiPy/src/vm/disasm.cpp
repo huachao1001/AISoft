@@ -123,7 +123,9 @@ std::vector<std::string> disassemble(const Program& program) {
         std::snprintf(text, sizeof(text), "call_value %u", code[pc]);
         pc += 1;
         break;
-      case Op::kCallMethod:
+      case Op::kCallValueDyn:
+        std::snprintf(text, sizeof(text), "call_value_dyn");
+        break;      case Op::kCallMethod:
         std::snprintf(text, sizeof(text), "call_method %u,%u", read16(code, pc), code[pc + 2]);
         pc += 3;
         break;

@@ -139,11 +139,12 @@ struct Node {
   std::size_t orelseCount = 0;  // If/While/For 的 orelse
   std::size_t argsCount = 0;    // Call 的位置参数个数 / ClassDef 的基类个数 / With 的项数
   std::size_t keyCount = 0;     // DictLit 的键个数
-  // 装饰器个数。内容不保留（全部拒绝），但「有几个」要能报出来，
-  // 因为它决定了报错该指向装饰器还是指向定义。
+  // 装饰器个数。装饰器表达式本身存在 decorators 里，按源码顺序（最靠近
+  // def 的最后一个，应用顺序是从下往上）。
   std::size_t decoratorCount = 0;
   int decoratorLine = 0;
   int decoratorCol = 0;
+  std::vector<NodePtr> decorators;
 
   std::vector<std::string> names;  // Global.names
   std::vector<Kind> ops;           // 算子序列

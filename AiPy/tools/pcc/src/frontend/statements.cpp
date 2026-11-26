@@ -67,6 +67,7 @@ NodePtr Parser::decorated() {
   int count = 0;
   int line = peek().line;
   int col = peek().col;
+  std::vector<NodePtr> decorators;
   while (checkOp("@")) {
     advance();
     NodePtr decorator = expression();
@@ -75,6 +76,7 @@ NodePtr Parser::decorated() {
       line = decorator->line;
       col = decorator->col;
     }
+    decorators.push_back(std::move(decorator));
     ++count;
     if (!expectNewline()) return nullptr;
     skipNewlines();
@@ -87,6 +89,7 @@ NodePtr Parser::decorated() {
     node->decoratorCount = static_cast<std::size_t>(count);
     node->decoratorLine = line;
     node->decoratorCol = col;
+    node->decorators = std::move(decorators);
     return node;
   }
   fail(diag::strayToken("@"));

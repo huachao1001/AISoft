@@ -87,6 +87,7 @@ OPERANDS = {
     'DICT_MERGE': (),
     'MAKE_FUNCTION': ('u16', 'u16'),
     'CALL_VALUE': ('u8',),
+    'CALL_VALUE_DYN': (),
     'BUILD_TUPLE': ('u16',),
     'BUILD_SET': ('u16',),
     'DEL_LOCAL': ('u16',),

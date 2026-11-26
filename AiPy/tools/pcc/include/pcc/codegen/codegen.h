@@ -156,6 +156,8 @@ class CodeGen {
   int constIndexOfBytes(const std::string& value);
   int globalSlot(const std::string& name);
   int functionIndex(const std::string& name) const;
+  // 不做「被装饰就跳过」过滤的原始查表：装饰器应用处要拿到真正的函数号。
+  int rawFunctionIndex(const std::string& name) const;
 
   // ── 作用域（scope.cpp）──
   bool isLocal(const std::string& name) const;
@@ -191,6 +193,8 @@ class CodeGen {
   int registerLambda(const Node& node);
   // lambda 的默认值在定义处求值，与 def 同构（节点形状不同）。
   bool emitLambdaDefaults(const Node& node, const Block& callee);
+  // 应用装饰器：`@a @b def f` 就是 `f = a(b(f))`。
+  bool applyDecorators(const Node& node);
   // 编译所有待编译的 lambda 函数体（在模块级语句之前做完）。
   bool compilePendingLambdas();
 
@@ -217,6 +221,8 @@ class CodeGen {
   bool callScript(const Node& node, int index);
   // 签名含可变参数或实参有 `*`/`**` 展开：走 CALL_DYN，由 VM 绑定。
   bool callDynamic(const Node& node, int index);
+  // 按值调用的实参编码（调用方先压可调用值）。
+  bool callValueArgs(const Node& node);
   bool call(const Node& node);
   bool constant(const Node& node);
 
@@ -246,6 +252,9 @@ class CodeGen {
   // 编到那一句时才编（与 def 一样，函数名与全局槽必须先就位）。
   std::vector<int> pendingLambdas_;
   int lambdaCounter_ = 0;
+  // 带装饰器的 def：这个名字在运行期装的是装饰器返回的值，不再是「脚本
+  // 函数」。按名查函数号时要跳过它，调用得走 CALL_VALUE。
+  std::set<std::string> decoratedNames_;
 
   std::vector<std::string> globalOrder_;
   std::set<std::string> globalsSet_;

@@ -61,7 +61,8 @@ const char* opName(Op op) {
     case Op::kCallDyn: return "call_dyn";
     case Op::kDictMerge: return "dict_merge";
     case Op::kMakeFunction: return "make_function";
-    case Op::kCallValue: return "call_value";  }
+    case Op::kCallValue: return "call_value";
+    case Op::kCallValueDyn: return "call_value_dyn";  }
   return "?";
 }
 
