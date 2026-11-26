@@ -43,6 +43,16 @@ const char* opName(Op op) {
     case Op::kIterNext: return "iter_next";
     case Op::kIterBreak: return "iter_break";
     case Op::kInplace: return "inplace";
+    case Op::kWithEnter: return "with_enter";
+    case Op::kWithExit: return "with_exit";
+    case Op::kSetupExc: return "setup_exc";
+    case Op::kPopExc: return "pop_exc";
+    case Op::kRaise: return "raise";
+    case Op::kRaiseType: return "raise_type";
+    case Op::kReraise: return "reraise";
+    case Op::kExcMatch: return "exc_match";
+    case Op::kCurrentExc: return "current_exc";
+    case Op::kClearExc: return "clear_exc";
   }
   return "?";
 }

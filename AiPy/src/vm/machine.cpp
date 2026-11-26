@@ -18,6 +18,8 @@
 //   4. 任何 return 都要先把返回值从当前帧的栈区里取出来，再回到上一帧。
 #include "vm/internal.h"
 
+#include <cstdio>
+#include <cstdlib>
 #include <string>
 
 namespace aipy {
@@ -31,7 +33,90 @@ namespace {
 // 互不影响，也不会在对方拆 Program 时读到悬空指针。
 thread_local const Program* g_currentProgram = nullptr;
 
+// 异常展开：把 exception 交给最近的处理块。
+//
+// ── 为什么是独立函数且 noinline ──
+//
+// 它原来是 execute 里的 lambda，被内联进去后让那个巨大函数的栈帧又多出
+// 几层局部（若干个 std::string 与 Value）。脚本函数在子线程里跑时栈只有
+// 默认的 1 MB，加完就直接触发 /GS 的栈检查失败（0xC0000409），症状是
+// 「子线程 print 正常、函数一返回进程就崩」。
+//
+// 拆出来也符合铁律六：这是**语义**（怎么找处理块），不是「指令怎么执行」。
+//
+//   try 块   → 值栈退回到进入时的深度、压上异常值、跳到 handler 入口
+//   with 块  → 先调 __exit__（CPython 在异常穿出 with 时也调），继续向外找
+//   帧没块了 → 弹帧，异常交给调用者
+//   没帧了   → 程序带着异常结束，result 里带上类型与消息
+//
+// 返回 true 表示控制已交给某个 handler；false 表示程序结束。
+__declspec(noinline) bool unwindException(std::vector<Frame>& frames,
+                                          std::vector<Value>& stack,
+                                          std::size_t* sp, Result* result,
+                                          const Value& exception) {
+  for (;;) {
+    if (frames.empty()) {
+      result->failed = true;
+      result->exception = exception;
+      result->error = exceptionMessage(exception);
+      *sp = 0;
+      return false;
+    }
+    Frame& frame = frames.back();
+    detail::ExceptionState* state = frame.exceptions.get();
+    if (state == nullptr || state->blocks.empty()) {
+      // 这一帧没有保护区：把异常传给调用者。先记下行号，弹出后帧就没了。
+      if (frame.lines != nullptr) {
+        int line = 0;
+        for (const LineEntry& entry : *frame.lines) {
+          if (entry.offset > frame.pc) break;
+          line = entry.line;
+        }
+        result->line = line;
+      }
+      *sp = frame.stackBase;
+      frames.pop_back();
+      if (frames.empty()) {
+        result->failed = true;
+        result->exception = exception;
+        result->error = exceptionMessage(exception);
+        return false;
+      }
+      continue;
+    }
+
+    const Block block = state->blocks.back();
+    state->blocks.pop_back();
+    // 两个栈都退回到进入这个块时的状态：值栈上可能压着半截表达式，
+    // 异常栈里可能有一层正在被处理的内层异常。
+    if (*sp > block.stackLevel) *sp = block.stackLevel;
+    if (state->exceptions.size() > block.exceptionDepth) {
+      state->exceptions.resize(block.exceptionDepth);
+    }
+
+    if (block.kind == Block::kWith) {
+      // __exit__ 自己出错时不该覆盖原始异常：CPython 把它挂成 during handling，
+      // 这里只保留第一个——原始原因更有用。
+      if (block.withSlot < frame.locals.size()) {
+        const Value manager = frame.locals[block.withSlot];
+        if (!manager.isNone()) {
+          std::string error;
+          callMethod(manager, "__exit__", nullptr, 0, &error);
+          clearPendingException();
+        }
+      }
+      continue;
+    }
+
+    state->exceptions.push_back(exception);
+    frame.pc = block.target;
+    stack[(*sp)++] = exception;
+    return true;
+  }
+}
+
 }  // namespace
+
 
 const Program* currentProgramPointer() { return g_currentProgram; }
 void setCurrentProgramPointer(const Program* program) { g_currentProgram = program; }
@@ -48,9 +133,20 @@ using detail::callMethod;
 using detail::Frame;
 using detail::read16;
 
+// 异常处理块。与 `CodeGen::Block` 同名但无关：这里是运行期的保护区，
+// 那边是编译期的字节码块。机器码里只有这一种，用短名读起来更顺。
+using Block = detail::Block;
+using ExceptionState = detail::ExceptionState;
+using detail::exceptionStateOf;
+using detail::peekExceptionStateOf;
+
 // 前置声明：定义在 `Machine::callFunction` 之后，两个入口共用它。
+//
+// `frames` 用引用而不是按值：`Frame` 里有三个 vector（locals/blocks/
+// exceptions），按值传会让每次进入执行循环都多一次整栈移动。实测那种
+// 形态在 Release 下会让子线程返回时崩（0xC0000409），而 Debug 正常。
 static Result execute(const Program& program, std::vector<Value>& globals,
-                      std::vector<Frame> frames);
+                      std::vector<Frame>& frames);
 
 // 进程级的全局槽。定义在这里、声明在 vm.h：所有 Machine 实例共用同一份，
 // 线程里 `global X` 才写得到主线程看得见的那个槽。
@@ -73,7 +169,7 @@ Result Machine::run(const Program& program) {
   std::vector<Frame> frames;
   frames.reserve(16);
   frames.push_back(std::move(moduleFrame));
-  return execute(program, globals_, std::move(frames));
+  return execute(program, globals_, frames);
 }
 
 Result Machine::callFunction(const Program& program, const std::string& name,
@@ -118,7 +214,7 @@ Result Machine::callFunction(const Program& program, const std::string& name,
   std::vector<Frame> frames;
   frames.reserve(16);
   frames.push_back(std::move(callee));
-  return execute(program, globals_, std::move(frames));
+  return execute(program, globals_, frames);
 }
 
 // 执行循环本体：帧已建好，从 frames.back() 开始跑。
@@ -131,7 +227,7 @@ Result Machine::callFunction(const Program& program, const std::string& name,
 // 同一个——子线程跑脚本函数时应该看见同一份全局状态，这与 Python 里
 // 线程共享模块全局变量的语义一致。
 static Result execute(const Program& program, std::vector<Value>& globals,
-                      std::vector<Frame> frames) {
+                      std::vector<Frame>& frames) {
   Result result;
 
   // 「当前正在跑哪个程序」。扩展函数只拿到 `const Value*`，拿不到 Program；
@@ -169,6 +265,12 @@ static Result execute(const Program& program, std::vector<Value>& globals,
     return result;
   };
 
+  // 异常展开与判定的薄封装：真正的逻辑在不内联的 unwindException 里，
+  // 原因见它的注释（子线程栈只有 1 MB）。
+  const auto unwind = [&](const Value& exception) -> bool {
+    return detail::unwindException(frames, stack, &sp, &result, exception);
+  };
+
   while (!frames.empty()) {
     Frame& frame = frames.back();
 
@@ -186,6 +288,23 @@ static Result execute(const Program& program, std::vector<Value>& globals,
 
     const std::vector<std::uint8_t>& code = *frame.code;
     const auto op = static_cast<Op>(code[frame.pc++]);
+
+    // ── 异常通道的收尾 ──
+    //
+    // 值层失败时不中断指令，只留下「待处理异常」（见 value.h）。这里取出
+    // 并展开。放在 switch **之前**：上一条指令已经完整执行完，新指令还没
+    // 开始，此时展开不会破坏任何中间状态。
+    //
+    // 为什么不用 C++ 异常：那会给每个调用点加 unwind 表，而这条执行路径
+    // 的全部理由就是「一次 switch + 几次直接下标」（铁律六）。
+    if (hasPendingException()) {
+      std::string type;
+      std::string message;
+      if (takePendingException(&type, &message)) {
+        if (!unwind(makeException(type, message))) return result;
+        continue;
+      }
+    }
 
     switch (op) {
       case Op::kConst: {
@@ -361,7 +480,6 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         stack[sp++] = value;
         break;
       }
-
       case Op::kBuildList: {
         const std::uint16_t count = read16(code, frame.pc);
         frame.pc += 2;
@@ -465,10 +583,13 @@ static Result execute(const Program& program, std::vector<Value>& globals,
       }
 
       case Op::kWithEnter: {
-        // 弹管理器 → 存进局部槽 → 调 __enter__() → 压返回值。
+        // 弹管理器 → 存进局部槽 → 调 __enter__() → 压返回值 → 压 with 块。
         //
-        // 存槽而不是留在栈上：`with` 体内会压任意深度的临时值，退出时栈顶
-        // 不一定是管理器。
+        // 存槽而不是留在栈上：`with` 体内会压任意深度的临时值，异常展开时
+        // 栈顶更不可能是管理器。
+        //
+        // 块在 `__enter__` 之后才压：进入失败时不该由这个 with 去调
+        // `__exit__`（CPython 也一样，进入失败就不退出）。
         const std::uint16_t slot = read16(code, frame.pc);
         frame.pc += 2;
         if (slot >= frame.locals.size()) return fail("with 临时槽越界（编译器 bug）");
@@ -476,29 +597,163 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         frame.locals[slot] = manager;
         std::string error;
         const Value entered = callMethod(manager, "__enter__", nullptr, 0, &error);
-        if (!error.empty()) return fail(error);
+        if (!error.empty()) {
+          raiseException("AttributeError", error);
+          break;
+        }
         stack[sp++] = entered;
+
+        Block block;
+        block.kind = Block::kWith;
+        block.withSlot = slot;
+        block.stackLevel = sp;
+        ExceptionState& state = exceptionStateOf(frame);
+        block.exceptionDepth = state.exceptions.size();
+        state.blocks.push_back(block);
         break;
       }
 
       case Op::kWithExit: {
-        // 从槽里取回管理器，调 __exit__()。
+        // 正常退出 with：弹块，调 __exit__()。
         //
-        // 不压任何东西：`__exit__` 的返回值在这里没有语义（AiPy 没有异常
-        // 通道，不存在「__exit__ 吞掉异常」那种情形）。早先这里多写了一次
-        // `--sp`，把 with 体留下的无关值弹掉了，栈就此错位。
+        // `__exit__` 的返回值在这条路径上没有语义：CPython 只在异常穿出时
+        // 看它是否吞掉异常。
         const std::uint16_t slot = read16(code, frame.pc);
         frame.pc += 2;
         if (slot >= frame.locals.size()) return fail("with 临时槽越界（编译器 bug）");
+        if (const ExceptionState* state = peekExceptionStateOf(frame)) {
+          if (!state->blocks.empty() &&
+              state->blocks.back().kind == Block::kWith) {
+            exceptionStateOf(frame).blocks.pop_back();
+          }
+        }
         const Value manager = frame.locals[slot];
         // 清空槽：让管理器能被回收，也让同一槽被下一个 with 复用时安全。
         frame.locals[slot] = Value();
         std::string error;
         callMethod(manager, "__exit__", nullptr, 0, &error);
-        if (!error.empty()) return fail(error);
+        if (!error.empty()) {
+          raiseException("AttributeError", error);
+          break;
+        }
+        break;
+      }
+
+      // ── 异常 ──
+
+      case Op::kSetupExc: {
+        // 压一层保护区。记录值栈与异常栈的当前深度，展开时退回到这里。
+        const std::uint16_t target = read16(code, frame.pc);
+        frame.pc += 2;
+        Block block;
+        block.kind = Block::kTry;
+        block.target = target;
+        block.stackLevel = sp;
+        ExceptionState& state = exceptionStateOf(frame);
+        block.exceptionDepth = state.exceptions.size();
+        state.blocks.push_back(block);
+        break;
+      }
+
+      case Op::kPopExc: {
+        if (const ExceptionState* state = peekExceptionStateOf(frame)) {
+          if (!state->blocks.empty()) exceptionStateOf(frame).blocks.pop_back();
+        }
+        break;
+      }
+
+      case Op::kRaise: {
+        // `raise X`：X 已经求值并压栈。不是异常对象时报 TypeError，
+        // 与 CPython 的「只能抛出 BaseException 的实例」一致。
+        if (sp == 0) return fail("raise 缺少异常值（编译器 bug）");
+        const Value value = stack[--sp];
+        if (!isException(value)) {
+          if (!unwind(makeException("TypeError",
+                                    "exceptions must derive from BaseException"))) {
+            return result;
+          }
+          break;
+        }
+        if (!unwind(value)) return result;
+        break;
+      }
+
+      case Op::kRaiseType: {
+        // u16 类型名常量号, u8 有没有消息（有则弹栈顶当消息）。
+        // 编译器只对「内建异常类」发这一条，所以类型名在编译期已校验。
+        const std::uint16_t nameIndex = read16(code, frame.pc);
+        const std::uint8_t hasMessage = code[frame.pc + 2];
+        frame.pc += 3;
+        if (nameIndex >= program.consts.size()) {
+          return fail("异常类型名越界（编译器 bug）");
+        }
+        const std::string type = program.consts[nameIndex].toString();
+        std::string message;
+        if (hasMessage != 0) message = stack[--sp].toString();
+        if (!unwind(makeException(type, message))) return result;
+        break;
+      }
+
+      case Op::kReraise: {
+        const ExceptionState* state = peekExceptionStateOf(frame);
+        if (state == nullptr || state->exceptions.empty()) {
+          if (!unwind(makeException("RuntimeError",
+                                    "No active exception to re-raise"))) {
+            return result;
+          }
+          break;
+        }
+        if (!unwind(state->exceptions.back())) return result;
+        break;
+      }
+
+      case Op::kExcMatch: {
+        // u16 命中时的目标, u16 期望类型名的常量号。
+        //
+        // 语义是「匹配则跳转，不匹配则继续下一条」——这样 `except (A, B):`
+        // 直接排成两条 EXC_MATCH，最后一条不匹配就自然落到下一个 handler。
+        // 反过来写（不匹配才跳）每条后面都要补一条 JUMP。
+        const std::uint16_t hitTarget = read16(code, frame.pc);
+        const std::uint16_t nameIndex = read16(code, frame.pc + 2);
+        frame.pc += 4;
+        if (nameIndex >= program.consts.size()) {
+          return fail("异常类型名越界（编译器 bug）");
+        }
+        const std::string wanted = program.consts[nameIndex].toString();
+        const ExceptionState* state = peekExceptionStateOf(frame);
+        if (state != nullptr && !state->exceptions.empty() &&
+            exceptionMatches(exceptionType(state->exceptions.back()), wanted)) {
+          frame.pc = hitTarget;
+        }
+        break;
+      }
+
+      case Op::kCurrentExc: {
+        // `except ... as e`：把正在处理的异常压栈，交给随后的 nameStore。
+        const ExceptionState* state = peekExceptionStateOf(frame);
+        if (state != nullptr && !state->exceptions.empty()) {
+          stack[sp++] = state->exceptions.back();
+        } else {
+          stack[sp++] = Value();
+        }
+        break;
+      }
+
+      case Op::kClearExc: {
+        // 离开 except 体：弹掉这一层「当前异常」，让外层的 bare raise 看到
+        // 外层的异常（CPython 在 except 结束时同样清掉 sys.exc_info）。
+        const ExceptionState* state = peekExceptionStateOf(frame);
+        if (state != nullptr && !state->exceptions.empty()) {
+          exceptionStateOf(frame).exceptions.pop_back();
+        }
         break;
       }
     }
+
+    // 值栈边界的统一闸门：各分支自己有弹压，但漏一处就是越界写，而越界
+    // 写会破坏 std::vector 之后的内存（Release 下表现为 __fastfail，即
+    // 0xC0000409，Debug 下反而看不出来）。查一次比逐条加便宜得多。
+    if (sp > kStackSize) return fail("操作数栈溢出（编译器 bug）");
   }
 
   result.value = sp > 0 ? stack[sp - 1] : Value();

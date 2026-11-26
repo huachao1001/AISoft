@@ -7,6 +7,7 @@
 // 哪几行，方便对照，而不是解释代码在做什么。
 #include "pcc/codegen/codegen.h"
 
+#include "aipy/exceptions.h"
 #include "pcc/diagnostics.h"
 
 namespace pcc {
@@ -133,13 +134,13 @@ bool CodeGen::statement(const Node& node) {
       return failAt(diag::assertUnsupported(), node);
 
     case Kind::Raise:
-      return failAt(diag::raiseUnsupported(), node);
+      return raiseStatement(node);
 
     case Kind::With:
       return withStatement(node);
 
     case Kind::Try:
-      return failAt(diag::tryUnsupported(), node);
+      return tryStatement(node);
 
     case Kind::FunctionDef:
       return failAt(diag::nestedFunction(node.text), node);
@@ -328,6 +329,229 @@ bool CodeGen::forLoop(const Node& node) {
   patchU16(static_cast<std::size_t>(exitFixup), exitAt);
   for (int fixup : frame.breakFixups) {
     patchU16(static_cast<std::size_t>(fixup), exitAt);
+  }
+  return true;
+}
+
+bool CodeGen::raiseStatement(const Node& node) {
+  // `raise` 单独一行：重抛当前处理的异常。
+  if (node.children.empty()) {
+    emit("RERAISE", node);
+    return true;
+  }
+
+  const Node& value = *node.children[0];
+
+  // `raise ValueError` / `raise ValueError("msg")`：类型名在编译期就能确定，
+  // 所以发 RAISE_TYPE（类型名进常量池），运行期不必再查「这个名字是不是
+  // 异常类」。拼错的名字在这里就报错，而不是等脚本跑到那一行。
+  if (value.kind == Kind::Call && value.children.size() > 0 &&
+      value.children[0]->kind == Kind::Name) {
+    const std::string& callee = value.children[0]->text;
+    if (aipy::isExceptionClassName(callee)) {
+      // 只接受 0 或 1 个位置参数：CPython 的多种内建异常构造形式里，
+      // 这里只实现「一个消息」——`args` 元组属元组语义，等元组落地再说。
+      const std::size_t argc = value.argsCount;
+      if (argc > 1) return failAt(diag::raiseTooManyArgs(callee), value);
+      if (argc == 1) {
+        if (!expr(*value.children[1])) return false;
+      }
+      emit("RAISE_TYPE", node);
+      emitU16(constIndexOfStr(callee));
+      emitU8(argc == 1 ? 1 : 0);
+      return true;
+    }
+  }
+
+  if (value.kind == Kind::Name && aipy::isExceptionClassName(value.text)) {
+    emit("RAISE_TYPE", node);
+    emitU16(constIndexOfStr(value.text));
+    emitU8(0);
+    return true;
+  }
+
+  // 其它表达式：求值后按「抛出这个值」处理。VM 会在它不是异常对象时
+  // 报 TypeError，与 CPython 一致。
+  if (!expr(value)) return false;
+  emit("RAISE", node);
+  return true;
+}
+
+bool CodeGen::tryStatement(const Node& node) {
+  // ── 布局 ──
+  //
+  // try/except 部分整体放在「finally 保护区」里：这样无论是正常结束、
+  // 还是 except 没接住而向外传播，控制流都会先经过 finally，再由 finally
+  // 之后的 RERAISE 继续往外抛。CPython 的语义正是这个。
+  //
+  //   [有 finally]
+  //     SETUP_EXC L_FIN_ENTRY      ← 外层：finally 的保护区
+  //   [try/except/else 整段]
+  //   [有 finally]
+  //     POP_EXC                    ← 正常穿出 finally 保护区
+  //     <finally 体>
+  //     JUMP L_END
+  //   L_FIN_ENTRY:                 ← 异常进来时栈顶是异常值
+  //     <finally 体>
+  //     RAISE                      ← 重新抛出（finally 不吞异常）
+  //   L_END:
+  //
+  // 没有 finally 时就只有 try/except/else 那一段。
+  const bool hasFinally = node.finalCount > 0;
+
+  int finallyEntryFixup = -1;
+  if (hasFinally) {
+    emit("SETUP_EXC", node);
+    finallyEntryFixup = static_cast<int>(block_->code.size());
+    emitU16(0);
+  }
+
+  // ── try 体 ──
+  //
+  // 只有存在 except 子句时才需要保护区：没有 except 而只有 finally 时，
+  // 异常应当直接穿到外层（外层那个 finally 保护区就是干这个的），
+  // 在这里再包一层只会让 finally 执行两次。
+  int handlerFixup = -1;
+  if (node.handlerCount > 0) {
+    emit("SETUP_EXC", node);
+    handlerFixup = static_cast<int>(block_->code.size());
+    emitU16(0);
+  }
+
+  for (std::size_t i = 0; i < node.bodyCount; ++i) {
+    if (!statement(*node.children[i])) return false;
+  }
+
+  if (node.handlerCount > 0) emit("POP_EXC", node);
+
+  // ── else ──
+  //
+  // else 只在 try 体没有异常时执行，且**不**在保护区内（CPython 如此：
+  // else 里抛出的异常不会被自己的 except 捕获）。
+  const std::size_t handlerStart = node.bodyCount;
+  const std::size_t orelseStart = handlerStart + node.handlerCount;
+  const std::size_t finalStart = orelseStart + node.orelseCount;
+
+  int elseExitFixup = -1;
+  const bool hasHandlers = node.handlerCount > 0;
+  if (hasHandlers) {
+    // try 体正常结束：跳过所有 handler，去执行 else。
+    emit("JUMP", node);
+    elseExitFixup = static_cast<int>(block_->code.size());
+    emitU16(0);
+  }
+
+  if (hasHandlers) {
+    // ── handler 入口 ──
+    const int handlerAt = static_cast<int>(block_->code.size());
+    patchU16(static_cast<std::size_t>(handlerFixup), handlerAt);
+
+    // 每个子句：类型匹配则进入子句体，不匹配则继续下一条 EXC_MATCH；
+    // 所有子句都不匹配，就落到末尾的 RERAISE。
+    std::vector<int> handlerExits;
+    for (std::size_t i = 0; i < node.handlerCount; ++i) {
+      const Node& handler = *node.children[handlerStart + i];
+      const std::size_t bodyStart = handler.hasType ? 1 : 0;
+
+      if (handler.hasType) {
+        const Node& type = *handler.children[0];
+        // 异常类型只认内建类名：脚本里没有能继承 BaseException 的 class，
+        // 所以编译期就能确定。元组形式展开成多条 EXC_MATCH。
+        std::vector<std::string> types;
+        if (type.kind == Kind::TupleLit) {
+          for (const auto& element : type.children) {
+            if (element->kind != Kind::Name ||
+                !aipy::isExceptionClassName(element->text)) {
+              return failAt(
+                  diag::exceptTypeNotException(element->kind == Kind::Name
+                                                   ? element->text
+                                                   : std::string("<expr>")),
+                  *element);
+            }
+            types.push_back(element->text);
+          }
+        } else if (type.kind == Kind::Name && aipy::isExceptionClassName(type.text)) {
+          types.push_back(type.text);
+        } else {
+          return failAt(diag::exceptTypeNotException(
+                            type.kind == Kind::Name ? type.text
+                                                    : std::string("<expr>")),
+                        type);
+        }
+
+        // 命中目标统一指到子句体起点，四条匹配共享同一个出口。
+        const std::size_t matchSites = block_->code.size();
+        for (const std::string& name : types) {
+          emit("EXC_MATCH", handler);
+          emitU16(0);  // 先占位，稍后 patch 成子句体起点
+          emitU16(constIndexOfStr(name));
+        }
+        const int bodyAt = static_cast<int>(block_->code.size());
+        // EXC_MATCH 的操作数是 u16 目标 + u16 常量号，各 2 字节，
+        // 所以补丁位置是「指令后第一个字节」。
+        for (std::size_t k = 0; k < types.size(); ++k) {
+          // 每条 5 字节：1 操作码 + 2 目标 + 2 常量号
+          patchU16(matchSites + k * 5 + 1, bodyAt);
+        }
+      }
+
+      // `as e`：把当前异常存进名字。裸 except 不必取。
+      if (handler.hasExceptVar) {
+        emit("CURRENT_EXC", handler);
+        nameStore(handler.text, handler);
+      }
+
+      for (std::size_t j = 0; j < handler.handlerBodyCount; ++j) {
+        if (!statement(*handler.children[bodyStart + j])) return false;
+      }
+      emit("CLEAR_EXC", handler);
+
+      emit("JUMP", handler);
+      handlerExits.push_back(static_cast<int>(block_->code.size()));
+      emitU16(0);
+    }
+
+    // 所有子句都不匹配：重抛。
+    emit("RERAISE", node);
+
+    const int afterHandlers = static_cast<int>(block_->code.size());
+    patchU16(static_cast<std::size_t>(elseExitFixup), afterHandlers);
+
+    // ── else 体 ──
+    for (std::size_t i = 0; i < node.orelseCount; ++i) {
+      if (!statement(*node.children[orelseStart + i])) return false;
+    }
+
+    const int afterElse = static_cast<int>(block_->code.size());
+    for (int fixup : handlerExits) {
+      patchU16(static_cast<std::size_t>(fixup), afterElse);
+    }
+  } else {
+    // 没有 except 就只可能是「只有 finally」：解析器保证至少一个。
+    // try 体已经发完，异常直接由外层 finally 保护区接管。
+  }
+
+  // ── finally ──
+  if (hasFinally) {
+    // 正常路径：穿出外层保护区，执行 finally 体，然后跳过异常入口。
+    emit("POP_EXC", node);
+    for (std::size_t i = 0; i < node.finalCount; ++i) {
+      if (!statement(*node.children[finalStart + i])) return false;
+    }
+    emit("JUMP", node);
+    const int normalFixup = static_cast<int>(block_->code.size());
+    emitU16(0);
+
+    // 异常路径：异常值已在栈顶，先执行 finally，再重新抛出。
+    patchU16(static_cast<std::size_t>(finallyEntryFixup),
+             static_cast<int>(block_->code.size()));
+    for (std::size_t i = 0; i < node.finalCount; ++i) {
+      if (!statement(*node.children[finalStart + i])) return false;
+    }
+    emit("RAISE", node);
+
+    patchU16(static_cast<std::size_t>(normalFixup),
+             static_cast<int>(block_->code.size()));
   }
   return true;
 }

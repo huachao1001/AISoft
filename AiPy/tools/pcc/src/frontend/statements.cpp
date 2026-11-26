@@ -238,7 +238,7 @@ NodePtr Parser::smallStatement() {
   if (checkName("nonlocal")) return globalStatement(true);
   if (checkName("del")) return rejectRemainder(Kind::Delete);
   if (checkName("assert")) return rejectRemainder(Kind::Assert);
-  if (checkName("raise")) return rejectRemainder(Kind::Raise);
+  if (checkName("raise")) return raiseStatement();
   if (checkName("import")) return importStatement();
   if (checkName("from")) return fromImportStatement();
   if (checkName("type") && peek(1).type == TokenType::Name &&
@@ -334,16 +334,101 @@ NodePtr Parser::compoundStatement() {
 NodePtr Parser::tryStatement() {
   auto node = make_node(Kind::Try, peek().line, peek().col);
   advance();
-  std::vector<NodePtr> ignored;
-  // 整段都要解析（否则块结构对不上），但内容不重要——反正要拒绝。
-  if (!parseBlock(&ignored)) return nullptr;
+
+  // ── try 体 ──
+  if (!parseBlock(&node->children)) return nullptr;
+  node->bodyCount = node->children.size();
+
+  // ── except 子句 ──
+  //
+  // 每个子句是 ExceptHandler：children = [异常类型?, 体...]，
+  // text = `as` 的名字（空串表示没写）。
+  //
+  // 异常类型可以省略（裸 `except:`），也可以写多个（`except (A, B):`）。
+  // 多个类型在类型位置是一个 TupleLit，解析器照常产出元组节点，
+  // 由 codegen 展开成逐个匹配。
   for (;;) {
     skipNewlines();
-    if (!checkName("except") && !checkName("finally") && !checkName("else")) break;
+    if (!checkName("except")) break;
+    const Token& keyword = peek();
     advance();
-    while (!checkOp(":") && !check(TokenType::End)) advance();
-    std::vector<NodePtr> section;
-    if (!parseBlock(&section)) return nullptr;
+
+    auto handler = make_node(Kind::ExceptHandler, keyword.line, keyword.col);
+
+    // 没写类型就直接到冒号了（裸 `except:`）。
+    const bool hasType = !checkOp(":");
+    if (hasType) {
+      NodePtr type = expression();
+      if (!type) return nullptr;
+      handler->children.push_back(std::move(type));
+    }
+    if (checkName("as")) {
+      advance();
+      if (!check(TokenType::Name)) {
+        fail(diag::nameExpected("as"));
+        return nullptr;
+      }
+      handler->text = peek().text;
+      handler->hasExceptVar = true;
+      advance();
+    }
+    const std::size_t beforeBody = handler->children.size();
+    if (!parseBlock(&handler->children)) return nullptr;
+    handler->handlerBodyCount = handler->children.size() - beforeBody;
+    handler->hasType = hasType;
+    node->children.push_back(std::move(handler));
+    ++node->handlerCount;
+  }
+
+  // ── else 子句 ──
+  //
+  // 与 Python 一致：else 在没有任何异常时执行，且不被打包在保护区内。
+  std::size_t orelseStart = node->children.size();
+  skipNewlines();
+  if (checkName("else")) {
+    advance();
+    if (!parseBlock(&node->children)) return nullptr;
+  }
+  node->orelseCount = node->children.size() - orelseStart;
+
+  // ── finally 子句 ──
+  std::size_t finalStart = node->children.size();
+  skipNewlines();
+  if (checkName("finally")) {
+    advance();
+    if (!parseBlock(&node->children)) return nullptr;
+  }
+  node->finalCount = node->children.size() - finalStart;
+
+  // 一个 try 至少要有一个 except 或 finally，否则语法错误（与 CPython 一致）。
+  if (node->handlerCount == 0 && node->finalCount == 0) {
+    fail(diag::tryNeedsHandler());
+    return nullptr;
+  }
+  return node;
+}
+
+NodePtr Parser::raiseStatement() {
+  auto node = make_node(Kind::Raise, peek().line, peek().col);
+  advance();
+
+  // `raise` 单独一行（bare raise）表示重抛当前异常，只在 except 体里有意义。
+  // 与 CPython 一致：内容为空就是重抛，由 codegen 发 RERAISE。
+  if (check(TokenType::Newline) || checkOp(";") || check(TokenType::End)) {
+    return node;
+  }
+
+  NodePtr exception = expression();
+  if (!exception) return nullptr;
+  node->children.push_back(std::move(exception));
+
+  // `raise Exc from cause`：CPython 3 的语法。我们只解析掉，不做链式
+  // traceback——没有 traceback 可链，`from` 不产生任何可观察差异。
+  if (checkName("from")) {
+    advance();
+    NodePtr cause = expression();
+    if (!cause) return nullptr;
+    // 不保留 cause：它只影响 traceback 的显示，而我们只输出 `类型: 消息`。
   }
   return node;
 }

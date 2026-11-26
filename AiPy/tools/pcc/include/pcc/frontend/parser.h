@@ -65,6 +65,7 @@ class Parser {
   NodePtr classDef();
   NodePtr withStatement(bool async);
   NodePtr tryStatement();
+  NodePtr raiseStatement();
   NodePtr matchStatement();
   NodePtr parseFunctionArgs();
   bool parseBlock(std::vector<NodePtr>* body);

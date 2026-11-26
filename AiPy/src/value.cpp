@@ -1,5 +1,6 @@
 #include "aipy/value.h"
 
+#include "aipy/exceptions.h"
 #include "aipy/utf8.h"
 
 #include <algorithm>
@@ -14,6 +15,11 @@ namespace {
 
 const std::string kEmptyString;
 const List kEmptyList;
+
+// 异常值用这张方法表当标记：判据是「表指针是不是它」，所以必须在
+// 所有用到判定的地方（isException、toString）之前可见。
+const MethodEntry kNoMethods[] = {{nullptr, nullptr}};
+const MethodTable kExceptionTable = {kNoMethods};
 
 // 数字提升：只要有一边是 float，结果就是 float。Python 的 / 永远返回 float，
 // 但 + - * % 保持 int。这里不区分来源，由调用点决定走哪个函数。
@@ -538,11 +544,96 @@ std::string Value::toString() const {
     case Type::kHost:
       return "<view>";
     case Type::kObject:
-      // 与 Python 的 <threading.Lock object at 0x...> 同一个意图：能看出
-      // 它是对象，但不去猜 pylib 私有状态的细节。
+      // 异常对象按 CPython 的 str(exc) 显示消息；没有消息时显示类型名。
+      // 其它对象保持不透明：与 Python 的 <threading.Lock object at 0x...>
+      // 同一个意图，不去猜 pylib 私有状态的细节。
+      if (heap_ != nullptr && heap_->object.table == &kExceptionTable) {
+        return heap_->exceptionMessage.empty() ? heap_->exceptionType
+                                               : heap_->exceptionMessage;
+      }
       return "<object>";
   }
   return std::string();
+}
+
+// ── 异常 ──
+
+Value makeException(const std::string& type, const std::string& message) {
+  Value out;
+  out.type_ = Value::Type::kObject;
+  out.heap_ = makeHeap();
+  out.heap_->object.table = &kExceptionTable;
+  out.heap_->exceptionType = type;
+  out.heap_->exceptionMessage = message;
+  return out;
+}
+
+bool isException(const Value& value) {
+  const ObjectData* data = value.asObject();
+  return data != nullptr && data->table == &kExceptionTable;
+}
+
+std::string exceptionType(const Value& value) {
+  if (!isException(value)) return std::string();
+  return value.heap_->exceptionType;
+}
+
+std::string exceptionMessage(const Value& value) {
+  if (!isException(value)) return std::string();
+  return value.heap_->exceptionMessage;
+}
+
+bool exceptionMatches(const std::string& thrownType,
+                      const std::string& exceptType) {
+  // 沿「子类 → 父类」上溯。层数上限兜底：表写错成环时宁可判不匹配，
+  // 也不要在 except 匹配里死循环——那会把脚本错误变成程序卡死。
+  std::string current = thrownType;
+  for (int depth = 0; depth < 64; ++depth) {
+    if (current == exceptType) return true;
+    const char* parent = exceptionParentOf(current);
+    if (parent == nullptr) return false;
+    current = parent;
+  }
+  return false;
+}
+
+bool isExceptionTypeName(const std::string& name) {
+  return isExceptionClassName(name);
+}
+
+// ── 待处理异常 ──
+//
+// 见 value.h 的解释：值层统一「返回值」，失败靠这条旁路通知执行循环。
+// 不用 `std::exception_ptr`：这里只传两个字符串，没有 C++ 异常对象要保全。
+namespace {
+thread_local bool g_hasPending = false;
+thread_local std::string g_pendingType;
+thread_local std::string g_pendingMessage;
+}  // namespace
+
+void raiseException(const std::string& type, const std::string& message) {
+  // 只为 AI 的调用点省一次判空。已经有一个待处理异常时不覆盖：
+  // 那说明失败正在向外传播，后来者只是它的副作用。
+  if (g_hasPending) return;
+  g_hasPending = true;
+  g_pendingType = type;
+  g_pendingMessage = message;
+}
+
+bool hasPendingException() { return g_hasPending; }
+
+bool takePendingException(std::string* type, std::string* message) {
+  if (!g_hasPending) return false;
+  if (type != nullptr) *type = std::move(g_pendingType);
+  if (message != nullptr) *message = std::move(g_pendingMessage);
+  clearPendingException();
+  return true;
+}
+
+void clearPendingException() {
+  g_hasPending = false;
+  g_pendingType.clear();
+  g_pendingMessage.clear();
 }
 
 // ── 算术 ──

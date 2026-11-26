@@ -48,6 +48,7 @@ import pack  # noqa: E402
 MESSAGE_PAIRS = [
     ('只能有一个 Activity 类',
      'only one Activity class is allowed per script'),
+    ('{0} 不是异常类', '"{0}" is not an exception type'),
     ('类必须继承 Activity', 'a class must derive from Activity'),
     ('Activity 类体里只允许字段赋值和方法定义',
      'an Activity body may only contain field assignments and methods'),

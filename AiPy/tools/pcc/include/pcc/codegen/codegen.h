@@ -159,6 +159,8 @@ class CodeGen {
   bool augmented(const Node& node);
   bool forLoop(const Node& node);
   bool importStatement(const Node& node);
+  bool raiseStatement(const Node& node);
+  bool tryStatement(const Node& node);
 
   // ── 表达式（expressions.cpp）──
   bool expr(const Node& node);

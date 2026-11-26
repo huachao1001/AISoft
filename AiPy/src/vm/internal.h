@@ -15,6 +15,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -52,6 +53,35 @@ Value callMethod(const Value& target, const std::string& name,
 //
 // `stackBase` 是这一帧在共享值栈上的起点。参数就在 [stackBase, sp) 里，
 // 调用时不必拷参数，把 sp 抬高即可。
+
+// 一个异常处理块。编译器在 `try` / `with` 前后插对应的指令，VM 在抛出时
+// 弹到最近一个块。
+//
+// 为什么把 with 和 try 放在同一个栈上：两者都必须参与「异常向外传播」时的
+// 清理，而且顺序由嵌套关系唯一决定。分成两个栈就要在展开时比较它们的进入
+// 先后，那正是最容易写错的地方。
+//
+// `stackLevel` / `exceptionDepth` 是展开时的还原点：异常发生时值栈上可能
+// 压着半截表达式，异常栈里可能有一层正在处理的内层异常，两者都要退回到
+// 进入这个块那一刻的状态。
+struct Block {
+  enum Kind { kTry, kWith } kind = kTry;
+  std::size_t target = 0;          // try: handler 入口；with: 语句之后的位置
+  std::size_t stackLevel = 0;      // 展开时 sp 退回到这里
+  std::size_t exceptionDepth = 0;  // 展开时 exceptions 退回到这里
+  std::size_t withSlot = 0;        // with: 存管理器的局部槽
+};
+
+// 一帧的异常状态。按需分配（`Frame::exceptions` 为空表示没有）。
+//
+// 为什么不直接做成 Frame 的两个 vector 成员：`Frame` 是执行循环每次调用
+// 都要构造的对象，白扛两个 vector 的控制块不值当，而绝大多数帧一条 try
+// 都没有。
+struct ExceptionState {
+  std::vector<Block> blocks;
+  std::vector<Value> exceptions;
+};
+
 struct Frame {
   const std::vector<std::uint8_t>* code = nullptr;
   const std::vector<LineEntry>* lines = nullptr;
@@ -59,7 +89,25 @@ struct Frame {
   std::size_t pc = 0;
   std::size_t stackBase = 0;
   std::vector<Value> locals;
+  // 处理块栈与正在处理的异常；没进过 try 的帧保持 nullptr。
+  //
+  // 用 unique_ptr 而不是裸指针是为了让帧被弹出时自动释放——手写 delete
+  // 会漏（kReturn、异常传播、帧尾三条路径各要管一次）。
+  std::unique_ptr<ExceptionState> exceptions;
 };
+
+// 取一帧的异常状态，没有就建一个。只有真的进入 try / with 时才分配：
+// 多数帧一辈子用不到。
+inline ExceptionState& exceptionStateOf(Frame& frame) {
+  if (!frame.exceptions) frame.exceptions = std::make_unique<ExceptionState>();
+  return *frame.exceptions;
+}
+
+// 只读查询：没有状态时返回 nullptr。不能和上面重载成同名——`Frame&` 的
+// 实参对两者都可转换，重载会一律选中非 const 那个。
+inline const ExceptionState* peekExceptionStateOf(const Frame& frame) {
+  return frame.exceptions.get();
+}
 
 // ── 当前正在执行的程序 ──
 //

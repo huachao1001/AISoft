@@ -57,6 +57,8 @@ OPCODES = [
     'ITER_INIT', 'ITER_NEXT', 'ITER_BREAK',
     'INPLACE',
     'WITH_ENTER', 'WITH_EXIT',
+    'SETUP_EXC', 'POP_EXC', 'RAISE', 'RAISE_TYPE', 'RERAISE',
+    'EXC_MATCH', 'CURRENT_EXC', 'CLEAR_EXC',
 ]
 
 # 二元算子编号，与 vm.h 的 BinOp 一致。
@@ -79,6 +81,38 @@ BINOP = {name: index for index, name in enumerate(BINOPS)}
 CMPOP = {name: index for index, name in enumerate(CMPOPS)}
 UNOP = {name: index for index, name in enumerate(UNOPS)}
 BUILTIN_INDEX = {name: index for index, name in enumerate(BUILTINS)}
+
+# 内建异常类的名字，与 AiPy/include/aipy/exceptions.h 一致。
+#
+# 为什么这里是手抄而不是读那个头：Python 版是 oracle，只在测试期跑；
+# 读 C++ 头要写一个解析器，而解析别人源码的代码本身会成为新的不一致来源。
+# 两边各写一份、由 aipy_compiler_parity 的探针对齐更直接。
+EXCEPTION_CLASSES = [
+    'BaseException', 'Exception', 'SystemExit', 'KeyboardInterrupt',
+    'ArithmeticError', 'ZeroDivisionError', 'OverflowError',
+    'LookupError', 'IndexError', 'KeyError',
+    'ValueError', 'TypeError', 'NameError', 'AttributeError',
+    'RuntimeError', 'RecursionError', 'NotImplementedError',
+    'OSError', 'FileNotFoundError', 'PermissionError', 'FileExistsError',
+    'IsADirectoryError', 'UnicodeError', 'StopIteration', 'AssertionError',
+]
+EXCEPTION_SET = set(EXCEPTION_CLASSES)
+
+# 内建异常类的名字，与 AiPy/include/aipy/exceptions.h 一致。
+#
+# 为什么这里是手抄而不是读那个头：Python 版是 oracle，只在测试期跑；
+# 读 C++ 头要写一个解析器，而 parse 别人源码的代码本身就会成为新的
+# 不一致来源。两边各写一份、由 aipy_compiler_parity 的探针对齐更直接。
+EXCEPTION_CLASSES = [
+    'BaseException', 'Exception', 'SystemExit', 'KeyboardInterrupt',
+    'ArithmeticError', 'ZeroDivisionError', 'OverflowError',
+    'LookupError', 'IndexError', 'KeyError',
+    'ValueError', 'TypeError', 'NameError', 'AttributeError',
+    'RuntimeError', 'RecursionError', 'NotImplementedError',
+    'OSError', 'FileNotFoundError', 'PermissionError', 'FileExistsError',
+    'IsADirectoryError', 'UnicodeError', 'StopIteration', 'AssertionError',
+]
+EXCEPTION_SET = set(EXCEPTION_CLASSES)
 
 
 class CompileError(Exception):
@@ -698,15 +732,16 @@ class Compiler:
             raise CompileError('不支持 assert；请写 if + 显式处理', self.filename, node)
 
         if isinstance(node, ast.Raise):
-            raise CompileError('不支持 raise：没有异常通道，用返回值表示失败',
-                               self.filename, node)
+            self.raise_statement(node)
+            return
 
         if isinstance(node, ast.With):
             self.with_statement(node)
             return
 
         if isinstance(node, ast.Try):
-            raise CompileError('不支持 try 语句', self.filename, node)
+            self.try_statement(node)
+            return
 
         if isinstance(node, ast.FunctionDef):
             raise CompileError('不支持嵌套函数 "%s"；请移到模块顶层' % node.name,
@@ -720,6 +755,160 @@ class Compiler:
             return
 
         raise CompileError('不支持语句 %s' % type(node).__name__, self.filename, node)
+
+    def raise_statement(self, node):
+        """`raise` / `raise X` / `raise X(msg)`。
+
+        发射顺序必须与 C++ 版的 raiseStatement 一致：
+
+            bare raise           → RERAISE
+            raise ValueError     → RAISE_TYPE <常量号>, 0
+            raise ValueError(m)  → <求值 m> ; RAISE_TYPE <常量号>, 1
+            其它表达式           → <求值> ; RAISE
+        """
+        if node.exc is None:
+            self.block.emit('RERAISE', node)
+            return
+
+        value = node.exc
+        if (isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
+                and value.func.id in EXCEPTION_SET):
+            if len(value.args) > 1:
+                raise CompileError(
+                    'raise %s(...) 这里最多一个参数；异常参数元组还不支持'
+                    % value.func.id, self.filename, value)
+            if value.args:
+                self.expr(value.args[0])
+            self.block.emit('RAISE_TYPE', node)
+            self.block.emit_u16(self.const_string(value.func.id))
+            self.block.emit_u8(1 if value.args else 0)
+            return
+
+        if isinstance(value, ast.Name) and value.id in EXCEPTION_SET:
+            self.block.emit('RAISE_TYPE', node)
+            self.block.emit_u16(self.const_string(value.id))
+            self.block.emit_u8(0)
+            return
+
+        self.expr(value)
+        self.block.emit('RAISE', node)
+
+    def try_statement(self, node):
+        """`try / except / else / finally`。
+
+        ── 布局（与 C++ 版 tryStatement 一一对应）──
+
+        有 finally 时，try/except/else 整段放在「finally 保护区」里，
+        这样无论正常结束还是异常外传，控制流都先经过 finally 再由
+        RERAISE 继续抛——CPython 就是这个语义。
+
+            SETUP_EXC L_FIN           ← 外层：finally 的保护区
+            [try/except/else 整段]
+            POP_EXC
+            <finally 体>
+            JUMP L_END
+          L_FIN:                      ← 异常进来时栈顶是异常值
+            <finally 体>
+            RAISE
+          L_END:
+
+        ── EXC_MATCH 的语义 ──
+
+        「匹配则跳转」，所以 `except (A, B):` 排成两条，最后一条不匹配就
+        自然落到下一个 handler。反过来写每条后面都要补一条 JUMP。
+        """
+        has_finally = bool(node.finalbody)
+
+        finally_fixup = None
+        if has_finally:
+            self.block.emit('SETUP_EXC', node)
+            finally_fixup = len(self.block.code)
+            self.block.emit_u16(0)
+
+        handler_fixup = None
+        has_handlers = bool(node.handlers)
+        if has_handlers:
+            self.block.emit('SETUP_EXC', node)
+            handler_fixup = len(self.block.code)
+            self.block.emit_u16(0)
+
+        for statement in node.body:
+            self.statement(statement)
+
+        if has_handlers:
+            self.block.emit('POP_EXC', node)
+
+        else_exit_fixup = None
+        if has_handlers:
+            self.block.emit('JUMP', node)
+            else_exit_fixup = len(self.block.code)
+            self.block.emit_u16(0)
+
+        if has_handlers:
+            self.block.patch_u16(handler_fixup, len(self.block.code))
+
+            handler_exits = []
+            for handler in node.handlers:
+                if handler.type is not None:
+                    types = self._exception_type_names(handler.type)
+                    sites = len(self.block.code)
+                    for name in types:
+                        self.block.emit('EXC_MATCH', handler)
+                        self.block.emit_u16(0)   # 先占位，稍后回填子句体起点
+                        self.block.emit_u16(self.const_string(name))
+                    body_at = len(self.block.code)
+                    for k in range(len(types)):
+                        # 每条 5 字节：操作码 + u16 目标 + u16 常量号
+                        self.block.patch_u16(sites + k * 5 + 1, body_at)
+
+                if handler.name is not None:
+                    self.block.emit('CURRENT_EXC', handler)
+                    self.name_store(handler.name, handler)
+
+                for statement in handler.body:
+                    self.statement(statement)
+                self.block.emit('CLEAR_EXC', handler)
+
+                self.block.emit('JUMP', handler)
+                handler_exits.append(len(self.block.code))
+                self.block.emit_u16(0)
+
+            self.block.emit('RERAISE', node)
+            self.block.patch_u16(else_exit_fixup, len(self.block.code))
+
+            for statement in node.orelse:
+                self.statement(statement)
+
+            after_else = len(self.block.code)
+            for fixup in handler_exits:
+                self.block.patch_u16(fixup, after_else)
+
+        if has_finally:
+            self.block.emit('POP_EXC', node)
+            for statement in node.finalbody:
+                self.statement(statement)
+            self.block.emit('JUMP', node)
+            normal_fixup = len(self.block.code)
+            self.block.emit_u16(0)
+
+            self.block.patch_u16(finally_fixup, len(self.block.code))
+            for statement in node.finalbody:
+                self.statement(statement)
+            self.block.emit('RAISE', node)
+
+            self.block.patch_u16(normal_fixup, len(self.block.code))
+
+    def _exception_type_names(self, type_node):
+        """`except` 的类型表达式 → 名字列表。元组形式展开成多个。"""
+        if isinstance(type_node, ast.Tuple):
+            names = []
+            for element in type_node.elts:
+                names.extend(self._exception_type_names(element))
+            return names
+        if isinstance(type_node, ast.Name) and type_node.id in EXCEPTION_SET:
+            return [type_node.id]
+        name = getattr(type_node, 'id', '<expr>')
+        raise CompileError('%s 不是异常类' % name, self.filename, type_node)
 
     def with_statement(self, node):
         """`with 管理器 as 名字:` —— 调 __enter__/__exit__。

@@ -15,11 +15,16 @@
 // 是 C 栈（默认 1 MB，约几千层），而脚本里一个递归下降解析器就能吃掉它。
 // 这里用显式 `std::vector<Frame>`：深度上限只看内存，溢出时报错而不是崩。
 //
-// ── 为什么没有异常 ──
+// ── 为什么没有 C++ 异常 ──
 //
-// 异常会给每个调用点加 unwind 表，而且脚本子集本来就没有 try/except
-// （见 docs/SUPPORT.md 的 C 类）。失败用 `Result::failed` 表示：VM 停下来、
-// 带着出错位置返回，宿主决定是打印还是弹窗。
+// C++ 的 `throw` 会给每个调用点加 unwind 表，而执行循环存在的全部理由就是
+// 「一次 switch + 几次直接下标」（铁律六）。所以脚本层的异常走一条显式的
+// 处理块栈：编译器在字节码里插 SETUP_EXC / POP_EXC，VM 在抛出时按它展开。
+// 语义与 CPython 的 `try` / `except` / `else` / `finally` / `raise` 对齐。
+//
+// 值层的失败（除零、键不存在、类型不符）通过线程局部的「待处理异常」旁路
+// 通知执行循环，见 `value.h`。VM 自身的错误（编译器 bug）仍用 `Result::failed`：
+// 那两种错误对脚本作者意味着完全不同的东西，不能混成一个通道。
 #pragma once
 
 #include "aipy/value.h"
@@ -82,6 +87,23 @@ enum class Op : std::uint8_t {
   // O(1)，也不用关心体内栈怎么变。
   kWithEnter,  // 弹管理器 → 存槽 → 调 __enter__() → 压返回值
   kWithExit,   // 从槽取管理器 → 调 __exit__() → 弹掉返回值
+
+  // ── 异常 ──
+  //
+  // 不用 C++ 的 throw：那会给每条指令的调用点加 unwind 表，而这里的全部
+  // 理由就是「一次 switch + 几次直接下标」（铁律六）。改用显式的处理块栈，
+  // 与 with 的机制同构：编译器在字节码里插 SETUP_EXC/POP_EXC，VM 在异常
+  // 发生时按处理块跳转。
+  kSetupExc,   // u16 handler 目标；压处理块，记下当前 sp / 异常深度
+  kPopExc,     // 弹掉最内层处理块（离开保护区，或跳出 try）
+  kRaise,      // 弹栈顶值当异常抛出
+  kRaiseType,  // u16 类型名常量号, u8 有没有消息（有则弹栈顶当消息）
+  kReraise,    // 重抛当前处理的异常（bare `raise`）
+  // u16 不匹配时的目标, u16 类型名常量号。看 frame.exceptions.back() 的
+  // 类型是否匹配；匹配则继续，否则跳到目标。
+  kExcMatch,
+  kCurrentExc,  // 把当前处理的异常压栈（`except ... as e` 用）
+  kClearExc,    // 离开 except 体：弹掉一层「当前异常」
 };
 
 enum class BinOp : std::uint8_t {
@@ -149,12 +171,24 @@ std::vector<Value> carryGlobals(const Program& from, const std::vector<Value>& v
                                 const Program& to);
 
 // 执行结果。`line` 是出错位置，0 表示不是脚本里的位置（比如加载失败）。
+//
+// 未捕获的异常与「VM 自身坏了」走同一个结构：两者都要让宿主停下来并报错，
+// 区别只在对脚本作者的含义。`exception` 非 None 表示这是脚本层的异常
+// （`ZeroDivisionError` 之类），`error` 里是它的消息。
 struct Result {
   Value value;
   bool failed = false;
   std::string error;
   int line = 0;
+  // 未捕获的异常值；不是异常时是 None。用 Value 而不是再存一份类型名 +
+  // 消息：异常本来就是 Value，多存一份字段等于给同一样东西开两个表示。
+  Value exception;
 };
+
+// 未捕获异常的类型名；`exception` 不是异常时返回空串。
+inline std::string resultExceptionType(const Result& result) {
+  return exceptionType(result.exception);
+}
 
 // 一帧的内部结构在 `src/vm/internal.h`：它是执行循环的私有数据，
 // 不属于宿主该看见的接口。

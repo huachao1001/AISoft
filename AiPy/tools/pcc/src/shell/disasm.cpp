@@ -153,21 +153,30 @@ std::string reprStr(const std::string& value) {  // Python 的 repr 用单引号
 bool shapesOf(const std::string& name, std::vector<char>* shapes,
               std::string* error) {
   static const char* const kTwoU16[] = {"CALL", "CALL_BUILTIN", "CALL_METHOD",
-                                        "CALL_EXT", nullptr};
+                                        "CALL_EXT", "RAISE_TYPE", nullptr};
+  static const char* const kU16Pair[] = {"EXC_MATCH", nullptr};
   static const char* const kU16[] = {
       "CONST", "LOAD_LOCAL", "STORE_LOCAL", "LOAD_GLOBAL", "STORE_GLOBAL",
       "JUMP", "JUMP_IF_FALSE", "JUMP_IF_FALSE_KEEP", "JUMP_IF_TRUE_KEEP",
       "BUILD_LIST", "BUILD_DICT", "ITER_NEXT", "WITH_ENTER", "WITH_EXIT",
+      "SETUP_EXC",
       nullptr};
   static const char* const kU8[] = {"BIN", "CMP", "UNARY", "INPLACE", "SLICE",
                                     nullptr};
   static const char* const kNone[] = {
       "NONE", "TRUE", "FALSE", "POP", "DUP", "RETURN", "GET_ITEM", "SET_ITEM",
-      "ITER_INIT", "ITER_BREAK", nullptr};
+      "ITER_INIT", "ITER_BREAK", "POP_EXC", "RAISE", "RERAISE", "CURRENT_EXC",
+      "CLEAR_EXC", nullptr};
 
   for (const char* const* it = kTwoU16; *it != nullptr; ++it) {
     if (name == *it) {
       *shapes = {'u', 'b'};  // u16 + u8
+      return true;
+    }
+  }
+  for (const char* const* it = kU16Pair; *it != nullptr; ++it) {
+    if (name == *it) {
+      *shapes = {'u', 'u'};  // 两个 u16
       return true;
     }
   }

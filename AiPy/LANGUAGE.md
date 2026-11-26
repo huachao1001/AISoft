@@ -1,12 +1,11 @@
 # AiPy 语言支持清单
 
 **没有支持全部 Python 语法。** 支持的是一份刻意划定的子集：够写脚本、
-够打包成 exe，但去掉了所有需要「对象模型、异常通道、一等函数、模块系统」
-的特性。
+够打包成 exe，但去掉了所有需要「对象模型、一等函数、模块系统」的特性。
 
 这份清单不是凭记忆写的。每一条都由 `tests/probe_syntax.py` 实测：用
 `pcc.exe` 编成字节码、再用 `aipy_run.exe` 真的跑一遍，把结果记下来。
-共 186 条，当前 **146 条支持、40 条不支持**。
+共 196 条，当前 **155 条支持、41 条不支持**。
 
 ```bat
 :: 重跑一遍（改了编译器后必做）
@@ -28,7 +27,7 @@ python tests\probe_syntax.py build\final\pcc.exe build\final\aipy_run.exe
 | 控制流 | `if`/`elif`/`else`、`while`、`for in`、`break`、`continue` |
 | 上下文管理 | `with 管理器:` / `with 管理器 as 名:`；`return`/`break`/`continue` 都会调 `__exit__` |
 | 并发/异步 | 无语言层支持（`threading` 是 pylib，不是语言语义） |
-| 异常 | 无（失败用返回值表示，如 `parse_number` 返回 `None`） |
+| 异常 | `try`/`except`/`else`/`finally`/`raise`，与 CPython 语义一致 |
 | 类 | 只有 `class X(Activity)` 这一种形态 |
 | 模块 | `import` 只记录名字，实际链接在构建期完成 |
 
@@ -81,6 +80,29 @@ python tests\probe_syntax.py build\final\pcc.exe build\final\aipy_run.exe
 **manager 必须来自 pylib**：语言里没有可实例化的类（只有 `class X(Activity)`），
 所以插件的 `__enter__`/`__exit__` 只能由 `kObject`（带方法表的宿主对象）提供。
 `with [1, 2]:` 会报「列表没有方法 `__enter__`」，这是预期行为。
+
+### 异常
+
+| 写法 | 说明 |
+|---|---|
+| `try:` / `except:` | 裸 `except` 捕获所有 `Exception` 子类 |
+| `except ValueError:` | 按类型匹配；`except (A, B):` 元组形式支持 |
+| `except ValueError as e:` | `e` 是异常对象，`str(e)` 得到消息 |
+| `else:` | 没有异常时执行 |
+| `finally:` | 任何路径都执行（含异常外传、`return`） |
+| `raise X` / `raise X("msg")` | 抛异常 |
+| `raise` | 重抛当前异常（只能在 `except` 里用） |
+
+内建异常类共 25 个，层次与 CPython 一致：`BaseException` →
+`Exception` → `ArithmeticError`/`LookupError`/`ValueError`/`TypeError`/
+`NameError`/`AttributeError`/`RuntimeError`/`OSError`/`AssertionError` 等。
+清单见 `include/aipy/exceptions.h`，编译器与 VM 共用。
+
+`except` 匹配沿继承链：`except ArithmeticError:` 能抓到
+`ZeroDivisionError`。
+
+**`finally` 里的 `return` 会吞掉异常**（CPython 语义）：异常路径先跑
+`finally`，其中的 `return` 直接结束函数，不再继续抛。
 
 ### 控制流
 
@@ -202,7 +224,6 @@ class App(Activity):
 |---|---|
 | `del x` | 容器用 `.pop()` / `.clear()` |
 | `assert` | `if` + 显式处理 |
-| `raise` / `try` / `except` / `finally` | 没有异常通道，用返回值表示失败 |
 | `with a, b:` | 一次只支持一个 manager；嵌套写多个 `with` |
 | `match` / `case` | 用 `if`/`elif` 链 |
 | `nonlocal` | 没有嵌套函数 |
@@ -258,8 +279,7 @@ class App(Activity):
 
 `input` 的语义对齐 CPython（提示语不换行、返回值剥掉行尾、`\r\n` 也剥），
 一处差异由语言决定：**stdin 到底时返回 `None` 而不是抛 `EOFError`**——
-这个语言没有异常通道，失败一律靠返回值。`aipy_input` 拿 CPython 逐字节对拍
-守着这几点。
+`aipy_input` 拿 CPython 逐字节对拍守着这几点。
 
 上表那些名字现在**编译期不再报错**（它们被编成按名字的扩展调用），而是在
 **打包期**报「没有任何库声明这个名字」。原因：编译器不认识具体能力，而库
@@ -295,39 +315,22 @@ class App(Activity):
 |---|---|---|
 | `d.keys()` | `dict_keys([...])` 视图 | 普通列表 `[...]` |
 | 函数传参 | 引用传递，支持关键字 | 按位置，参数个数固定 |
-| 异常 | 抛异常 | 返回 `None` 或报错停机 |
-| **除以零** | 抛 `ZeroDivisionError` | **静默返回 `None`** |
-| **整数溢出** | 自动转大整数 | **静默回绕到 i64** |
 | 错误处理 | traceback | `file:line: 原因`，带源行号 |
 | 递归深度 | 约 1000 层 | 256 层 |
 
-### 两条必须记住的静默差异
+### 必须记住的一处静默差异
 
 ```python
-# 1. 除以零不抛异常，返回 None
-x = 5 / 0          # x 是 None，脚本继续跑
-print(x)           # 输出 None
-
-# 2. 整数溢出静默回绕（64 位有符号）
+# 整数溢出静默回绕（64 位有符号）
 x = 9223372036854775807
 x = x + 1          # 变成 -9223372036854775808，不报错
 ```
 
-**为什么要你记住**：没有异常通道，除零只能靠返回值表达失败。所以脚本里凡
-是可能除零的地方，都要自己判：
-
-```python
-if count > 0:
-    avg = total / count
-else:
-    avg = 0
-```
-
-判 `None` 也可以（`if avg == None:`），但**先判除数更可靠**——`None` 一旦
-传下游，下一次运算只会再得到 `None`，错误要很久以后才显形。
-
 整数溢出属于「64 位实现」的必然结果（`Value` 只有 16 字节，放不下大整数），
 涉及金额、时间戳时留意范围。
+
+异常的语义与 CPython 一致：`1 / 0` 抛 `ZeroDivisionError`，
+`int("abc")` 抛 `ValueError`，`open` 失败抛 `FileNotFoundError` 等。
 
 ---
 
@@ -335,11 +338,10 @@ else:
 
 写下你想用的写法，对照这三条：
 
-1. **需要异常吗？** 需要 → 用返回值表示失败
-2. **需要「值」是一段代码吗？**（函数当参数、lambda、装饰器）→ 不支持
-3. **需要对象吗？**（`class`、属性、`self.x` 之外）→ 只有 `Activity`
+1. **需要「值」是一段代码吗？**（函数当参数、lambda、装饰器）→ 不支持
+2. **需要对象吗？**（`class`、属性、`self.x` 之外）→ 只有 `Activity`
 
-三条都否，多半能写。再查上面的方法表确认具体方法名。
+两条都否，多半能写。再查上面的方法表确认具体方法名。
 
 ## 维护
 

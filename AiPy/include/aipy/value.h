@@ -95,7 +95,11 @@ class Value {
     kObject,
   };
 
-  Value() = default;
+  // `= default` 会把 union 成员留成未初始化值。type_ 有默认值所以类型判断
+  // 不受影响，但拷贝/移动构造在 kNone/kBool/kInt 分支会读 other.int_——
+  // 读未初始化的成员是 UB，Release 下被优化暴露出「子线程返回时崩」
+  // （0xC0000409），Debug 却能跑。显式清零既消除 UB，也不增加大小。
+  Value() : type_(Type::kNone), int_(0) {}
   // 拷贝/移动必须手写：堆载荷用侵入式计数，编译器生成的版本不知道要增减。
   Value(const Value& other);
   Value(Value&& other) noexcept;
@@ -154,6 +158,12 @@ class Value {
   // 容器对象改内容，与这个 Value 句柄本身是不是 const 无关。
   List* mutableList() const;
   DictData* mutableDict() const;
+
+  // 异常载荷（见 value.cpp 的「异常」）。用 friend 而不是公有成员：
+  // 那两个字段是 VM 的内部表示，不该成为宿主可见的 API 面。
+  friend Value makeException(const std::string& type, const std::string& message);
+  friend std::string exceptionType(const Value& value);
+  friend std::string exceptionMessage(const Value& value);
 
  private:
   // ── 紧凑表示 ──
@@ -243,8 +253,59 @@ struct HeapData : DictData {
   std::string text;        // kString
   List items;              // kList
   ObjectData object;       // kObject
+  // 异常对象专用载荷（kObject 里的一种）。放进这里而不是 ObjectData：
+  // ObjectData 是 pylib 的私有状态（void* host），而异常是语言语义，
+  // VM 要直接读写这两个字段。
+  std::string exceptionType;
+  std::string exceptionMessage;
   std::atomic<std::uint32_t> refs{1};  // 1 表示「刚创建，调用方已持有」
 };
+
+// ── 异常 ──
+//
+// 异常值是 `kObject` 的一种特例：载荷是类型名 + 消息，放在 HeapData 里。
+// 为什么不加一个 `Type::kException`：`Value` 的 16 字节预算是铁律，每个新
+// 类型都要占 tag 空间和心智负担，而异常本来就是一个「带两个字段的对象」。
+//
+// 用一个专用方法表当标记，`table == &kExceptionTable` 就是判据——不需要
+// 额外标志位。
+Value makeException(const std::string& type, const std::string& message);
+
+// 是不是异常值。
+bool isException(const Value& value);
+
+// 取类型名 / 消息。不是异常时返回空串。
+std::string exceptionType(const Value& value);
+std::string exceptionMessage(const Value& value);
+
+// 异常类之间的继承关系判定：`except Exception` 要能接住 ValueError。
+//
+// 为什么用一张固定的小表而不是让 pylib 注册：异常类属于**语言语义**
+// （CPython 的异常层级也是解释器内置的），不是「具体能力」。放到 pylib
+// 里会让「except 能不能接住」取决于链接了哪些库。
+bool exceptionMatches(const std::string& thrownType,
+                      const std::string& exceptType);
+
+// `except X:` 里的 X 是不是一个已知的异常类名。编译期用它拒绝拼错的名字。
+bool isExceptionTypeName(const std::string& name);
+
+// ── 待处理异常 ──
+//
+// 值层的函数（`add` / `at` / `toInteger` …）签名统一是「返回值」，没有
+// 第二返回值可用。改成到处传 `std::string* error` 会动到上百个调用点，
+// 而 CPython 的语义是「失败即抛出」——两者形状不同。
+//
+// 所以这里走一条线程局部的旁路：值层失败时 `raiseException(...)` 记下类型
+// 与消息、仍然返回一个占位值；执行循环在每条可能失败的指令后问一次
+// `takePendingException`，有就展开栈去找 except。这与 CPython 的
+// 「异常保存在线程状态里」是同一个结构。
+//
+// 为什么是线程局部：两个线程各跑各的脚本，一个的失败不能让另一个看见。
+void raiseException(const std::string& type, const std::string& message);
+bool hasPendingException();
+// 取出并清除。没有待处理异常时返回 false，且不动两个出参。
+bool takePendingException(std::string* type, std::string* message);
+void clearPendingException();
 
 // ── 运算符 ──
 Value add(const Value& a, const Value& b);

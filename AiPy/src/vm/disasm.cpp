@@ -112,6 +112,20 @@ std::vector<std::string> disassemble(const Program& program) {
         std::snprintf(text, sizeof(text), "slice flags=%u", code[pc]);
         pc += 1;
         break;
+      case Op::kSetupExc:
+        std::snprintf(text, sizeof(text), "setup_exc %u", read16(code, pc));
+        pc += 2;
+        break;
+      case Op::kRaiseType:
+        std::snprintf(text, sizeof(text), "raise_type %u,msg=%u", read16(code, pc),
+                      code[pc + 2]);
+        pc += 3;
+        break;
+      case Op::kExcMatch:
+        std::snprintf(text, sizeof(text), "exc_match %u,%u", read16(code, pc),
+                      read16(code, pc + 2));
+        pc += 4;
+        break;
       default:
         std::snprintf(text, sizeof(text), "%s", opName(op));
         break;

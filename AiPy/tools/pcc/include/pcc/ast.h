@@ -55,6 +55,7 @@ enum class Kind {
   Assert,
   Raise,
   Try,
+  ExceptHandler,  // try 的一个 except 子句
   Match,
   AsyncFunctionDef,
   AsyncFor,
@@ -147,6 +148,24 @@ struct Node {
 
   // 切片哪几段写了。1=start 2=stop 4=step，与 SLICE 指令的位标记一致。
   int sliceFlags = 0;
+
+  // ── Try 专用 ──
+  //
+  // 与 Python 的 ast.Try 对齐：children 按
+  //   [body..., handler1, handler2, ..., orelse..., finalbody...]
+  // 排放，靠下面三个计数切段。handler 本身是一个 Kind::ExceptHandler 节点，
+  // 它的 text 存 `as` 绑定的名字（空串表示没写 as），children 是
+  // [异常类型表达式（可能没有）, handler 体...]。
+  //
+  // 为什么 body/handler/orelse/final 不拆成四个 vector：Node 只有一个
+  // children，拆四个会让每个节点多 4 个 vector（24 字节 × 4）。而 try 在
+  // 脚本里是低频结构，用计数切段够了——这与 If 的 bodyCount/orelseCount
+  // 是同一条做法。
+  std::size_t handlerCount = 0;   // except 子句个数
+  std::size_t finalCount = 0;     // finally 体的语句数
+  std::size_t handlerBodyCount = 0;  // ExceptHandler 自己的 body 语句数
+  bool hasExceptVar = false;      // ExceptHandler 写了 `as name`
+  bool hasType = false;           // ExceptHandler 写了异常类型（否则是裸 except）
 
   // Arguments 专用
   std::vector<std::string> params;

@@ -159,7 +159,10 @@ add_executable(pcc
   tools/pcc/src/shell/cli.cpp
 )
 target_include_directories(pcc PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}/tools/pcc/include)
+  ${CMAKE_CURRENT_SOURCE_DIR}/tools/pcc/include
+  # 异常类清单（aipy/exceptions.h）必须与运行期共用同一份：编译器认的名字
+  # 和 VM 认的名字分叉，症状是「编译通过、运行期 except 永远不匹配」。
+  ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 # 读 `.pylib` 需要解 deflate。用 7-Zip 的最小裁剪（third_party/7z），
 # 而不是自己写 inflate：deflate 的位数与回溯拷贝是经典的正确性陷阱。

@@ -20,6 +20,8 @@ const char* const kOpNames[] = {
     "ITER_INIT", "ITER_NEXT", "ITER_BREAK",
     "INPLACE",
     "WITH_ENTER", "WITH_EXIT",
+    "SETUP_EXC", "POP_EXC", "RAISE", "RAISE_TYPE", "RERAISE",
+    "EXC_MATCH", "CURRENT_EXC", "CLEAR_EXC",
 };
 
 constexpr int kOpCount = static_cast<int>(sizeof(kOpNames) / sizeof(kOpNames[0]));

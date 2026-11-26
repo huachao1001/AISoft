@@ -61,6 +61,14 @@ std::string nonlocalUnsupported();
 std::string assertUnsupported();
 std::string raiseUnsupported();
 std::string tryUnsupported();
+// try 少了 except / finally（CPython 同样拒绝）。
+std::string tryNeedsHandler();
+// bare raise 出现在 except 之外。
+std::string bareRaiseOutsideExcept();
+// except 的类型不是异常类（这是运行期判定，这里只给文案）。
+std::string exceptTypeNotException(const std::string& name);
+// raise X(...) 给了多于一个参数。
+std::string raiseTooManyArgs(const std::string& name);
 std::string deleteUnsupported();
 std::string withMultipleItems();
 std::string withAsNameOnly();

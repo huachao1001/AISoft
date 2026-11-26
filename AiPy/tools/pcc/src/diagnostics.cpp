@@ -155,6 +155,24 @@ std::string raiseUnsupported() {
 
 std::string tryUnsupported() { return "'try' statements are not supported"; }
 
+std::string raiseTooManyArgs(const std::string& name) {
+  return "raise " + name + "(...) takes at most one argument here; "
+         "exception argument tuples are not supported yet";
+}
+
+std::string tryNeedsHandler() {
+  return "'try' must be followed by 'except' or 'finally'";
+}
+
+std::string bareRaiseOutsideExcept() {
+  return "'raise' with no exception re-raises the current one, "
+         "which only exists inside an 'except' block";
+}
+
+std::string exceptTypeNotException(const std::string& name) {
+  return "\"" + name + "\" is not an exception type";
+}
+
 std::string deleteUnsupported() {
   return "'del' is not supported; use .pop() or .clear() on containers";
 }
