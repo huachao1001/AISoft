@@ -137,6 +137,31 @@ std::string forElse() { return "'for ... else' is not supported"; }
 
 std::string breakOutsideLoop() { return "'break' outside a loop"; }
 
+// ── 调用的参数绑定（脚本函数签名已知，在编译期检查）──
+std::string unexpectedKeyword(const std::string& function,
+                              const std::string& keyword) {
+  return "function " + quote(function) + " got an unexpected keyword argument " +
+         quote(keyword);
+}
+
+std::string duplicateKeyword(const std::string& keyword) {
+  return "keyword argument " + quote(keyword) + " is given twice";
+}
+
+std::string multipleValues(const std::string& parameter) {
+  return "function got multiple values for argument " + quote(parameter);
+}
+
+std::string missingArgument(const std::string& function,
+                            const std::string& parameter) {
+  return "function " + quote(function) +
+         " is missing a required argument: " + quote(parameter);
+}
+
+std::string tooManyArguments(const std::string& function) {
+  return "function " + quote(function) + " received too many arguments";
+}
+
 std::string continueOutsideLoop() { return "'continue' outside a loop"; }
 
 std::string nonlocalUnsupported() {

@@ -63,6 +63,12 @@ MESSAGE_PAIRS = [
      "nested function '{0}' is not supported; move it to module level"),
     ('不支持关键字传参；按位置传',
      'keyword arguments are not supported; pass arguments by position'),
+    ('函数 "{0}" 收到未预期的关键字参数 "{1}"',
+     "function '{0}' got an unexpected keyword argument '{1}'"),
+    ('函数 "{0}" 收到过多参数', "function '{0}' received too many arguments"),
+    ('函数 "{0}" 缺少必需参数 "{1}"',
+     "function '{0}' is missing a required argument: '{1}'"),
+    ('参数 "{0}" 被重复传入', "argument '{0}' is given twice"),
     ('不支持属性访问（没有对象模型）；扩展函数请用 `模块.函数(...)` 调用',
      "attribute access is not supported (there is no object model); "
      "call extension functions as 'module.function(...)'"),
@@ -134,31 +140,70 @@ MESSAGE_PAIRS = [
 def translate_python_message(text):
     """把 Python 版的文案翻成英文，好跟 C++ 版直接比。
 
-    匹配方式是「前缀 + 参数」：中文模板里的 `{0}` 出现在末尾（所有这类
-    模板都是这个形状），参数取中间那段。`{0}` 可能在英文里出现多次。
+    模板里可以有 `{0}`、`{1}` 等多个占位符，按出现顺序提取参数。
     """
     for zh, en in MESSAGE_PAIRS:
-        if '{0}' in zh:
-            head, _, tail = zh.partition('{0}')
-            # 模板里 `{0}` 可能出现多次；按「第一处到最后一处之间是参数」处理。
-            if '{0}' in tail:
-                after, _, last_tail = tail.rpartition('{0}')
-                template_rest = after
-            else:
-                template_rest = tail
-                last_tail = ''
-            if not text.startswith(head) or not text.endswith(last_tail):
+        if '{' not in zh:
+            if text.startswith(zh):
+                return en + text[len(zh):]
+            continue
+
+        # 按 `{N}` 把模板切成「固定文本 + 占位符」交替的序列。
+        pieces = []
+        position = 0
+        while position < len(zh):
+            start = zh.find('{', position)
+            if start < 0:
+                pieces.append(('text', zh[position:]))
+                break
+            end = zh.find('}', start)
+            if end < 0:
+                pieces.append(('text', zh[position:]))
+                break
+            if start > position:
+                pieces.append(('text', zh[position:start]))
+            pieces.append(('slot', zh[start + 1:end]))
+            position = end + 1
+        if position < len(zh) and not pieces:
+            continue
+
+        # 用固定文本把原消息切开，按序取参数。
+        arguments = {}
+        cursor = 0
+        ok = True
+        for position, (kind, value) in enumerate(pieces):
+            if kind == 'text':
+                found = text.find(value, cursor)
+                if found < 0:
+                    ok = False
+                    break
+                cursor = found + len(value)
                 continue
-            if len(text) < len(head) + len(last_tail):
-                continue
-            body = text[len(head):len(text) - len(last_tail)]
-            # `{0}` 之间的固定文本必须真的在 body 里。
-            if template_rest and template_rest not in body:
-                continue
-            argument = body.split(template_rest, 1)[0] if template_rest else body
-            return en.replace('{0}', argument)
-        if text.startswith(zh):
-            return en + text[len(zh):]
+            # 占位符：取到下一个固定文本之前。
+            nearest = len(text)
+            for later_kind, later_value in pieces[position + 1:]:
+                if later_kind != 'text':
+                    continue
+                found = text.find(later_value, cursor)
+                if found >= 0:
+                    nearest = min(nearest, found)
+                break
+            arguments[value] = text[cursor:nearest]
+            cursor = nearest
+        if not ok:
+            continue
+        # 模板必须以最后一段固定文本结尾。
+        if pieces and pieces[-1][0] == 'text' and not text.endswith(pieces[-1][1]):
+            continue
+        if pieces and pieces[-1][0] != 'text' and cursor > len(text):
+            continue
+
+        result = en
+        for slot, argument in arguments.items():
+            result = result.replace('{' + slot + '}', argument)
+        if '{' in result:
+            continue
+        return result
     return None
 
 

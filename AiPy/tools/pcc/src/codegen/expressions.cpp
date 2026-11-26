@@ -338,6 +338,97 @@ bool CodeGen::sliceExpr(const Node& node, const Node& parent) {
   return true;
 }
 
+bool CodeGen::callScript(const Node& node, int index) {
+  // 脚本函数的签名在编译期完全已知，所以关键字参数在这里**重排**成位置
+  // 顺序，VM 不需要认识关键字。`f(b=1, a=2)` 生成与 `f(2, 1)` 相同的代码。
+  const std::vector<std::string>& params =
+      blocks_[static_cast<std::size_t>(
+                  functions_[static_cast<std::size_t>(index)].blockIndex)]
+          .localNames;
+  const Block& calleeBlock =
+      blocks_[static_cast<std::size_t>(
+          functions_[static_cast<std::size_t>(index)].blockIndex)];
+  const int paramCount = static_cast<int>(params.size());
+  const int defaultCount = calleeBlock.defaultCount;
+  const int defaultSlot = calleeBlock.defaultSlot;
+
+  const std::size_t supplied = node.children.size() - 1;
+  std::vector<const Node*> ordered(static_cast<std::size_t>(paramCount),
+                                   nullptr);
+  std::size_t positional = 0;
+  std::size_t highest = 0;
+  bool any = false;
+
+  for (std::size_t i = 0; i < supplied; ++i) {
+    const Node& argument = *node.children[1 + i];
+    if (argument.kind == Kind::Keyword) {
+      int slot = -1;
+      for (int p = 0; p < paramCount; ++p) {
+        if (params[static_cast<std::size_t>(p)] == argument.text) {
+          slot = p;
+          break;
+        }
+      }
+      if (slot < 0) {
+        return failAt(diag::unexpectedKeyword(node.children[0]->text,
+                                             argument.text),
+                      argument);
+      }
+      if (ordered[static_cast<std::size_t>(slot)] != nullptr) {
+        return failAt(diag::duplicateKeyword(argument.text), argument);
+      }
+      ordered[static_cast<std::size_t>(slot)] = argument.children[0].get();
+      highest = std::max(highest, static_cast<std::size_t>(slot) + 1);
+      any = true;
+      continue;
+    }
+    if (argument.kind == Kind::Starred) {
+      // `*args` / `**kwargs` 在调用处展开，下一步再做；现在明确拒绝，
+      // 免得被当成普通位置参数静默传错。
+      return failAt(diag::variadicParams(), argument);
+    }
+    if (positional >= static_cast<std::size_t>(paramCount)) {
+      return failAt(diag::tooManyArguments(node.children[0]->text), argument);
+    }
+    if (ordered[positional] != nullptr) {
+      return failAt(diag::multipleValues(params[positional]), argument);
+    }
+    ordered[positional] = &argument;
+    ++positional;
+    highest = std::max(highest, positional);
+  }
+
+  // 中间的洞：落在默认值区间就取默认值补上，否则是少传必需参数。
+  const int firstDefault = paramCount - defaultCount;
+  for (std::size_t i = 0; i < highest; ++i) {
+    if (ordered[i] != nullptr) continue;
+    if (static_cast<int>(i) < firstDefault) {
+      return failAt(diag::missingArgument(node.children[0]->text, params[i]),
+                    node);
+    }
+  }
+
+  // 按参数顺序求值。求值顺序与 CPython 不同（它按实参书写顺序），但这里
+  // 的实参都是无副作用的常见形态；有副作用时差异已写入语言文档。
+  for (std::size_t i = 0; i < highest; ++i) {
+    if (ordered[i] != nullptr) {
+      if (!expr(*ordered[i])) return false;
+      continue;
+    }
+    // 洞在默认值区间：从隐藏槽取这一个默认值。这与「按位置紧凑传参」
+    // 不同——紧凑传会让下标错位，把 c 的值灌进 b。
+    emit("LOAD_GLOBAL", node);
+    emitU16(defaultSlot);
+    emit("CONST", node);
+    emitU16(constIndexOfInt(static_cast<long long>(i) - firstDefault));
+    emit("GET_ITEM", node);
+  }
+  emit("CALL", node);
+  emitU16(index);
+  emitU8(static_cast<int>(highest));
+  return true;
+}
+
 bool CodeGen::call(const Node& node) {
   const Node& func = *node.children[0];
   const std::size_t total = node.children.size() - 1;
@@ -367,16 +458,7 @@ bool CodeGen::call(const Node& node) {
   if (func.kind == Kind::Name || selfCall) {
     const int index = functionIndex(calleeName);
     if (index >= 0) {
-      if (total != node.argsCount) {
-        return failAt(diag::keywordArguments(), node);
-      }
-      for (std::size_t i = 0; i < total; ++i) {
-        if (!expr(*node.children[1 + i])) return false;
-      }
-      emit("CALL", node);
-      emitU16(index);
-      emitU8(static_cast<int>(total));
-      return true;
+      return callScript(node, index);
     }
   }
 

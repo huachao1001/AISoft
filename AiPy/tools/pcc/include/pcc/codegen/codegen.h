@@ -179,6 +179,8 @@ class CodeGen {
   // 读一个名字。`self.x` 在方法体里等价于 `x`，所以两条路径共用这一份。
   bool nameRead(const std::string& name, const Node& node);
   bool sliceExpr(const Node& node, const Node& parent);
+  // 脚本函数调用：签名已知，关键字参数在编译期重排成位置顺序。
+  bool callScript(const Node& node, int index);
   bool call(const Node& node);
   bool constant(const Node& node);
 

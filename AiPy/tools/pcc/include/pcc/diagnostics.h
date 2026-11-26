@@ -56,7 +56,15 @@ std::string awaitUnsupported();
 std::string whileElse();
 std::string forElse();
 std::string breakOutsideLoop();
-std::string continueOutsideLoop();
+
+// ── 调用的参数绑定 ──
+std::string unexpectedKeyword(const std::string& function,
+                              const std::string& keyword);
+std::string duplicateKeyword(const std::string& keyword);
+std::string multipleValues(const std::string& parameter);
+std::string missingArgument(const std::string& function,
+                            const std::string& parameter);
+std::string tooManyArguments(const std::string& function);std::string continueOutsideLoop();
 std::string nonlocalUnsupported();
 std::string assertUnsupported();
 std::string raiseUnsupported();

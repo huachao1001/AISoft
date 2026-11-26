@@ -1400,15 +1400,68 @@ class Compiler:
             self.block.emit_u8(len(node.args))
             return
 
-        # 脚本内函数：CALL + 函数号。
+        # 脚本内函数：CALL + 函数号。关键字参数在编译期重排成位置顺序：
+        # 脚本函数的签名已知，VM 不需要认识关键字。
         if isinstance(node.func, ast.Name) and node.func.id in self.function_by_name:
-            if node.keywords:
-                raise CompileError('不支持关键字传参；按位置传', self.filename, node)
+            entry = self.functions[self.function_by_name[node.func.id]]
+            params = []
+            for slot in range(entry['block'].param_count):
+                for name, index in entry['block'].locals.items():
+                    if index == slot:
+                        params.append(name)
+                        break
+            ordered = [None] * len(params)
+            positional = 0
+            highest = 0
             for argument in node.args:
-                self.expr(argument)
+                if isinstance(argument, ast.Starred):
+                    raise CompileError('不支持 *args / **kwargs / 仅关键字参数',
+                                       self.filename, argument)
+                if positional >= len(params):
+                    raise CompileError('函数 "%s" 收到过多参数' % node.func.id,
+                                       self.filename, argument)
+                if ordered[positional] is not None:
+                    raise CompileError('参数 "%s" 被重复传入' % params[positional],
+                                       self.filename, argument)
+                ordered[positional] = argument
+                positional += 1
+                highest = max(highest, positional)
+            for keyword in node.keywords:
+                if keyword.arg is None:
+                    raise CompileError('不支持 *args / **kwargs / 仅关键字参数',
+                                       self.filename, keyword.value)
+                if keyword.arg not in params:
+                    raise CompileError('函数 "%s" 收到未预期的关键字参数 "%s"'
+                                       % (node.func.id, keyword.arg),
+                                       self.filename, keyword.value)
+                slot = params.index(keyword.arg)
+                if ordered[slot] is not None:
+                    raise CompileError('参数 "%s" 被重复传入' % keyword.arg,
+                                       self.filename, keyword.value)
+                ordered[slot] = keyword.value
+                highest = max(highest, slot + 1)
+            default_count = entry['block'].default_count
+            default_slot = entry['block'].default_slot
+            first_default = len(params) - default_count
+            for index in range(highest):
+                if ordered[index] is None:
+                    if index < first_default:
+                        raise CompileError('函数 "%s" 缺少必需参数 "%s"'
+                                           % (node.func.id, params[index]),
+                                           self.filename, node)
+            for index in range(highest):
+                if ordered[index] is not None:
+                    self.expr(ordered[index])
+                    continue
+                # 洞在默认值区间：从隐藏槽取这一个默认值。
+                self.block.emit('LOAD_GLOBAL', node)
+                self.block.emit_u16(default_slot)
+                self.block.emit('CONST', node)
+                self.block.emit_u16(self.const_index(index - first_default))
+                self.block.emit('GET_ITEM', node)
             self.block.emit('CALL', node)
             self.block.emit_u16(self.function_by_name[node.func.id])
-            self.block.emit_u8(len(node.args))
+            self.block.emit_u8(highest)
             return
 
         # 裸名：可能是库注册的内建（`open`）
