@@ -154,6 +154,10 @@ bool CodeGen::statement(const Node& node) {
     case Kind::Delete:
       return deleteStatement(node);
 
+    case Kind::ClassDef:
+      // Activity 已在 expandActivity 里展开成模块级语句，不会走到这里。
+      return compileClass(node);
+
     case Kind::Import:
     case Kind::ImportFrom:
       return importStatement(node);
@@ -260,6 +264,19 @@ bool CodeGen::ifChain(const Node& node) {
 }
 
 bool CodeGen::assignTarget(const Node& target, const Node& node) {
+  if (target.kind == Kind::Attribute && !isSelfName(target)) {
+    // `a.b = v`：栈上已有值。SET_ATTR 要 [接收者, 值]，先接住值再压接收者。
+    const int temp = slotOf("\x01assign_value");
+    emit("STORE_LOCAL", node);
+    emitU16(temp);
+    if (!expr(*target.children[0])) return false;
+    emit("LOAD_LOCAL", node);
+    emitU16(temp);
+    emit("SET_ATTR", node);
+    emitU16(constIndexOfStr(target.text));
+    return true;
+  }
+
   if (target.kind == Kind::Name || isSelfName(target)) {
     const std::string& name = target.text;
     // `f = ...` 覆盖一个脚本函数：读名字时才会检查「函数不能当值」，

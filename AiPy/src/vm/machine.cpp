@@ -249,6 +249,10 @@ using detail::applyCmp;
 using detail::applyUnary;
 using detail::bindArguments;
 using detail::callMethod;
+using detail::classLookupRaw;
+using detail::instanceAttrOf;
+using detail::instanceSetAttr;
+using detail::superLookupRaw;
 using detail::Frame;
 using detail::read16;
 
@@ -334,6 +338,57 @@ Result Machine::callFunction(const Program& program, const std::string& name,
   frames.reserve(16);
   frames.push_back(std::move(callee));
   return execute(program, globals_, frames);
+}
+
+// 「按值建帧」：把可调用值 + 已就绪的位置实参建成一帧。kCallMethod 的
+// 脚本实例分支要用（它已按 MRO 找好函数并绑好 self）。
+static bool pushValueFrame(const Program& program, const Value& callable,
+                           std::vector<Value> positional,
+                           std::vector<Frame>& frames, std::size_t stackBase,
+                           std::string* error) {
+  const int index = functionIndexOf(callable);
+  if (index < 0) {
+    *error = "'" + typeName(callable) + "' object is not callable";
+    return false;
+  }
+  if (index >= static_cast<int>(program.functions.size())) {
+    *error = "函数号越界（编译器 bug）";
+    return false;
+  }
+  if (frames.size() >= static_cast<std::size_t>(Machine::kMaxCallDepth)) {
+    *error = "调用层数超过 " + std::to_string(Machine::kMaxCallDepth) +
+             "，脚本里可能有无限递归";
+    return false;
+  }
+  const Function& fn = program.functions[static_cast<std::size_t>(index)];
+
+  std::vector<Value> locals(static_cast<std::size_t>(fn.localCount), Value());
+  // 默认值在这里补不了（拿不到 globals）：脚本方法的默认参数很少见，
+  // 真需要时调用方会把位补齐。
+  std::string bindError;
+  if (!bindArguments(fn, Value(), positional, List{}, List{}, &locals,
+                     &bindError)) {
+    *error = fn.name + "() " + bindError;
+    return false;
+  }
+
+  const List& captures = functionCaptures(callable);
+  if (!captures.empty() && fn.captureStart >= 0) {
+    for (std::size_t i = 0; i < captures.size(); ++i) {
+      const std::size_t slot = static_cast<std::size_t>(fn.captureStart) + i;
+      if (slot < locals.size()) locals[slot] = captures[i];
+    }
+  }
+
+  Frame callee;
+  callee.code = &fn.code;
+  callee.lines = &fn.lines;
+  callee.function = &fn;
+  callee.pc = 0;
+  callee.stackBase = stackBase;
+  callee.locals = std::move(locals);
+  frames.push_back(std::move(callee));
+  return true;
 }
 
 // 执行循环本体：帧已建好，从 frames.back() 开始跑。
@@ -693,6 +748,7 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         frame.pc += 1;
         const std::size_t base = sp - static_cast<std::size_t>(argc) - 1;
         const Value callable = stack[base];
+        // 已绑定实例的方法值：函数号在同一个字段里，self 单独存。
         const int index = functionIndexOf(callable);
         if (index < 0) {
           raiseException("TypeError", "'" + typeName(callable) +
@@ -708,10 +764,13 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         }
         const Function& fn = program.functions[static_cast<std::size_t>(index)];
 
-        std::vector<Value> positional(static_cast<std::size_t>(argc));
+        std::vector<Value> positional;
+        positional.reserve(static_cast<std::size_t>(argc) + 1);
+        // 方法值（`obj.method`）把 self 补成第一个位置实参。脚本方法的
+        // 第一个形参就是 self，编译器已把它算进 paramCount。
+        if (isBoundMethod(callable)) positional.push_back(boundMethodSelf(callable));
         for (int i = 0; i < argc; ++i) {
-          positional[static_cast<std::size_t>(i)] =
-              stack[base + 1 + static_cast<std::size_t>(i)];
+          positional.push_back(stack[base + 1 + static_cast<std::size_t>(i)]);
         }
 
         std::vector<Value> locals(static_cast<std::size_t>(fn.localCount), Value());
@@ -805,6 +864,220 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         break;
       }
 
+      case Op::kMakeClass: {
+        // 栈上是 [基类...] 再 [成员值...]。成员名是紧跟指令的 u16 常量号
+        // （个数 = 成员个数），基类个数单独给。
+        const std::uint16_t nameIndex = read16(code, frame.pc);
+        const std::uint16_t memberCount = read16(code, frame.pc + 2);
+        const std::uint16_t baseCount = read16(code, frame.pc + 4);
+        frame.pc += 6;
+        if (nameIndex >= program.consts.size()) return fail("类名越界（编译器 bug）");
+        if (memberCount > 64 || baseCount > 64) return fail("类成员过多（编译器 bug）");
+
+        std::uint16_t memberNameIndices[64];
+        for (int i = 0; i < memberCount; ++i) {
+          memberNameIndices[i] = read16(code, frame.pc);
+          frame.pc += 2;
+        }
+
+        List members;
+        members.reserve(memberCount);
+        // 栈上从低到高就是书写顺序，直接顺取；用 insert(begin) 会整体
+        // 反转，症状是成员名与函数值错配（`__init__` 拿到最后一个函数）。
+        for (int i = memberCount; i > 0; --i) {
+          members.push_back(stack[sp - static_cast<std::size_t>(i)]);
+        }
+        sp -= memberCount;
+
+        List bases;
+        bases.reserve(baseCount);
+        for (int i = baseCount; i > 0; --i) {
+          bases.push_back(stack[sp - static_cast<std::size_t>(i)]);
+        }
+        sp -= baseCount;
+
+        List keys;
+        keys.reserve(memberCount);
+        for (int i = 0; i < memberCount; ++i) {
+          keys.push_back(program.consts[memberNameIndices[i]]);
+        }
+
+        stack[sp++] = makeClass(program.consts[nameIndex].asString(),
+                                std::move(bases), std::move(keys),
+                                std::move(members));
+        break;
+      }
+
+      case Op::kGetAttr: {
+        const std::uint16_t nameIndex = read16(code, frame.pc);
+        frame.pc += 2;
+        if (nameIndex >= program.consts.size()) return fail("属性名越界（编译器 bug）");
+        if (sp < 1) return fail("属性访问缺少接收者（编译器 bug）");
+        const Value target = stack[--sp];
+        const std::string name = program.consts[nameIndex].asString();
+
+        if (isInstance(target)) {
+          std::string error;
+          const Value value = instanceAttrOf(target, name, &error);
+          if (!error.empty()) {
+            raiseException("AttributeError", error);
+            break;
+          }
+          stack[sp++] = value;
+          break;
+        }
+        // 类对象：`A.x` 直接取类成员（不绑定）。
+        if (isClass(target)) {
+          const Value value = classLookupRaw(target, name);
+          if (value.isNone()) {
+            // 免不了再确认一次：成员本身可以是 None。
+            const std::string clsName = classNameOf(target);
+            bool found = false;
+            for (const Value& memberValue : classMemberValues(target)) (void)memberValue;
+            const List& keys = classMemberKeys(target);
+            for (const Value& key : keys) {
+              if (key.asString() == name) {
+                found = true;
+                break;
+              }
+            }
+            if (!found) {
+              raiseException("AttributeError",
+                             "type object '" + clsName +
+                                 "' has no attribute '" + name + "'");
+              break;
+            }
+          }
+          stack[sp++] = value;
+          break;
+        }
+        raiseException("AttributeError",
+                       "'" + typeName(target) + "' object has no attribute '" +
+                           name + "'");
+        break;
+      }
+
+      case Op::kSetAttr: {
+        const std::uint16_t nameIndex = read16(code, frame.pc);
+        frame.pc += 2;
+        if (nameIndex >= program.consts.size()) return fail("属性名越界（编译器 bug）");
+        if (sp < 2) return fail("属性赋值缺少操作数（编译器 bug）");
+        const Value value = stack[--sp];
+        const Value target = stack[--sp];
+        const std::string name = program.consts[nameIndex].asString();
+        if (isInstance(target)) {
+          instanceSetAttr(target, name, value);
+          break;
+        }
+        if (isClass(target)) {
+          List& keys = const_cast<List&>(classMemberKeys(target));
+          List& values = const_cast<List&>(classMemberValues(target));
+          bool replaced = false;
+          for (std::size_t i = 0; i < keys.size(); ++i) {
+            if (keys[i].asString() == name) {
+              values[i] = value;
+              replaced = true;
+              break;
+            }
+          }
+          if (!replaced) {
+            keys.push_back(Value(name));
+            values.push_back(value);
+          }
+          break;
+        }
+        raiseException("AttributeError",
+                       "'" + typeName(target) + "' object has no attribute '" +
+                           name + "'");
+        break;
+      }
+
+      case Op::kInstantiate: {
+        const std::uint8_t argc = code[frame.pc];
+        frame.pc += 1;
+        const std::size_t base = sp - static_cast<std::size_t>(argc) - 1;
+        const Value cls = stack[base];
+        if (!isClass(cls)) {
+          raiseException("TypeError", "'" + typeName(cls) +
+                                          "' object is not callable");
+          break;
+        }
+        const Value instance = makeInstance(cls);
+
+        // 有 __init__ 就建帧调它；返回值由 kReturn 用 initInstance 顶替
+        // （CPython 里 `A()` 的结果永远是实例）。
+        const Value init = classLookupRaw(cls, "__init__");
+        if (isFunction(init)) {
+          const int index = functionIndexOf(init);
+          if (index < 0 || index >= static_cast<int>(program.functions.size())) {
+            return fail("函数号越界（编译器 bug）");
+          }
+          if (frames.size() >= static_cast<std::size_t>(Machine::kMaxCallDepth)) {
+            return fail("调用层数超过 " + std::to_string(Machine::kMaxCallDepth) +
+                        "，脚本里可能有无限递归");
+          }
+          const Function& fn = program.functions[static_cast<std::size_t>(index)];
+
+          std::vector<Value> positional;
+          positional.reserve(static_cast<std::size_t>(argc) + 1);
+          positional.push_back(instance);  // self
+          for (int i = 0; i < argc; ++i) {
+            positional.push_back(stack[base + 1 + static_cast<std::size_t>(i)]);
+          }
+
+          std::vector<Value> locals(static_cast<std::size_t>(fn.localCount), Value());
+          const Value defaults =
+              fn.defaultSlot >= 0 && fn.defaultSlot < static_cast<int>(globals.size())
+                  ? globals[static_cast<std::size_t>(fn.defaultSlot)]
+                  : Value();
+          std::string bindError;
+          if (!bindArguments(fn, defaults, positional, List{}, List{}, &locals,
+                             &bindError)) {
+            raiseException("TypeError", classNameOf(cls) + "() " + bindError);
+            break;
+          }
+
+          sp = base;
+
+          Frame callee;
+          callee.code = &fn.code;
+          callee.lines = &fn.lines;
+          callee.function = &fn;
+          callee.pc = 0;
+          callee.stackBase = sp;
+          callee.locals = std::move(locals);
+          callee.initInstance = instance;
+          callee.isInitFrame = true;
+          frames.push_back(std::move(callee));
+          break;
+        }
+
+        sp = base;
+        stack[sp++] = instance;
+        break;
+      }
+
+      case Op::kMakeSuper: {
+        const std::uint16_t nameIndex = read16(code, frame.pc);
+        frame.pc += 2;
+        if (nameIndex >= program.consts.size()) return fail("类名越界（编译器 bug）");
+        if (sp < 1) return fail("super() 缺少 self（编译器 bug）");
+        const Value self = stack[--sp];
+        // 当前类从全局槽按名字取：类对象是模块级绑定的。
+        const std::string className = program.consts[nameIndex].asString();
+        Value currentClass;
+        for (int slot = 0; slot < program.globalCount; ++slot) {
+          const std::string& name =
+              program.globalNames[static_cast<std::size_t>(slot)];
+          if (name == className) {
+            currentClass = globals[static_cast<std::size_t>(slot)];
+            break;
+          }
+        }
+        stack[sp++] = makeSuper(self, currentClass);
+        break;
+      }
+
       case Op::kCallBuiltin: {
         const std::uint16_t index = read16(code, frame.pc);
         const std::uint8_t argc = code[frame.pc + 2];
@@ -844,7 +1117,59 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         Value args[8];
         for (int i = argc - 1; i >= 0; --i) args[i] = stack[--sp];
         const Value target = stack[--sp];
-        const std::string name = program.consts[nameIndex].toString();
+        const std::string name = program.consts[nameIndex].asString();
+
+        // 脚本实例：沿 MRO 找成员。找到函数值就建帧，与 CALL_VALUE 同构
+        // 但先把 self 补成第一个实参。编译期不知道接收者类型，所以这条
+        // 指令要同时服务「字符串方法」与「脚本方法」。
+        if (isInstance(target)) {
+          std::string error;
+          const Value bound = instanceAttrOf(target, name, &error);
+          if (!error.empty()) {
+            raiseException("AttributeError", error);
+            break;
+          }
+          if (!isBoundMethod(bound)) {
+            // 成员存在但不是函数：CPython 报 TypeError。
+            raiseException("TypeError", "'" + typeName(bound) +
+                                            "' object is not callable");
+            break;
+          }
+          std::vector<Value> positional;
+          positional.reserve(static_cast<std::size_t>(argc) + 1);
+          positional.push_back(boundMethodSelf(bound));
+          for (int i = 0; i < argc; ++i) positional.push_back(args[i]);
+          std::string frameError;
+          if (!pushValueFrame(program, bound, std::move(positional), frames,
+                              sp, &frameError)) {
+            raiseException("TypeError", frameError);
+          }
+          break;
+        }
+
+        // `super().m(...)`：从当前类的基类开始找，self 仍是原实例。
+        if (isSuper(target)) {
+          const Value self = superSelf(target);
+          const Value current = superClassOf(target);
+          const Value member = superLookupRaw(self, current, name);
+          if (!isFunction(member)) {
+            raiseException("AttributeError",
+                           "'super' object has no attribute '" + name + "'");
+            break;
+          }
+          std::vector<Value> positional;
+          positional.reserve(static_cast<std::size_t>(argc) + 1);
+          positional.push_back(self);
+          for (int i = 0; i < argc; ++i) positional.push_back(args[i]);
+          std::string frameError;
+          if (!pushValueFrame(program, member, std::move(positional), frames,
+                              sp, &frameError)) {
+            raiseException("TypeError", frameError);
+          }
+          break;
+        }
+
+        // 其它接收者：字符串/列表/字典/pylib 对象的方法表。
         std::string error;
         const Value value = callMethod(target, name, args, argc, &error);
         if (!error.empty()) return fail(error);
@@ -853,7 +1178,9 @@ static Result execute(const Program& program, std::vector<Value>& globals,
       }
 
       case Op::kReturn: {
-        const Value value = sp > frame.stackBase ? stack[--sp] : Value();
+        Value value = sp > frame.stackBase ? stack[--sp] : Value();
+        // `A()` 的结果是实例，不是 __init__ 的返回值。
+        if (frame.isInitFrame) value = frame.initInstance;
         sp = frame.stackBase;
         frames.pop_back();
         if (frames.empty()) {

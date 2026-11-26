@@ -22,6 +22,12 @@ const MethodEntry kNoMethods[] = {{nullptr, nullptr}};
 const MethodTable kExceptionTable = {kNoMethods};
 // 函数值的标记表。与异常同构：判据是「表指针是不是它」。
 const MethodTable kFunctionTable = {kNoMethods};
+// 类对象与实例的标记表。同样只是标记——实例的方法查找要沿基类上溯，
+// 是语言语义，由 VM 做，不走 MethodTable 的转发机制。
+const MethodTable kClassTable = {kNoMethods};
+const MethodTable kInstanceTable = {kNoMethods};
+const MethodTable kBoundMethodTable = {kNoMethods};
+const MethodTable kSuperTable = {kNoMethods};
 
 // 数字提升：只要有一边是 float，结果就是 float。Python 的 / 永远返回 float，
 // 但 + - * % 保持 int。这里不区分来源，由调用点决定走哪个函数。
@@ -687,6 +693,16 @@ std::string Value::toString() const {
         // CPython 的 str(exc) 就是 args 的内容：没有消息时是空串，不是类型名。
         return heap_->exceptionMessage;
       }
+      // 类对象显示成 `<class 'X'>`，实例显示成 `<X object>`，与 CPython
+      // 默认 repr 的形状一致（地址部分省略，脚本本来也不该依赖它）。
+      if (heap_ != nullptr && heap_->object.table == &kClassTable) {
+        return "<class '" + heap_->className + "'>";
+      }
+      if (heap_ != nullptr && heap_->object.table == &kInstanceTable) {
+        const Value cls = heap_->instanceOf;
+        if (isClass(cls)) return "<" + cls.heap_->className + " object>";
+        return "<object>";
+      }
       return "<object>";
   }
   return std::string();
@@ -727,12 +743,137 @@ bool isFunction(const Value& value) {
 }
 
 int functionIndexOf(const Value& value) {
+  // 已绑定实例的方法值复用同一个函数号字段：判据是表指针，不是 isFunction。
+  if (isBoundMethod(value)) return value.heap_->functionIndex;
   if (!isFunction(value)) return -1;
   return value.heap_->functionIndex;
 }
 
 const List& functionCaptures(const Value& value) {
   return isFunction(value) ? value.heap_->captures : kEmptyList;
+}
+
+// ── 类对象与实例 ──
+//
+// 与异常、函数值同构：kObject + 一张专用标记表，载荷放在 HeapData 上，
+// Value 仍是 16 字节。方法表本身没有方法——实例的方法查找在 VM 里做，
+// 因为要沿基类上溯，那是语言语义（MRO），不是 pylib 的能力。
+
+Value makeClass(std::string name, List bases, List memberKeys,
+                List memberValues) {
+  Value out;
+  out.type_ = Value::Type::kObject;
+  out.heap_ = makeHeap();
+  out.heap_->object.table = &kClassTable;
+  out.heap_->className = std::move(name);
+  out.heap_->bases = std::move(bases);
+  out.heap_->memberKeys = std::move(memberKeys);
+  out.heap_->memberValues = std::move(memberValues);
+  return out;
+}
+
+Value makeInstance(const Value& cls) {
+  Value out;
+  out.type_ = Value::Type::kObject;
+  out.heap_ = makeHeap();
+  out.heap_->object.table = &kInstanceTable;
+  out.heap_->instanceOf = cls;
+  return out;
+}
+
+bool isClass(const Value& value) {
+  const ObjectData* data = value.asObject();
+  return data != nullptr && data->table == &kClassTable;
+}
+
+bool isInstance(const Value& value) {
+  const ObjectData* data = value.asObject();
+  return data != nullptr && data->table == &kInstanceTable;
+}
+
+std::string classNameOf(const Value& value) {
+  if (!isClass(value)) return std::string();
+  return value.heap_->className;
+}
+
+const List& classBases(const Value& value) {
+  return isClass(value) ? value.heap_->bases : kEmptyList;
+}
+
+const List& classMemberKeys(const Value& value) {
+  return isClass(value) ? value.heap_->memberKeys : kEmptyList;
+}
+
+const List& classMemberValues(const Value& value) {
+  return isClass(value) ? value.heap_->memberValues : kEmptyList;
+}
+
+List& mutableInstanceKeys(const Value& value) {
+  static List empty;
+  return isInstance(value) ? value.heap_->memberKeys : empty;
+}
+
+List& mutableInstanceValues(const Value& value) {
+  static List empty;
+  return isInstance(value) ? value.heap_->memberValues : empty;
+}
+
+const List& instanceKeys(const Value& value) {
+  return isInstance(value) ? value.heap_->memberKeys : kEmptyList;
+}
+
+const List& instanceValues(const Value& value) {
+  return isInstance(value) ? value.heap_->memberValues : kEmptyList;
+}
+
+Value instanceClass(const Value& value) {
+  if (!isInstance(value)) return Value();
+  return value.heap_->instanceOf;
+}
+
+Value makeBoundMethod(int index, Value self) {
+  Value out;
+  out.type_ = Value::Type::kObject;
+  out.heap_ = makeHeap();
+  out.heap_->object.table = &kBoundMethodTable;
+  out.heap_->functionIndex = index;
+  out.heap_->boundSelf = std::move(self);
+  return out;
+}
+
+bool isBoundMethod(const Value& value) {
+  const ObjectData* data = value.asObject();
+  return data != nullptr && data->table == &kBoundMethodTable;
+}
+
+Value boundMethodSelf(const Value& value) {
+  if (!isBoundMethod(value)) return Value();
+  return value.heap_->boundSelf;
+}
+
+Value makeSuper(const Value& self, const Value& currentClass) {
+  Value out;
+  out.type_ = Value::Type::kObject;
+  out.heap_ = makeHeap();
+  out.heap_->object.table = &kSuperTable;
+  out.heap_->boundSelf = self;
+  out.heap_->superClass = currentClass;
+  return out;
+}
+
+bool isSuper(const Value& value) {
+  const ObjectData* data = value.asObject();
+  return data != nullptr && data->table == &kSuperTable;
+}
+
+Value superSelf(const Value& value) {
+  if (!isSuper(value)) return Value();
+  return value.heap_->boundSelf;
+}
+
+Value superClassOf(const Value& value) {
+  if (!isSuper(value)) return Value();
+  return value.heap_->superClass;
 }
 
 std::string exceptionType(const Value& value) {

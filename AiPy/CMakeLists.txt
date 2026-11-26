@@ -56,6 +56,7 @@ add_library(aipy STATIC
   src/vm/machine.cpp
   src/vm/operators.cpp
   src/vm/methods.cpp
+  src/vm/classes.cpp
   src/vm/names.cpp
   src/vm/disasm.cpp
   src/vm/state.cpp

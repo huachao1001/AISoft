@@ -155,15 +155,18 @@ bool shapesOf(const std::string& name, std::vector<char>* shapes,
   static const char* const kTwoU16[] = {"CALL", "CALL_BUILTIN", "CALL_METHOD",
                                         "CALL_EXT", "RAISE_TYPE", nullptr};
   static const char* const kU16Pair[] = {"EXC_MATCH", "DEL_LOCAL", "DEL_GLOBAL",
-                                         "MAKE_FUNCTION", nullptr};
+                                         "MAKE_FUNCTION",
+                                         nullptr};
   static const char* const kU16[] = {
       "CONST", "LOAD_LOCAL", "STORE_LOCAL", "LOAD_GLOBAL", "STORE_GLOBAL",
       "JUMP", "JUMP_IF_FALSE", "JUMP_IF_FALSE_KEEP", "JUMP_IF_TRUE_KEEP",
       "BUILD_LIST", "BUILD_DICT", "ITER_NEXT", "WITH_ENTER", "WITH_EXIT",
       "SETUP_EXC", "BUILD_TUPLE", "BUILD_SET", "CALL_DYN",
+      "MAKE_SUPER", "GET_ATTR", "SET_ATTR",
       nullptr};
   static const char* const kU8[] = {"BIN", "CMP", "UNARY", "INPLACE", "SLICE",
-                                    "SET_SLICE", "CALL_VALUE", nullptr};
+                                    "SET_SLICE", "CALL_VALUE", "INSTANTIATE",
+                                    nullptr};
   static const char* const kNone[] = {
       "NONE", "TRUE", "FALSE", "POP", "DUP", "RETURN", "GET_ITEM", "SET_ITEM",
       "ITER_INIT", "ITER_BREAK", "POP_EXC", "RAISE", "RERAISE", "CURRENT_EXC",
@@ -229,7 +232,17 @@ bool decodeBlock(const std::vector<std::uint8_t>& code,
     }
     const std::string name = opNames[index];
     std::vector<char> shapes;
-    if (!shapesOf(name, &shapes, error)) return false;
+    // MAKE_CLASS 的操作数形状是变长的，单独跳过这段（三个 u16 + 成员名表）。
+    if (name == "MAKE_CLASS") {
+      if (pos + 5 >= code.size()) {
+        *error = "bytecode truncated at offset " + std::to_string(pos);
+        return false;
+      }
+      const int memberCount =
+          static_cast<int>(code[pos + 2] | (code[pos + 3] << 8));
+      pos += 6 + static_cast<std::size_t>(memberCount) * 2;
+      continue;
+    }    if (!shapesOf(name, &shapes, error)) return false;
 
     std::vector<int> operands;
     for (char shape : shapes) {
@@ -564,9 +577,41 @@ void disassemble(const LoadedProgram& program, const std::string& path) {
       const std::string name = opNames[code[pos++]];
       std::vector<char> shapes;
       std::string ignored;
-      if (!shapesOf(name, &shapes, &ignored)) return;
+      // MAKE_CLASS 的操作数形状是变长的（三个 u16 加一串成员名常量号），
+      // 形状表表达不了，在下面单独解析。
+      if (name != "MAKE_CLASS" && !shapesOf(name, &shapes, &ignored)) return;
 
       std::vector<int> operands;
+      // MAKE_CLASS 除三个 u16 外还跟一串「成员名常量号」，个数是第 2 个
+      // 操作数。通用形状表表达不了变长，单独读完整个操作数区。
+      if (name == "MAKE_CLASS") {
+        const int nameIndex = static_cast<int>(code[pos] | (code[pos + 1] << 8));
+        const int memberCount = static_cast<int>(code[pos + 2] | (code[pos + 3] << 8));
+        const int baseCount = static_cast<int>(code[pos + 4] | (code[pos + 5] << 8));
+        pos += 6;
+        std::string members;
+        for (int i = 0; i < memberCount; ++i) {
+          const int index = static_cast<int>(code[pos] | (code[pos + 1] << 8));
+          pos += 2;
+          if (index < static_cast<int>(program.consts.size())) {
+            if (!members.empty()) members += ", ";
+            members += program.consts[static_cast<std::size_t>(index)];
+          }
+        }
+        char buffer[256];
+        if (nameIndex < static_cast<int>(program.consts.size())) {
+          std::snprintf(buffer, sizeof(buffer), "%s [%s] bases=%d",
+                        program.consts[static_cast<std::size_t>(nameIndex)].c_str(),
+                        members.c_str(), baseCount);
+        } else {
+          std::snprintf(buffer, sizeof(buffer), "class#%d [%s] bases=%d",
+                        nameIndex, members.c_str(), baseCount);
+        }
+        std::printf("%6zu  L%-3d  %-20s %s\n", offset,
+                    lineOf(*view.lines, static_cast<std::uint32_t>(offset)),
+                    name.c_str(), buffer);
+        continue;
+      }
       for (char shape : shapes) {
         if (shape == 'b') {
           operands.push_back(code[pos++]);

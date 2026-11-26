@@ -30,6 +30,11 @@ const char* const kOpNames[] = {
     "MAKE_FUNCTION",
     "CALL_VALUE",
     "CALL_VALUE_DYN",
+    "MAKE_CLASS",
+    "GET_ATTR",
+    "SET_ATTR",
+    "INSTANTIATE",
+    "MAKE_SUPER",
 };
 
 constexpr int kOpCount = static_cast<int>(sizeof(kOpNames) / sizeof(kOpNames[0]));

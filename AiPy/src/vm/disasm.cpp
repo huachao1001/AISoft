@@ -125,6 +125,27 @@ std::vector<std::string> disassemble(const Program& program) {
         break;
       case Op::kCallValueDyn:
         std::snprintf(text, sizeof(text), "call_value_dyn");
+        break;
+      case Op::kMakeClass:
+        std::snprintf(text, sizeof(text), "make_class %u,%u,%u", read16(code, pc),
+                      read16(code, pc + 2), read16(code, pc + 4));
+        pc += 6 + static_cast<std::size_t>(read16(code, pc + 2)) * 2;
+        break;
+      case Op::kGetAttr:
+        std::snprintf(text, sizeof(text), "get_attr %u", read16(code, pc));
+        pc += 2;
+        break;
+      case Op::kSetAttr:
+        std::snprintf(text, sizeof(text), "set_attr %u", read16(code, pc));
+        pc += 2;
+        break;
+      case Op::kInstantiate:
+        std::snprintf(text, sizeof(text), "instantiate %u", code[pc]);
+        pc += 1;
+        break;
+      case Op::kMakeSuper:
+        std::snprintf(text, sizeof(text), "make_super %u", read16(code, pc));
+        pc += 2;
         break;      case Op::kCallMethod:
         std::snprintf(text, sizeof(text), "call_method %u,%u", read16(code, pc), code[pc + 2]);
         pc += 3;

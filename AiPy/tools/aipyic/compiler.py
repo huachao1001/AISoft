@@ -63,7 +63,8 @@ OPCODES = [
     # 追加在末尾：Op 的数值就是字节码里的操作码，插到中间会让已生成的
     # .bc 被执行成别的指令。
     'CALL_DYN', 'DICT_MERGE', 'MAKE_FUNCTION', 'CALL_VALUE',
-    'CALL_VALUE_DYN',
+    'CALL_VALUE_DYN', 'MAKE_CLASS', 'GET_ATTR', 'SET_ATTR', 'INSTANTIATE',
+    'MAKE_SUPER',
 ]
 
 # 二元算子编号，与 vm.h 的 BinOp 一致。
@@ -257,6 +258,10 @@ class Compiler:
         # 带装饰器的 def：名字运行期装的是装饰器返回值，不能再按名解析成
         # 函数号，调用得走按值调用。
         self.decorated_names = set()
+        # 普通 Python 类的类名，`A()` 据此发 INSTANTIATE。
+        self.class_names = set()
+        # 当前正在编译的方法所属的类；`super()` 需要它。
+        self.current_class = ''
         # 等待编译函数体的 lambda 下标：登记发生在编译某个函数体/模块语句
         # 的中途，函数体要等所有全局槽就位后再编。
         self.pending_lambdas = []
@@ -374,15 +379,32 @@ class Compiler:
         # Activity 类：脚本的入口形式。类体赋值是字段（→ 全局槽），
         # 类里的方法编译成普通函数，`self` 参数被去掉——一个脚本只有一个
         # 实例，`self` 与「模块状态」是同一件事。
+        #
+        # 判断依据是「基类里写了 Activity」。普通 Python 类（`class A:`）
+        # 走另一条路（MAKE_CLASS），不能被这条吞掉。
         activity = None
         for node in body:
-            if isinstance(node, ast.ClassDef):
-                if activity is not None:
-                    raise CompileError('只能有一个 Activity 类', self.filename, node)
-                activity = node
+            if not isinstance(node, ast.ClassDef):
+                continue
+            base_names = [b.id for b in node.bases if isinstance(b, ast.Name)]
+            if 'Activity' not in base_names:
+                continue
+            if activity is not None:
+                raise CompileError('只能有一个 Activity 类', self.filename, node)
+            activity = node
+
+        # Activity 之外的 class 都是普通 Python 类。
+        plain_classes = [node for node in body
+                         if isinstance(node, ast.ClassDef) and node is not activity]
+        for node in plain_classes:
+            self.class_names.add(node.name)
 
         if activity is not None:
             body = self.expand_activity(activity, body)
+
+        # 类方法登记在模块级之前：`A()` 与 `class B(A)` 都要能认出它们。
+        for node in plain_classes:
+            self.register_class_methods(node)
 
         # 先把所有顶层 def 收进来：Python 允许「先调用后定义」，而模块级
         # 代码按顺序执行，所以函数必须先全部就位。
@@ -413,6 +435,13 @@ class Compiler:
         for node in body:
             if isinstance(node, ast.FunctionDef):
                 self.compile_function_body(node)
+
+        # 类的方法体也要编。
+        for node in plain_classes:
+            for member in node.body:
+                if isinstance(member, ast.FunctionDef):
+                    self.compile_function_body(
+                        member, node.name + '.' + member.name)
 
         # 默认值在**定义处**求值（CPython 语义），所以它在 statement() 处理
         # FunctionDef 时发射，位置就在这里不是别处。
@@ -542,17 +571,23 @@ class Compiler:
 
     # ── 函数 ──
 
-    def register_function(self, node):
+    def register_function(self, node, name=None, keep_self=False):
         """只登记签名与槽位，不编译函数体。
 
         分两步的理由：编译函数体时会解析「调用哪个函数」，而 Python 允许
         「前面的方法调用后面的方法」。先登记全部签名，编译时才能查到。
+
+        `name` 给类方法用（`<类>.<方法>`，避免与模块级函数撞名）；
+        `keep_self` 表示保留 self 形参——Activity 的方法要剥掉它（一个
+        脚本只有一个实例），普通类的方法必须留着。
         """
-        if node.name in self.function_by_name:
-            raise CompileError('函数 "%s" 定义了两次' % node.name, self.filename, node)
-        if node.decorator_list:
+        if name is None:
+            name = node.name
+        if name in self.function_by_name:
+            raise CompileError('函数 "%s" 定义了两次' % name, self.filename, node)
+        if node.decorator_list and name == node.name:
             # 带装饰器的名字运行期装的是装饰器返回值，按名调用要走按值调用。
-            self.decorated_names.add(node.name)
+            self.decorated_names.add(name)
 
         args = node.args
         # 位置-only 参数（`def f(a, /)`）仍然拒绝：它在语法上分隔了「只按
@@ -563,17 +598,17 @@ class Compiler:
 
         params = [arg.arg for arg in args.args]
         kwonly = [arg.arg for arg in args.kwonlyargs]
-        is_method = bool(args.args) and args.args[0].arg == 'self'
+        is_method = not keep_self and bool(args.args) and args.args[0].arg == 'self'
         first = 1 if is_method else 0
 
-        block = Block(node.name, len(params) - first)
+        block = Block(name, len(params) - first)
         for index in range(first, len(params)):
             block.locals[params[index]] = index - first
         block.local_count = block.param_count
         if kwonly:
             block.kwonly_start = block.param_count
-            for offset, name in enumerate(kwonly):
-                block.locals[name] = block.param_count
+            for offset, parameter in enumerate(kwonly):
+                block.locals[parameter] = block.param_count
                 block.param_count += 1
             block.local_count = block.param_count
         if args.vararg is not None:
@@ -631,16 +666,61 @@ class Compiler:
                 continue
             targets = child.targets if isinstance(child, ast.Assign) else [child.target]
             for target in targets:
-                for name in self.target_names(target):
-                    if name in declared_global or name in self_assigned:
+                for target_name in self.target_names(target):
+                    if target_name in declared_global or target_name in self_assigned:
                         continue
-                    block.slot_of(name)
-                    preassigned.add(name)
+                    block.slot_of(target_name)
+                    preassigned.add(target_name)
         block.preassigned = preassigned
 
         index = len(self.functions)
-        self.function_by_name[node.name] = index
+        self.function_by_name[name] = index
         self.functions.append({'block': block, 'node': node})
+
+    def register_class_methods(self, node):
+        """类里的方法登记成 `<类>.<方法>`，保留 self 形参。"""
+        for member in node.body:
+            if not isinstance(member, ast.FunctionDef):
+                continue
+            self.register_function(member, node.name + '.' + member.name,
+                                   keep_self=True)
+
+    def compile_class(self, node):
+        """类体摊平成「名字 → 值」的成员表，发 MAKE_CLASS。"""
+        for base in node.bases:
+            self.expr(base)
+
+        member_names = []
+        for member in node.body:
+            if isinstance(member, ast.FunctionDef):
+                qualified = node.name + '.' + member.name
+                member_names.append(member.name)
+                self.module.emit('MAKE_FUNCTION', member)
+                self.module.emit_u16(self.function_by_name[qualified])
+                self.module.emit_u16(0)
+                continue
+            if isinstance(member, ast.Assign) and len(member.targets) == 1:
+                target = member.targets[0]
+                if not isinstance(target, ast.Name):
+                    raise CompileError('不支持这种类属性目标', self.filename, member)
+                member_names.append(target.id)
+                self.expr(member.value)
+                continue
+            if isinstance(member, ast.Pass):
+                continue
+            if isinstance(member, ast.Expr):
+                continue  # 文档字符串
+            raise CompileError('不支持这种类体语句 %s' % type(member).__name__,
+                               self.filename, member)
+
+        self.module.emit('MAKE_CLASS', node)
+        self.module.emit_u16(self.const_string(node.name))
+        self.module.emit_u16(len(member_names))
+        self.module.emit_u16(len(node.bases))
+        for name in member_names:
+            self.module.emit_u16(self.const_string(name))
+
+        self.name_store(node.name, node)
 
     def register_lambda(self, node):
         """lambda 也登记成函数表里的一项，只是没有名字。
@@ -789,13 +869,14 @@ class Compiler:
         self.module.emit_u16(slot)
         self.name_store(node.name, node)
 
-    def compile_function_body(self, node):
+    def compile_function_body(self, node, qualified_name=None):
         """编译已经登记过的函数体。
 
         必须等**所有**函数登记完、**所有**全局槽占完再调用：前者让「前向调用」
         成立，后者让 global 检查能看见模块级变量。
         """
-        entry = self.functions[self.function_by_name[node.name]]
+        name = qualified_name if qualified_name is not None else node.name
+        entry = self.functions[self.function_by_name[name]]
         block = entry['block']
 
         # 函数里对模块级的赋值必须写 global：否则按 CPython 就是新建局部量，
@@ -811,31 +892,35 @@ class Compiler:
 
         # 参数占前 param_count 个槽，它们是真正的局部量。
         params = set()
-        for name, slot in block.locals.items():
+        for param_name, slot in block.locals.items():
             if slot < block.param_count:
-                params.add(name)
+                params.add(param_name)
 
         for child in ast.walk(node):
             if isinstance(child, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
                 targets = child.targets if isinstance(child, ast.Assign) else [child.target]
                 for target in targets:
-                    for name in self.target_names(target):
-                        if name in self_assigned:
+                    for assigned_name in self.target_names(target):
+                        if assigned_name in self_assigned:
                             continue
                         # `name in block.locals` 不能直接用来豁免：预扫描会
                         # 把所有赋值目标都登记成局部，那样漏写 global 的笔误
                         # 就再也查不出来了。参数才是真正的局部量。
-                        if name in self.globals and name not in declared_global \
-                                and name not in params:
+                        if assigned_name in self.globals and assigned_name not in declared_global \
+                                and assigned_name not in params:
                             raise CompileError(
                                 '函数里给模块级变量 %s 赋值，但没有写 global 声明。'
                                 'CPython 会把它当成新的局部变量；要改模块级变量请先写 '
-                                '`global %s`' % (name, name), self.filename, child)
+                                '`global %s`' % (assigned_name, assigned_name),
+                                self.filename, child)
 
         # 进入函数上下文编译函数体
         saved = self.block
         saved_loops = self.loop_stack
         saved_withs = self.with_stack
+        saved_class = self.current_class
+        dot = name.find('.')
+        self.current_class = '' if dot < 0 else name[:dot]
         self.block = block
         self.loop_stack = []
         self.with_stack = []
@@ -844,6 +929,7 @@ class Compiler:
         self.with_stack = saved_withs
         self.loop_stack = saved_loops
         self.block = saved
+        self.current_class = saved_class
 
         # 隐式 return None（并且保证 return 落点正确）
         block.emit('NONE', node)
@@ -876,6 +962,9 @@ class Compiler:
             if node.decorator_list:
                 self.apply_decorators(node)
             return
+
+        if isinstance(node, ast.ClassDef):
+            return self.compile_class(node)
 
         if isinstance(node, ast.Pass):
             return
@@ -1298,6 +1387,17 @@ class Compiler:
             self.block.patch_u16(fixup, exit_at)
 
     def assign_target(self, target, node):
+        if isinstance(target, ast.Attribute):
+            # `a.b = v`：SET_ATTR 要 [接收者, 值]。先接住值再压接收者。
+            temp = self.block.slot_of('\0assign_value')
+            self.block.emit('STORE_LOCAL', node)
+            self.block.emit_u16(temp)
+            self.expr(target.value)
+            self.block.emit('LOAD_LOCAL', node)
+            self.block.emit_u16(temp)
+            self.block.emit('SET_ATTR', node)
+            self.block.emit_u16(self.const_string(target.attr))
+            return
         if isinstance(target, ast.Name):
             # `f = ...` 覆盖一个脚本函数：上面那次「函数不能当值使用」的检查
             # 只在**读**名字时触发，写的时候不会。允许它会把函数静默替换成
@@ -1535,8 +1635,12 @@ class Compiler:
             return
 
         if isinstance(node, ast.Attribute):
-            raise CompileError('不支持属性访问（没有对象模型）；扩展函数请用 '
-                               '`模块.函数(...)` 调用', self.filename, node)
+            # Activity 的方法体里 `self.x` 已被 MethodFlattener 改写成名字；
+            # 走到这里说明是真正的属性读（脚本类实例或类对象）。
+            self.expr(node.value)
+            self.block.emit('GET_ATTR', node)
+            self.block.emit_u16(self.const_string(node.attr))
+            return
 
         if isinstance(node, ast.Subscript):
             self.expr(node.value)
@@ -1737,6 +1841,30 @@ class Compiler:
         self.call_value_dyn(node)
 
     def call(self, node):
+        # `super()`：当前方法所属的类 + self。
+        if (isinstance(node.func, ast.Name) and node.func.id == 'super' and
+                not node.args and not node.keywords):
+            if not self.current_class:
+                raise CompileError('super() 只能用在类方法里',
+                                   self.filename, node)
+            self.block.emit('LOAD_LOCAL', node)
+            self.block.emit_u16(0)
+            self.block.emit('MAKE_SUPER', node)
+            self.block.emit_u16(self.const_string(self.current_class))
+            return
+
+        # `A(...)`：脚本类 → INSTANTIATE。
+        if (isinstance(node.func, ast.Name) and
+                node.func.id in self.class_names):
+            if node.keywords:
+                raise CompileError('不支持关键字传参；按位置传', self.filename, node)
+            self.name_target(node.func.id, node.func)
+            for argument in node.args:
+                self.expr(argument)
+            self.block.emit('INSTANTIATE', node)
+            self.block.emit_u8(len(node.args))
+            return
+
         # 内建：len/str/range… 编译成 CALL_BUILTIN + 下标。
         if isinstance(node.func, ast.Name) and node.func.id in BUILTIN_INDEX:
             if node.keywords:

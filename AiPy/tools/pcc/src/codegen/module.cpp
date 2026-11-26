@@ -54,13 +54,37 @@ bool CodeGen::compile(const Node& module) {
 }
 
 bool CodeGen::compileModule(const Node& module) {
-  // 找出唯一允许的 Activity 类。
+  // 找出允许的 Activity 类：**基类里写了 Activity** 的那种。普通 Python
+  // 类（`class Point:`）不该被这条路径吞掉——它的第一个类就是 Point 时
+  // 会误报「一个脚本只允许一个 Activity」。
   const Node* activity = nullptr;
   for (const auto& child : module.children) {
-    if (child->kind == Kind::ClassDef) {
-      if (activity != nullptr) return failAt(diag::multipleActivity(), *child);
-      activity = child.get();
+    if (child->kind != Kind::ClassDef) continue;
+    bool derivesActivity = false;
+    for (std::size_t i = 0; i < child->argsCount; ++i) {
+      const Node& base = *child->children[i];
+      if (base.kind == Kind::Name && base.text == "Activity") {
+        derivesActivity = true;
+      }
     }
+    if (!derivesActivity) continue;
+    if (activity != nullptr) return failAt(diag::multipleActivity(), *child);
+    activity = child.get();
+  }
+
+  // Activity 之外的一切 class 都是普通 Python 类。先扫一遍登记类名，
+  // 让 `A()` 能发 INSTANTIATE、`class B(A)` 能认出基类是脚本类。
+  std::vector<const Node*> plainClasses;
+  for (const auto& child : module.children) {
+    if (child->kind != Kind::ClassDef || child.get() == activity) continue;
+    plainClasses.push_back(child.get());
+    classNames_.insert(child->text);
+  }
+
+  // 类方法体要当普通函数编译（保留 self 形参）。先把方法体登记成函数：
+  // 名字用 `<类>.<方法>` 避免与模块级函数撞名，脚本看不到这个名字。
+  for (const Node* cls : plainClasses) {
+    if (!registerClassMethods(*cls)) return false;
   }
 
   // 展开后的模块级语句序列：Activity 的字段与方法在前，类外语句在后
@@ -118,6 +142,17 @@ bool CodeGen::compileModule(const Node& module) {
     }
   }
 
+  // 类的方法体也要编。它们的签名已在 registerClassMethods 里登记，
+  // 函数表里的名字是 `<类>.<方法>`，所以要显式传进去。
+  for (const Node* cls : plainClasses) {
+    for (std::size_t i = 0; i < cls->bodyCount; ++i) {
+      const Node& member = *cls->children[cls->argsCount + i];
+      if (member.kind != Kind::FunctionDef) continue;
+      const std::string qualified = cls->text + "." + member.text;
+      if (!compileFunctionBody(member, qualified)) return false;
+    }
+  }
+
   // 默认值在**定义处**求值（CPython 语义）：它的求值代码必须出现在
   // def 语句本身的位置，而不是模块级语句之前——否则 `def f(a=n)` 里
   // 的 n 会在 n 赋值之前被求值，拿到 None。实际发射在 statement() 里。
@@ -136,6 +171,101 @@ bool CodeGen::compileModule(const Node& module) {
   // 行号 0：Python 版这里传的是 ast.Module，它没有 lineno。
   emitOpNoLine("NONE");
   emitOpNoLine("RETURN");
+  return true;
+}
+
+bool CodeGen::registerClassMethods(const Node& classNode) {
+  for (std::size_t i = 0; i < classNode.bodyCount; ++i) {
+    const Node& member = *classNode.children[classNode.argsCount + i];
+    if (member.kind != Kind::FunctionDef) continue;
+    // 方法登记成 `<类>.<方法>`：模块级同名函数不该被方法抢走，脚本也
+    // 不该能直接调到这个名字。
+    const std::string qualified = classNode.text + "." + member.text;
+    if (rawFunctionIndex(qualified) >= 0) {
+      return failAt(diag::duplicateFunction(qualified), member);
+    }
+    classMethodNames_[classNode.text].insert(member.text);
+
+    Block block;
+    std::uint64_t mask = 0;
+    int defaultTotal = 0;
+    // 方法的 self 留在形参里（不走 Activity 的展开路径）：普通类要真正
+    // 的 self，实例方法靠它访问字段。
+    if (!buildSignature(member, qualified, false, &block, &mask, &defaultTotal)) {
+      return false;
+    }
+    if (defaultTotal > 0) {
+      block.defaultSlot =
+          globalSlot(std::string("\x01", 1) + "defaults:" + qualified);
+    }
+
+    FunctionEntry entry;
+    entry.node = &member;
+    entry.blockIndex = static_cast<int>(blocks_.size());
+    entry.isMethod = false;
+
+    std::set<std::string> declaredGlobal;
+    collectGlobals(member, &declaredGlobal);
+    // 普通类的 `self.x` 是真正的属性写，不是「模块级变量 x」（那是
+    // Activity 展开后的形状）。所以预扫描不能把 self 属性当局部名。
+    std::vector<std::pair<std::string, const Node*>> assigned;
+    collectAssigned(member, false, &assigned);
+    for (const auto& item : assigned) {
+      if (declaredGlobal.count(item.first) != 0) continue;
+      slotOfIn(&block, item.first);
+    }
+
+    functionNames_.push_back(qualified);
+    blocks_.push_back(std::move(block));
+    functions_.push_back(std::move(entry));
+    functionClass_[qualified] = classNode.text;
+  }
+  return true;
+}
+
+bool CodeGen::compileClass(const Node& classNode) {
+  // 基类先求值（可能是脚本类，也可能是内建异常类——后者这里不支持）。
+  for (std::size_t i = 0; i < classNode.argsCount; ++i) {
+    if (!expr(*classNode.children[i])) return false;
+  }
+
+  // 成员值按源码顺序压栈；名字由 MAKE_CLASS 的操作数区给出。
+  std::vector<std::string> memberNames;
+  for (std::size_t i = 0; i < classNode.bodyCount; ++i) {
+    const Node& member = *classNode.children[classNode.argsCount + i];
+    if (member.kind == Kind::FunctionDef) {
+      const std::string qualified = classNode.text + "." + member.text;
+      const int index = rawFunctionIndex(qualified);
+      if (index < 0) return failAt(diag::duplicateFunction(qualified), member);
+      memberNames.push_back(member.text);
+      emit("MAKE_FUNCTION", member);
+      emitU16(index);
+      emitU16(0);
+      continue;
+    }
+    if (member.kind == Kind::Assign && member.children.size() == 2) {
+      const Node& target = *member.children[0];
+      if (target.kind != Kind::Name) {
+        return failAt(diag::unsupportedStatement("class attribute target"), member);
+      }
+      memberNames.push_back(target.text);
+      if (!expr(*member.children[1])) return false;
+      continue;
+    }
+    if (member.kind == Kind::Pass) continue;
+    if (member.kind == Kind::Expr) continue;  // 文档字符串
+    return failAt(diag::unsupportedStatement("class body"), member);
+  }
+
+  emit("MAKE_CLASS", classNode);
+  emitU16(constIndexOfStr(classNode.text));
+  emitU16(static_cast<int>(memberNames.size()));
+  emitU16(static_cast<int>(classNode.argsCount));
+  for (const std::string& name : memberNames) {
+    emitU16(constIndexOfStr(name));
+  }
+  // 类对象存进同名全局槽：`A.x`、`A(...)` 都靠它。
+  nameStore(classNode.text, classNode);
   return true;
 }
 
@@ -534,7 +664,12 @@ bool CodeGen::applyDecorators(const Node& node) {
 }
 
 bool CodeGen::compileFunctionBody(const Node& node) {
-  const int index = rawFunctionIndex(node.text);
+  return compileFunctionBody(node, node.text);
+}
+
+bool CodeGen::compileFunctionBody(const Node& node,
+                                  const std::string& qualifiedName) {
+  const int index = rawFunctionIndex(qualifiedName);
   if (index < 0) return failAt(diag::duplicateFunction(node.text), node);
 
   FunctionEntry& entry = functions_[static_cast<std::size_t>(index)];
@@ -582,6 +717,11 @@ bool CodeGen::compileFunctionBody(const Node& node) {
   loopStack_.clear();
   withStack_.clear();
   inMethod_ = entry.isMethod;
+  // 类方法体里 `super()` 需要知道当前类。函数表里的名字是 `<类>.<方法>`。
+  const std::size_t dot = qualifiedName.find('.');
+  const std::string savedClass = currentClass_;
+  currentClass_ = dot == std::string::npos ? std::string()
+                                           : qualifiedName.substr(0, dot);
 
   bool ok = true;
   for (std::size_t i = 0; i < node.bodyCount && ok; ++i) {
@@ -597,6 +737,7 @@ bool CodeGen::compileFunctionBody(const Node& node) {
   }
 
   inMethod_ = savedInMethod;
+  currentClass_ = savedClass;
   withStack_ = savedWiths;
   loopStack_ = savedLoops;
   block_ = savedBlock;

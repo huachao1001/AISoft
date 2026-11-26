@@ -81,7 +81,13 @@ bool CodeGen::expr(const Node& node) {
     case Kind::Attribute: {
       // 方法体里的 `self.x` 读成模块级名字 x。
       if (isSelfName(node)) return nameRead(node.text, node);
-      return failAt(diag::attributeAccess(), node);
+      // 其它情况是真正的属性读：接收者求值后 GET_ATTR。
+      // 编译期不知道接收者是实例、类还是 pylib 对象，一律按名字查——
+      // 与 `a.b` 在 CPython 里「先看对象有没有这个属性」一致。
+      if (!expr(*node.children[0])) return false;
+      emit("GET_ATTR", node);
+      emitU16(constIndexOfStr(node.text));
+      return true;
     }
 
     case Kind::BinOp: {
@@ -197,8 +203,41 @@ bool CodeGen::expr(const Node& node) {
       return true;
     }
 
-    case Kind::Call:
+    case Kind::Call: {
+      const Node& callee = *node.children[0];
+      // `super()`：当前方法所属的类 + self。Java 式的无参形式就够用，
+      // 两个参数的形式（`super(C, self)`）在脚本里极罕见，暂不支持。
+      if (callee.kind == Kind::Name && callee.text == "super" &&
+          node.children.size() == 1) {
+        if (currentClass_.empty()) {
+          return failAt("super() is only allowed inside a class method", node);
+        }
+        emit("LOAD_LOCAL", node);
+        emitU16(0);  // 方法的第一个形参就是 self
+        emit("MAKE_SUPER", node);
+        emitU16(constIndexOfStr(currentClass_));
+        return true;
+      }
+
+      // `A(...)`：编译期知道 A 是脚本类（classDef 登记过）就发 INSTANTIATE。
+      if (callee.kind == Kind::Name) {
+        const auto it = classNames_.find(callee.text);
+        if (it != classNames_.end()) {
+          const std::size_t total = node.children.size() - 1;
+          if (total != node.argsCount) {
+            return failAt(diag::keywordArguments(), node);
+          }
+          nameRead(callee.text, callee);
+          for (std::size_t i = 0; i < total; ++i) {
+            if (!expr(*node.children[1 + i])) return false;
+          }
+          emit("INSTANTIATE", node);
+          emitU8(static_cast<int>(total));
+          return true;
+        }
+      }
       return call(node);
+    }
 
     case Kind::Subscript: {
       if (!expr(*node.children[0])) return false;

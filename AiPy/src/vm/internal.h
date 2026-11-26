@@ -47,6 +47,26 @@ Value applyUnary(UnOp op, const Value& a);
 Value callMethod(const Value& target, const std::string& name,
                  const Value* args, int argc, std::string* error);
 
+// ── 类的语义 ──
+//
+// MRO、属性查找、实例化都在这里：它们是语言语义（Python 的对象模型），
+// 不是 pylib 的能力，所以不能走 MethodTable 的转发机制。
+//
+// `lookupClassAttr` 沿 MRO 找成员；找到函数值就绑定成方法（把实例补成
+// 第一个实参）。`instanceAttr` 做 attr 读的完整语义（先字段后类）。
+Value classAttrOf(const Value& cls, const std::string& name);
+Value instanceAttrOf(const Value& instance, const std::string& name,
+                     std::string* error);
+void instanceSetAttr(const Value& instance, const std::string& name,
+                     const Value& value);
+// 把函数值绑定到实例上，产出一个「方法值」（捕获列表头部补实例）。
+Value bindMethod(const Value& function, const Value& self);
+// 沿 MRO 找名字对应的函数值（不绑定）；找不到返回 None。
+Value classLookupRaw(const Value& cls, const std::string& name);
+// `super()` 的查找：跳过 currentClass 本身，从它的基类沿 MRO 找。
+Value superLookupRaw(const Value& self, const Value& currentClass,
+                     const std::string& name);
+
 // ── 帧 ──
 //
 // 执行循环的私有结构，所以不在 `aipy/vm.h` 里：它不是宿主该看见的东西。
@@ -85,6 +105,11 @@ struct ExceptionState {
 struct Frame {
   const std::vector<std::uint8_t>* code = nullptr;
   const std::vector<LineEntry>* lines = nullptr;
+  // `__init__` 帧的返回值要丢弃，改压被实例化的对象（CPython 里
+  // `A()` 的结果是实例，不是 __init__ 的返回值）。非空表示这一帧是
+  // 实例化调用，返回时用这个对象顶替返回值。
+  Value initInstance;
+  bool isInitFrame = false;
   const Function* function = nullptr;  // 模块级帧为 nullptr
   std::size_t pc = 0;
   std::size_t stackBase = 0;

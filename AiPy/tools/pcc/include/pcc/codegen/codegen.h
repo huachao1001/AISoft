@@ -21,6 +21,7 @@
 
 #include <cstdint>
 #include <set>
+#include <map>
 #include <string>
 #include <utility>
 #include <deque>
@@ -195,6 +196,11 @@ class CodeGen {
   bool emitLambdaDefaults(const Node& node, const Block& callee);
   // 应用装饰器：`@a @b def f` 就是 `f = a(b(f))`。
   bool applyDecorators(const Node& node);
+  // 编函数体。类方法的函数表名是 `<类>.<方法>`，用 qualifiedName 指定。
+  bool compileFunctionBody(const Node& node, const std::string& qualifiedName);
+  // 普通 Python 类：方法登记成 `<类>.<方法>`，类定义处发 MAKE_CLASS。
+  bool registerClassMethods(const Node& classNode);
+  bool compileClass(const Node& classNode);
   // 编译所有待编译的 lambda 函数体（在模块级语句之前做完）。
   bool compilePendingLambdas();
 
@@ -255,6 +261,14 @@ class CodeGen {
   // 带装饰器的 def：这个名字在运行期装的是装饰器返回的值，不再是「脚本
   // 函数」。按名查函数号时要跳过它，调用得走 CALL_VALUE。
   std::set<std::string> decoratedNames_;
+  // 普通 Python 类的类名。`A()` 据此发 INSTANTIATE 而不是按值调用。
+  std::set<std::string> classNames_;
+  // 每个类有哪些方法名（编译期校验 `A.x` 用不到，但保留给诊断）。
+  std::map<std::string, std::set<std::string>> classMethodNames_;
+  // `<类>.<方法>` → 类名。函数体编译时要据此决定 self 的处理。
+  std::map<std::string, std::string> functionClass_;
+  // 当前正在编译的方法所属的类；空表示不在方法里。`super()` 需要它。
+  std::string currentClass_;
 
   std::vector<std::string> globalOrder_;
   std::set<std::string> globalsSet_;

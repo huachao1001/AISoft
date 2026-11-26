@@ -148,19 +148,63 @@ CASES = [
         'go()\n',
         '0\n',
     ),
-    # ── 期望被拒绝的 ──
+    # ── 普通 Python 类（真正的对象模型）──
     (
-        '普通类被拒绝',
+        '普通类实例字段',
+        'class P:\n'
+        '    def __init__(self, x):\n'
+        '        self.x = x\n'
+        'p = P(7)\n'
+        'print(p.x)\n',
+        '7\n',
+    ),
+    (
+        '普通类方法调用',
+        'class P:\n'
+        '    def __init__(self, x):\n'
+        '        self.x = x\n'
+        '    def double(self):\n'
+        '        return self.x * 2\n'
+        'print(P(4).double())\n',
+        '8\n',
+    ),
+    (
+        '类继承与方法覆盖',
         'class A:\n'
-        '    x = 1\n',
-        None,
+        '    def who(self):\n'
+        '        return "A"\n'
+        'class B(A):\n'
+        '    def who(self):\n'
+        '        return "B"\n'
+        'print(A().who())\n'
+        'print(B().who())\n',
+        'A\nB\n',
     ),
     (
-        '继承非 Activity 被拒绝',
-        'class A(Base):\n'
-        '    x = 1\n',
-        None,
+        'super() 调父类',
+        'class A:\n'
+        '    def who(self):\n'
+        '        return "A"\n'
+        'class B(A):\n'
+        '    def who(self):\n'
+        '        return super().who() + "B"\n'
+        'print(B().who())\n',
+        'AB\n',
     ),
+    (
+        '多继承按基类顺序',
+        'class A:\n'
+        '    def who(self):\n'
+        '        return "A"\n'
+        'class B:\n'
+        '    def who(self):\n'
+        '        return "B"\n'
+        'class C(A, B):\n'
+        '    pass\n'
+        'print(C().who())\n',
+        'A\n',
+    ),
+    # ── 期望被拒绝的 ──
     (
         '两个 Activity 被拒绝',
         'class A(Activity):\n'

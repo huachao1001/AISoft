@@ -201,6 +201,32 @@ class Value {
   friend Value makeFunction(int index, List captures);
   friend int functionIndexOf(const Value& value);
   friend const List& functionCaptures(const Value& value);
+  // 类对象与实例：同样是 kObject 的一种，表指针就是判据。
+  friend Value makeClass(std::string name, List bases, List memberKeys,
+                         List memberValues);
+  friend Value makeInstance(const Value& cls);
+  friend bool isClass(const Value& value);
+  friend bool isInstance(const Value& value);
+  friend std::string classNameOf(const Value& value);
+  friend const List& classBases(const Value& value);
+  friend const List& classMemberKeys(const Value& value);
+  friend const List& classMemberValues(const Value& value);
+  // 实例的字段（名字与值平行，保持插入序）。非实例返回静态空表。
+  friend List& mutableInstanceKeys(const Value& value);
+  friend List& mutableInstanceValues(const Value& value);
+  friend const List& instanceKeys(const Value& value);
+  friend const List& instanceValues(const Value& value);
+  friend Value instanceClass(const Value& value);
+  // 已绑定实例的方法值（`obj.method` 的结果）：独立标记表，载荷是函数号
+  // 与 self。调用时把 self 补成第一个位置实参。
+  friend Value makeBoundMethod(int index, Value self);
+  friend bool isBoundMethod(const Value& value);
+  friend Value boundMethodSelf(const Value& value);
+  // `super()`：self + 当前类，查找从当前类的基类开始。
+  friend Value makeSuper(const Value& self, const Value& currentClass);
+  friend bool isSuper(const Value& value);
+  friend Value superSelf(const Value& value);
+  friend Value superClassOf(const Value& value);
 
  private:
   // ── 紧凑表示 ──
@@ -302,6 +328,21 @@ struct HeapData : DictData {
   // `Value` 仍只有 16 字节，载荷全在这块堆上。
   int functionIndex = -1;
   List captures;
+  // 实例与类对象专用载荷（kObject 里的一种，判据同样是方法表指针）。
+  //
+  // 实例：`instanceOf` 是类对象的 Value（共享同一份堆载荷），`fields` 是
+  // 实例自己的名字→值（保持插入序，与 Python 的 __dict__ 一致）。
+  // 类对象：`className` 是类名，`bases` 是基类 Value 列表，`methods` 是
+  // 类命名空间里的名字→值（函数值或普通属性），`fields` 不用。
+  std::string className;
+  List bases;
+  List memberKeys;
+  List memberValues;
+  Value instanceOf;
+  // 已绑定实例的方法值用：self（函数号复用 functionIndex）。
+  Value boundSelf;
+  // `super()` 的结果：self 与「当前类」（从它的基类开始查找）。
+  Value superClass;
   std::atomic<std::uint32_t> refs{1};  // 1 表示「刚创建，调用方已持有」
 };
 
