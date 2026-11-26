@@ -149,6 +149,10 @@ struct Function {
   std::vector<LineEntry> lines;
   int paramCount = 0;
   int localCount = 0;  // 局部槽数（含参数）
+  // 尾部带默认值的参数个数，以及存放这些默认值的隐藏全局槽。
+  // 默认值在**定义处**求值（CPython 语义），所以不在函数表里存值。
+  int defaultCount = 0;
+  int defaultSlot = -1;
 };
 
 // 编译好的程序：模块级代码 + 函数表 + 常量池 + 两张调用表。

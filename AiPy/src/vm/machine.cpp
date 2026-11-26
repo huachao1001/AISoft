@@ -451,10 +451,21 @@ static Result execute(const Program& program, std::vector<Value>& globals,
                       "，脚本里可能有无限递归");
         }
         const Function& fn = program.functions[index];
-        if (argc != fn.paramCount) {
+        // 默认参数：参数只能缺在尾部，缺口从 defaultSlot 里取。
+        if (argc > fn.paramCount) {
           return fail("函数 " + fn.name + " 需要 " +
                       std::to_string(fn.paramCount) + " 个参数，实际给了 " +
                       std::to_string(argc) + " 个");
+        }
+        const int missing = fn.paramCount - argc;
+        if (missing > 0) {
+          if (fn.defaultCount < missing || fn.defaultSlot < 0 ||
+              fn.defaultSlot >= static_cast<int>(globals.size())) {
+            return fail("函数 " + fn.name + " 需要 " +
+                        std::to_string(fn.paramCount - fn.defaultCount) +
+                        " 到 " + std::to_string(fn.paramCount) +
+                        " 个参数，实际给了 " + std::to_string(argc) + " 个");
+          }
         }
 
         Frame callee;
@@ -466,6 +477,19 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         callee.locals.assign(static_cast<size_t>(fn.localCount), Value());
         for (int i = 0; i < argc; ++i) {
           callee.locals[static_cast<size_t>(i)] = stack[callee.stackBase + static_cast<size_t>(i)];
+        }
+        if (missing > 0) {
+          // 默认值按尾部对齐：第一个有默认值的参数下标 = paramCount - defaultCount。
+          const Value& stored = globals[static_cast<size_t>(fn.defaultSlot)];
+          const List& defaults = stored.asList();
+          const int firstDefault = fn.paramCount - fn.defaultCount;
+          if (static_cast<int>(defaults.size()) != fn.defaultCount) {
+            return fail("函数 " + fn.name + " 的默认值槽损坏（编译器 bug）");
+          }
+          for (int i = argc; i < fn.paramCount; ++i) {
+            callee.locals[static_cast<size_t>(i)] =
+                defaults[static_cast<size_t>(i - firstDefault)];
+          }
         }
         sp = callee.stackBase;  // 参数移进 locals 后从共享栈弹出
         frames.push_back(std::move(callee));

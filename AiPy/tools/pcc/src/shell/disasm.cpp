@@ -364,8 +364,10 @@ bool loadBytecodeFile(const std::string& path, LoadedProgram* program,
 
   for (std::uint16_t i = 0; i < functionCount; ++i) {
     std::uint16_t paramCount = 0, localSlots = 0, lineCount = 0, nameLen = 0;
+    std::uint16_t defaultCount = 0, defaultSlot = 0;
     std::uint32_t codeLen = 0;
     if (!reader.u16(&paramCount) || !reader.u16(&localSlots) ||
+        !reader.u16(&defaultCount) || !reader.u16(&defaultSlot) ||
         !reader.u32(&codeLen) || !reader.u16(&lineCount) ||
         !reader.u16(&nameLen)) {
       *error = "bytecode truncated in a function header";

@@ -133,6 +133,10 @@ std::vector<std::uint8_t> packProgram(const Program& program) {
   for (const CompiledBlock& function : program.functions) {
     out.u16(static_cast<std::uint32_t>(function.paramCount));
     out.u16(static_cast<std::uint32_t>(function.localCount));
+    out.u16(static_cast<std::uint32_t>(function.defaultCount));
+    out.u16(function.defaultSlot < 0
+                ? 0xFFFF
+                : static_cast<std::uint32_t>(function.defaultSlot));
     out.u32(static_cast<std::uint32_t>(function.code.size()));
     out.u16(static_cast<std::uint32_t>(function.lines.size()));
     out.u16(static_cast<std::uint32_t>(function.name.size()));

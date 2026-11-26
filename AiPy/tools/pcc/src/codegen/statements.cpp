@@ -143,7 +143,9 @@ bool CodeGen::statement(const Node& node) {
       return tryStatement(node);
 
     case Kind::FunctionDef:
-      return failAt(diag::nestedFunction(node.text), node);
+      // 顶层 def 的签名已在 registerFunction 登记过，这里只发默认值求值：
+      // CPython 在**执行到这一句时**求值默认参数，所以位置必须在这里。
+      return emitDefaultValues(node, *block_);
 
     case Kind::Delete:
       return deleteStatement(node);

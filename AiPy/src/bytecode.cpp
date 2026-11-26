@@ -155,6 +155,10 @@ Result load(const std::uint8_t* data, std::size_t size) {
     vm::Function function;
     function.paramCount = reader.u16();
     function.localCount = reader.u16();
+    function.defaultCount = reader.u16();
+    // 无默认值时写 0xFFFF：u16 的 -1，避免与合法槽号 0 混淆。
+    const std::uint16_t defaultSlot = reader.u16();
+    function.defaultSlot = defaultSlot == 0xFFFF ? -1 : defaultSlot;
     const std::uint32_t codeLength = reader.u32();
     const std::uint16_t lineCount = reader.u16();
     const std::uint16_t nameLength = reader.u16();

@@ -120,6 +120,9 @@ class Block:
         self.param_count = param_count
         self.locals = {}         # 名字 → 槽号
         self.local_count = param_count
+        # 尾部带默认值的参数个数 + 存放默认值的隐藏全局槽（-1 表示没有）。
+        self.default_count = 0
+        self.default_slot = -1
 
     def emit(self, op, node):
         self.lines.append((len(self.code), getattr(node, 'lineno', 0)))
@@ -381,17 +384,28 @@ class Compiler:
             if isinstance(node, ast.FunctionDef):
                 self.compile_function_body(node)
 
+        # 默认值在**定义处**求值（CPython 语义），所以它在 statement() 处理
+        # FunctionDef 时发射，位置就在这里不是别处。
+
         # 模块级语句：按源码顺序执行。放在函数编译之后，这样
         # `g = f`（读函数名）与 `f = 3`（覆盖函数）都能被拒绝。
         for node in body:
-            if isinstance(node, ast.FunctionDef):
-                continue
             self.statement(node)
 
         # 模块级最后一条语句结束 → 隐式 return None
         self.module.emit('NONE', tree)
         self.module.emit('RETURN', tree)
         return self.build_program()
+
+    def emit_default_values(self, node):
+        """把默认参数值在定义处求值，存进函数自己的隐藏全局槽。"""
+        block = self.functions[self.function_by_name[node.name]]['block']
+        for value in node.args.defaults:
+            self.expr(value)
+        self.module.emit('BUILD_LIST', node)
+        self.module.emit_u16(len(node.args.defaults))
+        self.module.emit('STORE_GLOBAL', node)
+        self.module.emit_u16(block.default_slot)
 
     def expand_activity(self, node, body):
         """把 `class X(Activity)` 展开成「模块级赋值 + 顶层函数」。
@@ -489,15 +503,15 @@ class Compiler:
 
         params = [arg.arg for arg in args.args]
         defaults = list(args.defaults)
-        if defaults:
-            raise CompileError(
-                '默认参数暂不支持字节码路线（AOT 路线支持字面量默认值）',
-                self.filename, defaults[0])
 
         block = Block(node.name, len(params))
         for index, name in enumerate(params):
             block.locals[name] = index
         block.local_count = len(params)
+        if defaults:
+            # 默认值在定义处求值，存进一个隐藏全局槽（与 C++ 版同一形状）。
+            block.default_count = len(defaults)
+            block.default_slot = self.global_slot('\x01defaults:' + node.name)
 
         # 预扫描函数体里「会被赋值」的名字，先占好局部槽。
         #
@@ -608,6 +622,13 @@ class Compiler:
             if isinstance(node.value, ast.Call):
                 self.expr(node.value)
                 self.block.emit('POP', node)
+            return
+
+        if isinstance(node, ast.FunctionDef):
+            # 签名已在 register_function 登记；这里只发默认值求值，
+            # 因为 CPython 在执行到这一句时求值默认参数。
+            if node.args.defaults:
+                self.emit_default_values(node)
             return
 
         if isinstance(node, ast.Pass):
@@ -1513,6 +1534,8 @@ class Compiler:
                 'lines': [[offset, line] for offset, line in block.lines],
                 'paramCount': block.param_count,
                 'localCount': block.local_count,
+                'defaultCount': block.default_count,
+                'defaultSlot': block.default_slot,
             }
 
         return {

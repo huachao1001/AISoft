@@ -677,6 +677,9 @@ NodePtr Parser::parseFunctionArgs() {
       NodePtr value = expression();
       if (!value) return nullptr;
       ++args->defaults;
+      // 默认值表达式按参数顺序追加到 children（parameters 的索引＝参数序号）。
+      // CPython 在**定义处**求值，所以这些表达式必须留下来编译到模块级。
+      args->children.push_back(std::move(value));
       if (args->defaultLine == 0) {
         args->defaultLine = valueToken.line;
         args->defaultCol = valueToken.col;

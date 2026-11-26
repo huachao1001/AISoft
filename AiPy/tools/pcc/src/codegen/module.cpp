@@ -38,6 +38,8 @@ bool CodeGen::compile(const Node& module) {
     out.lines = block.lines;
     out.paramCount = block.paramCount;
     out.localCount = block.localCount;
+    out.defaultCount = block.defaultCount;
+    out.defaultSlot = block.defaultSlot;
     program_.functions.push_back(std::move(out));
   }
   return true;
@@ -108,9 +110,22 @@ bool CodeGen::compileModule(const Node& module) {
     }
   }
 
-  // 模块级语句：按源码顺序执行。
+  // 默认值在**定义处**求值（CPython 语义）：它的求值代码必须出现在
+  // def 语句本身的位置，而不是模块级语句之前——否则 `def f(a=n)` 里
+  // 的 n 会在 n 赋值之前被求值，拿到 None。
+  //
+  // 这里只做检查，实际发射在 statement() 处理 FunctionDef 时。
   for (const Node* node : body) {
-    if (node->kind == Kind::FunctionDef) continue;
+    if (node->kind != Kind::FunctionDef) continue;
+    const Node& args = *node->children[0];
+    if (args.children.size() != args.defaults) {
+      return failAt(diag::defaultParams(), *node);
+    }
+  }
+
+  // 模块级语句：按源码顺序执行。FunctionDef 也要走 statement()——它会在
+  // 定义处求值默认参数（CPython 语义），跳过就等于默认值永远是 None。
+  for (const Node* node : body) {
     if (!statement(*node)) return false;
   }
 
@@ -182,20 +197,22 @@ bool CodeGen::registerFunction(const Node& node) {
     return fail(diag::positionalOnlyParams(), args.posonlyLine,
                 args.posonlyCol + 1);
   }
-  if (args.defaults > 0) {
-    return fail(diag::defaultParams(), args.defaultLine,
-                args.defaultCol + 1);
-  }
 
   // 方法（在 Activity 里）去掉第一个 self 参数。
   const bool isMethod = !args.params.empty() && args.params[0] == "self";
 
   Block block;
   block.name = node.text;
-  for (std::size_t i = isMethod ? 1 : 0; i < args.params.size(); ++i) {
-    block.localNames.push_back(args.params[i]);
+  for (std::size_t i = isMethod ? 1 : 0; i < args.params.size(); ++i) {    block.localNames.push_back(args.params[i]);
   }
   block.paramCount = static_cast<int>(block.localNames.size());
+  // 默认值只能出现在尾部，所以个数就足以描述哪些参数可选。
+  block.defaultCount = static_cast<int>(args.defaults);
+  if (block.defaultCount > 0) {
+    // 默认值在定义处求值后存进这个隐藏全局槽。名字带前缀，避免与脚本变量
+    // 撞名；它同时出现在 globalNames 里，热加载会把值一并搬过去。
+    block.defaultSlot = globalSlot(std::string("\x01", 1) + "defaults:" + node.text);
+  }
   block.localCount = block.paramCount;
 
   FunctionEntry entry;
@@ -225,6 +242,32 @@ bool CodeGen::registerFunction(const Node& node) {
   functionNames_.push_back(node.text);
   blocks_.push_back(std::move(block));
   functions_.push_back(std::move(entry));
+  return true;
+}
+
+bool CodeGen::emitDefaultValues(const Node& node, Block& block) {
+  (void)block;
+  // 解析器把默认值表达式按参数顺序存进 Arguments 的 children：
+  // 它在 params 尾部，正好是该函数「尾部那几个参数」的默认值。
+  const Node& args = *node.children[0];
+  if (args.children.size() != args.defaults) {
+    return failAt(diag::defaultParams(), node);
+  }
+  if (args.children.empty()) return true;
+  // 只能用在顶层：嵌套函数不支持，走到这里说明是嵌套 def。
+  const int index = functionIndex(node.text);
+  if (index < 0) return failAt(diag::nestedFunction(node.text), node);
+  const int slot = blocks_[static_cast<std::size_t>(
+      functions_[static_cast<std::size_t>(index)].blockIndex)].defaultSlot;
+  if (slot < 0) return true;
+
+  for (const NodePtr& value : args.children) {
+    if (!expr(*value)) return false;
+  }
+  emit("BUILD_LIST", node);
+  emitU16(static_cast<int>(args.children.size()));
+  emit("STORE_GLOBAL", node);
+  emitU16(slot);
   return true;
 }
 

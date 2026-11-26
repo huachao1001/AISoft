@@ -40,6 +40,11 @@ struct CompiledBlock {
   std::vector<std::pair<std::uint32_t, int>> lines;  // (offset, line)
   int paramCount = 0;
   int localCount = 0;
+  // 尾部有多少个参数带默认值。默认值本身不进函数表：它们在**定义处**求值
+  // （CPython 的语义），结果存进 defaultSlot 这个隐藏全局槽，调用时按缺口
+  // 取。把默认值编进函数表会让「定义时求值」变成「每次调用求值」。
+  int defaultCount = 0;
+  int defaultSlot = -1;
 };
 
 // 常量。类型与值分开存，写二进制时按类型序列化。
@@ -90,6 +95,8 @@ class CodeGen {
     std::vector<std::pair<std::uint32_t, int>> lines;
     int paramCount = 0;
     int localCount = 0;
+    int defaultCount = 0;
+    int defaultSlot = -1;
     std::vector<std::string> localNames;  // 槽号 → 名字
   };
 
@@ -150,6 +157,8 @@ class CodeGen {
   bool expandActivity(const Node& classNode, std::vector<const Node*>* body);
   bool registerFunction(const Node& node);
   bool compileFunctionBody(const Node& node);
+  // 把默认参数值在定义处求值，存进函数自己的隐藏全局槽。
+  bool emitDefaultValues(const Node& node, Block& block);
 
   // ── 语句（statements.cpp）──
   bool statement(const Node& node);

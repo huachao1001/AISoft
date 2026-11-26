@@ -74,7 +74,8 @@ import struct
 MAGIC = b'AIPYBC01'
 # 2：加入扩展表（extensions）。旧版产物没有它，加载器会读到位错的数据，
 # 所以必须升版本、让旧 .bc 在加载时报「版本不一致」而不是算出乱码。
-VERSION = 2
+# 3：函数表新增 defaultCount / defaultSlot（默认参数）。
+VERSION = 3
 
 # 常量类型标记，与 cpp 侧 ConstType 一致。
 CONST_NONE = 0
@@ -172,6 +173,9 @@ def pack(program):
     for function in program['functions']:
         out.u16(function['paramCount'])
         out.u16(function['localCount'])
+        out.u16(function.get('defaultCount', 0))
+        slot = function.get('defaultSlot', -1)
+        out.u16(0xFFFF if slot < 0 else slot)
         out.u32(len(function['code']))
         out.u16(len(function['lines']))
         name = function.get('name', '?').encode('utf-8')

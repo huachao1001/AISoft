@@ -20,7 +20,7 @@ namespace aipy {
 namespace bytecode {
 
 inline constexpr char kMagic[8] = {'A', 'I', 'P', 'Y', 'B', 'C', '0', '1'};
-inline constexpr std::uint16_t kVersion = 2;
+inline constexpr std::uint16_t kVersion = 3;
 
 struct Result {
   vm::Program program;
