@@ -61,7 +61,7 @@ enum class Op : std::uint8_t {
   kJumpIfTrueKeep,  // u16 目标，保留栈顶（or）
   kPop,
   kDup,
-  kCall,            // u16 函数号, u8 实参个数
+  kCall,
   kCallBuiltin,     // u16 内建号, u8 实参个数
   kCallMethod,      // u16 方法名常量号, u8 实参个数
   kCallExt,         // u16 扩展号, u8 实参个数
@@ -112,6 +112,21 @@ enum class Op : std::uint8_t {
   kDelGlobal,  // u16 槽号
   kBuildTuple, // u16 元素个数：从栈上取 N 个元素建成元组
   kBuildSet,   // u16 元素个数：从栈上取 N 个元素建成集合（去重）
+
+  // ── 动态调用（新指令一律追加在末尾，不许插进中间）──
+  //
+  // 插进中间会让 Op 的数值整体偏移，而字节码里的操作码就是枚举数值，
+  // 已生成的 .bc 与 .pylib 里的字节码会静默执行成别的指令。旧指令的位置
+  // 因此是冻结的，新指令只能往后加。
+  //
+  // 形参表里有 `*args` / `**kwargs` / 仅关键字参数时，实参无法在编译期
+  // 拍平成位置顺序（个数与名字都要到运行期才知道），所以走这条：
+  // 栈上是 [位置实参列表, 关键字字典]，由 VM 按 CPython 规则绑定。
+  kCallDyn,  // u16 函数号
+
+  // `f(**d)`：栈上是 [目标字典, 来源字典]，把来源的键值并进目标。
+  // 键重复抛 TypeError，与 CPython 一致。
+  kDictMerge,
 };
 
 enum class BinOp : std::uint8_t {
@@ -149,12 +164,24 @@ struct Function {
   std::vector<LineEntry> lines;
   int paramCount = 0;
   int localCount = 0;  // 局部槽数（含参数）
-  // 尾部带默认值的参数个数，以及存放这些默认值的隐藏全局槽。
+  // 有默认值的参数个数，以及存放默认值的隐藏全局槽。
   // 默认值在**定义处**求值（CPython 语义），所以不在函数表里存值。
   int defaultCount = 0;
   int defaultSlot = -1;
+  // 每个具名参数一位：置位表示它有默认值。`def f(*, a=1, b)` 的默认值
+  // 不连续，光靠「尾部个数」表达不出来。
+  std::uint64_t defaultMask = 0;
+  // `*args` / `**kwargs` 的局部槽（-1 表示没写）。它们排在普通参数之后。
+  int varargSlot = -1;
+  int kwargSlot = -1;
+  // 从哪个参数下标开始是仅关键字参数（等于 paramCount 表示没有）。
+  int kwonlyStart = -1;
+  // 仅关键字参数里带默认值的个数（它们排在整个默认值列表的末尾）。
+  int kwonlyDefaultCount = 0;
+  // 参数名，按槽号排列（含仅关键字参数，不含 *args / **kwargs）。
+  // CALL_DYN 要按名字把关键字实参对上形参。
+  std::vector<std::string> paramNames;
 };
-
 // 编译好的程序：模块级代码 + 函数表 + 常量池 + 两张调用表。
 struct Program {
   std::vector<std::uint8_t> code;       // 模块级代码

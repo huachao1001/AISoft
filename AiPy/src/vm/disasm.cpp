@@ -106,6 +106,13 @@ std::vector<std::string> disassemble(const Program& program) {
         std::snprintf(text, sizeof(text), "%s %u,%u", opName(op), read16(code, pc), code[pc + 2]);
         pc += 3;
         break;
+      case Op::kCallDyn:
+        std::snprintf(text, sizeof(text), "call_dyn %u", read16(code, pc));
+        pc += 2;
+        break;
+      case Op::kDictMerge:
+        std::snprintf(text, sizeof(text), "dict_merge");
+        break;
       case Op::kCallMethod:
         std::snprintf(text, sizeof(text), "call_method %u,%u", read16(code, pc), code[pc + 2]);
         pc += 3;

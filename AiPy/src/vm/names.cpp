@@ -58,6 +58,8 @@ const char* opName(Op op) {
     case Op::kDelGlobal: return "del_global";
     case Op::kBuildTuple: return "build_tuple";
     case Op::kBuildSet: return "build_set";
+    case Op::kCallDyn: return "call_dyn";
+    case Op::kDictMerge: return "dict_merge";
   }
   return "?";
 }

@@ -172,15 +172,25 @@ struct Node {
 
   // Arguments 专用
   std::vector<std::string> params;
-  std::size_t defaults = 0;
+  // 仅关键字参数（`def f(*, a)` 里的 a）。它们在 params 之后单独占槽。
+  std::vector<std::string> kwonlyParams;
+  // 与 params 平行的默认值表达式：非空表示这个位置参数带默认值。
+  // CPython 允许 `def f(a=1, b=2)` 只能尾部连续，所以这在位置段里等价于
+  // 「尾部个数」，但独立存一份让「有没有默认值」不依赖位置推断。
+  std::vector<NodePtr> paramDefaults;
+  // 与 kwonlyParams 平行：仅关键字参数的默认值可以不在尾部
+  // （`def f(*, a=1, b)` 合法），所以必须逐个记。
+  std::vector<NodePtr> kwonlyDefaults;
+  // `*args` / `**kwargs` 的绑定名（空串表示没写）。
+  std::string varargName;
+  std::string kwargName;
+  // 从哪些下标开始是仅关键字参数（相对 params 的长度：kwonly 全排在后面）。
   bool hasVararg = false;
   bool hasKwarg = false;
   bool hasKwonly = false;
   bool hasPosonly = false;
   int posonlyLine = 0;
   int posonlyCol = 0;
-  int defaultLine = 0;
-  int defaultCol = 0;
 };
 
 inline NodePtr make_node(Kind kind, int line, int col) {

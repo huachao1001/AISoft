@@ -66,8 +66,7 @@ OPERANDS = {
     'CALL_METHOD': ('u16', 'u8'),
     'CALL_EXT': ('u16', 'u8'),
     'BUILD_LIST': ('u16',),
-    'BUILD_DICT': ('u16',),
-    'GET_ITEM': (),
+    'BUILD_DICT': ('u16',),    'GET_ITEM': (),
     'SET_ITEM': (),
     'SLICE': ('u8',),
     'ITER_INIT': (),
@@ -83,6 +82,22 @@ OPERANDS = {
     'POP': (),
     'DUP': (),
     'RETURN': (),
+    # 末尾追加的指令
+    'CALL_DYN': ('u16',),
+    'DICT_MERGE': (),
+    'BUILD_TUPLE': ('u16',),
+    'BUILD_SET': ('u16',),
+    'DEL_LOCAL': ('u16',),
+    'DEL_GLOBAL': ('u16',),
+    'SET_SLICE': ('u8',),
+    'SETUP_EXC': ('u16',),
+    'POP_EXC': (),
+    'RAISE': (),
+    'RAISE_TYPE': ('u16', 'u8'),
+    'RERAISE': (),
+    'EXC_MATCH': ('u16', 'u16'),
+    'CURRENT_EXC': (),
+    'CLEAR_EXC': (),
 }
 
 BINOP_NAMES = compiler.BINOPS

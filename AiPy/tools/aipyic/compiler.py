@@ -60,6 +60,9 @@ OPCODES = [
     'SETUP_EXC', 'POP_EXC', 'RAISE', 'RAISE_TYPE', 'RERAISE',
     'EXC_MATCH', 'CURRENT_EXC', 'CLEAR_EXC',
     'DEL_LOCAL', 'DEL_GLOBAL', 'BUILD_TUPLE', 'BUILD_SET',
+    # 追加在末尾：Op 的数值就是字节码里的操作码，插到中间会让已生成的
+    # .bc 被执行成别的指令。
+    'CALL_DYN', 'DICT_MERGE',
 ]
 
 # 二元算子编号，与 vm.h 的 BinOp 一致。
@@ -123,6 +126,15 @@ class Block:
         # 尾部带默认值的参数个数 + 存放默认值的隐藏全局槽（-1 表示没有）。
         self.default_count = 0
         self.default_slot = -1
+        # 每个具名参数一位：置位表示有默认值。仅关键字参数的默认值可以不
+        # 连续（`def f(*, a=1, b)`），所以必须有掩码。
+        self.default_mask = 0
+        # 仅关键字参数的默认值：名字 → 表达式节点。
+        self.kwonly_defaults = {}
+        # `*args` / `**kwargs` 的局部槽，以及仅关键字参数的起点。
+        self.vararg_slot = -1
+        self.kwarg_slot = -1
+        self.kwonly_start = -1
 
     def emit(self, op, node):
         self.lines.append((len(self.code), getattr(node, 'lineno', 0)))
@@ -138,6 +150,14 @@ class Block:
     def patch_u16(self, at, value):
         self.code[at] = value & 0xFF
         self.code[at + 1] = (value >> 8) & 0xFF
+
+    def param_names(self):
+        """具名参数按槽号排列（*args / **kwargs 不算参数）。"""
+        names = [None] * self.param_count
+        for name, index in self.locals.items():
+            if 0 <= index < self.param_count:
+                names[index] = name
+        return [name for name in names if name is not None]
 
     def slot_of(self, name):
         if name not in self.locals:
@@ -398,12 +418,42 @@ class Compiler:
         return self.build_program()
 
     def emit_default_values(self, node):
-        """把默认参数值在定义处求值，存进函数自己的隐藏全局槽。"""
-        block = self.functions[self.function_by_name[node.name]]['block']
-        for value in node.args.defaults:
-            self.expr(value)
+        """把默认参数值在定义处求值，存进函数自己的隐藏全局槽。
+
+        列表与 paramCount 等长，按参数下标放；没有默认值的位置留占位
+        （函数表里的掩码说明哪些位置是真的）。这样仅关键字参数的默认值
+        可以不在尾部（`def f(*, a=1, b)`）。
+        """
+        entry = self.functions[self.function_by_name[node.name]]
+        block = entry['block']
+        args = node.args
+        is_method = bool(args.args) and args.args[0].arg == 'self'
+        first = 1 if is_method else 0
+
+        for _ in range(block.param_count):
+            self.module.emit('NONE', node)
         self.module.emit('BUILD_LIST', node)
-        self.module.emit_u16(len(node.args.defaults))
+        self.module.emit_u16(block.param_count)
+
+        # 位置参数的默认值只能出现在尾部：defaults[k] 对应第
+        # (len(args.args) - len(defaults) + k) 个参数，去掉 self 后减 first。
+        base = len(args.args) - len(args.defaults) - first
+        for offset, default in enumerate(args.defaults):
+            self.module.emit('DUP', node)
+            self.module.emit('CONST', node)
+            self.module.emit_u16(self.const_index(base + offset))
+            self.expr(default)
+            self.module.emit('SET_ITEM', node)
+        for offset, kwarg in enumerate(args.kwonlyargs):
+            if kwarg.arg not in block.kwonly_defaults:
+                continue
+            self.module.emit('DUP', node)
+            self.module.emit('CONST', node)
+            self.module.emit_u16(self.const_index(
+                block.kwonly_start + offset))
+            self.expr(block.kwonly_defaults[kwarg.arg])
+            self.module.emit('SET_ITEM', node)
+
         self.module.emit('STORE_GLOBAL', node)
         self.module.emit_u16(block.default_slot)
 
@@ -492,25 +542,53 @@ class Compiler:
                                node.decorator_list[0])
 
         args = node.args
-        if args.vararg or args.kwarg or args.kwonlyargs:
-            raise CompileError('不支持 *args / **kwargs / 仅关键字参数', self.filename, node)
-        # 位置-only 参数（`def f(a, /)`）同样拒绝：它在语法上分隔了「只按位置
-        # 传」的参数，而这里根本没有关键字传参，接纳它只会让脚本看起来支持
-        # 一个它并不区分的特性。
+        # 位置-only 参数（`def f(a, /)`）仍然拒绝：它在语法上分隔了「只按
+        # 位置传」的参数，接纳它只会让脚本看起来支持一个它并不区分的特性。
         if args.posonlyargs:
             raise CompileError('不支持位置-only 参数（/ 分隔符）',
                                self.filename, args.posonlyargs[0])
 
         params = [arg.arg for arg in args.args]
-        defaults = list(args.defaults)
+        kwonly = [arg.arg for arg in args.kwonlyargs]
+        is_method = bool(args.args) and args.args[0].arg == 'self'
+        first = 1 if is_method else 0
 
-        block = Block(node.name, len(params))
-        for index, name in enumerate(params):
-            block.locals[name] = index
-        block.local_count = len(params)
-        if defaults:
+        block = Block(node.name, len(params) - first)
+        for index in range(first, len(params)):
+            block.locals[params[index]] = index - first
+        block.local_count = block.param_count
+        if kwonly:
+            block.kwonly_start = block.param_count
+            for offset, name in enumerate(kwonly):
+                block.locals[name] = block.param_count
+                block.param_count += 1
+            block.local_count = block.param_count
+        if args.vararg is not None:
+            block.vararg_slot = block.local_count
+            block.locals[args.vararg.arg] = block.local_count
+            block.local_count += 1
+        if args.kwarg is not None:
+            block.kwarg_slot = block.local_count
+            block.locals[args.kwarg.arg] = block.local_count
+            block.local_count += 1
+
+        # 默认值：每个具名参数一位。位置参数的默认值只能出现在尾部，所以
+        # 它们从 len(params) - len(defaults) 个参数开始（再去掉 self）。
+        mask = 0
+        default_base = len(params) - len(args.defaults) - first
+        for offset, _default in enumerate(args.defaults):
+            mask |= 1 << (default_base + offset)
+        kwonly_defaults = {}
+        for offset, kwarg in enumerate(args.kwonlyargs):
+            default = args.kw_defaults[offset] if args.kw_defaults else None
+            if default is not None:
+                kwonly_defaults[kwarg.arg] = default
+                mask |= 1 << (block.kwonly_start + offset)
+        block.default_mask = mask
+        block.kwonly_defaults = kwonly_defaults
+        if args.defaults or kwonly_defaults:
+            block.default_count = bin(mask).count('1')
             # 默认值在定义处求值，存进一个隐藏全局槽（与 C++ 版同一形状）。
-            block.default_count = len(defaults)
             block.default_slot = self.global_slot('\x01defaults:' + node.name)
 
         # 预扫描函数体里「会被赋值」的名字，先占好局部槽。
@@ -625,9 +703,15 @@ class Compiler:
             return
 
         if isinstance(node, ast.FunctionDef):
-            # 签名已在 register_function 登记；这里只发默认值求值，
+            # 顶层 def：签名已在 register_function 登记；这里只发默认值求值，
             # 因为 CPython 在执行到这一句时求值默认参数。
-            if node.args.defaults:
+            # 函数体里的 def 仍然拒绝——见下面的嵌套检查。
+            if self.block is not self.module:
+                raise CompileError('不支持嵌套函数 "%s"；请移到模块顶层' % node.name,
+                                   self.filename, node)
+            has_defaults = bool(node.args.defaults) or any(
+                default is not None for default in node.args.kw_defaults)
+            if has_defaults:
                 self.emit_default_values(node)
             return
 
@@ -1388,6 +1472,39 @@ class Compiler:
             self.block.emit('SLICE', parent)
             self.block.emit_u8(self.slice_flags(node))
 
+    def call_dynamic(self, node, index):
+        """签名含可变参数或实参有 `*`/`**` 展开：走 CALL_DYN。"""
+        self.block.emit('BUILD_LIST', node)
+        self.block.emit_u16(0)
+        for argument in node.args:
+            if isinstance(argument, ast.Starred):
+                self.expr(argument.value)
+                self.block.emit('CALL_BUILTIN', argument)
+                self.block.emit_u16(self.builtin_index('list'))
+                self.block.emit_u8(1)
+            else:
+                self.expr(argument)
+                self.block.emit('BUILD_LIST', argument)
+                self.block.emit_u16(1)
+            self.block.emit('BIN', argument)
+            self.block.emit_u8(BINOPS.index('ADD'))
+
+        self.block.emit('BUILD_DICT', node)
+        self.block.emit_u16(0)
+        for keyword in node.keywords:
+            if keyword.arg is not None:
+                self.block.emit('DUP', keyword.value)
+                self.block.emit('CONST', keyword.value)
+                self.block.emit_u16(self.const_string(keyword.arg))
+                self.expr(keyword.value)
+                self.block.emit('SET_ITEM', keyword.value)
+            else:
+                self.expr(keyword.value)
+                self.block.emit('DICT_MERGE', keyword.value)
+
+        self.block.emit('CALL_DYN', node)
+        self.block.emit_u16(index)
+
     def call(self, node):
         # 内建：len/str/range… 编译成 CALL_BUILTIN + 下标。
         if isinstance(node.func, ast.Name) and node.func.id in BUILTIN_INDEX:
@@ -1404,20 +1521,37 @@ class Compiler:
         # 脚本函数的签名已知，VM 不需要认识关键字。
         if isinstance(node.func, ast.Name) and node.func.id in self.function_by_name:
             entry = self.functions[self.function_by_name[node.func.id]]
+            block = entry['block']
             params = []
-            for slot in range(entry['block'].param_count):
-                for name, index in entry['block'].locals.items():
+            for slot in range(block.param_count):
+                for name, index in block.locals.items():
                     if index == slot:
                         params.append(name)
                         break
+
+            # 形参含可变参数 / 仅关键字参数，或实参有 `*` / `**` 展开时，
+            # 实参的个数与名字要到运行期才知道，改发 [位置列表, 关键字字典]。
+            dynamic = (block.vararg_slot >= 0 or block.kwarg_slot >= 0 or
+                       block.kwonly_start >= 0)
+            if not dynamic:
+                for argument in node.args:
+                    if isinstance(argument, ast.Starred):
+                        dynamic = True
+                for keyword in node.keywords:
+                    if keyword.arg is None:
+                        dynamic = True
+            if dynamic:
+                self.call_dynamic(node, self.function_by_name[node.func.id])
+                return
+
+            # 位置参数段只到 kwonly_start（没有仅关键字参数时就是全部）。
+            positional_count = (block.kwonly_start if block.kwonly_start >= 0
+                                else len(params))
             ordered = [None] * len(params)
             positional = 0
             highest = 0
             for argument in node.args:
-                if isinstance(argument, ast.Starred):
-                    raise CompileError('不支持 *args / **kwargs / 仅关键字参数',
-                                       self.filename, argument)
-                if positional >= len(params):
+                if positional >= positional_count:
                     raise CompileError('函数 "%s" 收到过多参数' % node.func.id,
                                        self.filename, argument)
                 if ordered[positional] is not None:
@@ -1427,9 +1561,6 @@ class Compiler:
                 positional += 1
                 highest = max(highest, positional)
             for keyword in node.keywords:
-                if keyword.arg is None:
-                    raise CompileError('不支持 *args / **kwargs / 仅关键字参数',
-                                       self.filename, keyword.value)
                 if keyword.arg not in params:
                     raise CompileError('函数 "%s" 收到未预期的关键字参数 "%s"'
                                        % (node.func.id, keyword.arg),
@@ -1440,24 +1571,22 @@ class Compiler:
                                        self.filename, keyword.value)
                 ordered[slot] = keyword.value
                 highest = max(highest, slot + 1)
-            default_count = entry['block'].default_count
-            default_slot = entry['block'].default_slot
-            first_default = len(params) - default_count
             for index in range(highest):
-                if ordered[index] is None:
-                    if index < first_default:
-                        raise CompileError('函数 "%s" 缺少必需参数 "%s"'
-                                           % (node.func.id, params[index]),
-                                           self.filename, node)
+                if ordered[index] is not None:
+                    continue
+                if not (block.default_mask >> index) & 1:
+                    raise CompileError('函数 "%s" 缺少必需参数 "%s"'
+                                       % (node.func.id, params[index]),
+                                       self.filename, node)
             for index in range(highest):
                 if ordered[index] is not None:
                     self.expr(ordered[index])
                     continue
-                # 洞在默认值区间：从隐藏槽取这一个默认值。
+                # 洞有默认值：从隐藏槽按下标取这一个。
                 self.block.emit('LOAD_GLOBAL', node)
-                self.block.emit_u16(default_slot)
+                self.block.emit_u16(block.default_slot)
                 self.block.emit('CONST', node)
-                self.block.emit_u16(self.const_index(index - first_default))
+                self.block.emit_u16(self.const_index(index))
                 self.block.emit('GET_ITEM', node)
             self.block.emit('CALL', node)
             self.block.emit_u16(self.function_by_name[node.func.id])
@@ -1589,6 +1718,11 @@ class Compiler:
                 'localCount': block.local_count,
                 'defaultCount': block.default_count,
                 'defaultSlot': block.default_slot,
+                'defaultMask': block.default_mask,
+                'varargSlot': block.vararg_slot,
+                'kwargSlot': block.kwarg_slot,
+                'kwonlyStart': block.kwonly_start,
+                'paramNames': block.param_names(),
             }
 
         return {

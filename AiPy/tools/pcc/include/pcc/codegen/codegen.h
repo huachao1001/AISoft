@@ -40,11 +40,19 @@ struct CompiledBlock {
   std::vector<std::pair<std::uint32_t, int>> lines;  // (offset, line)
   int paramCount = 0;
   int localCount = 0;
-  // 尾部有多少个参数带默认值。默认值本身不进函数表：它们在**定义处**求值
-  // （CPython 的语义），结果存进 defaultSlot 这个隐藏全局槽，调用时按缺口
-  // 取。把默认值编进函数表会让「定义时求值」变成「每次调用求值」。
+  // 默认值本身不进函数表：它们在**定义处**求值（CPython 的语义），结果存进
+  // defaultSlot 这个隐藏全局槽，调用时按缺口取。把默认值编进函数表会让
+  // 「定义时求值」变成「每次调用求值」。
   int defaultCount = 0;
   int defaultSlot = -1;
+  // 每个具名参数一位：置位表示它有默认值。`def f(*, a=1, b)` 的默认值
+  // 不连续，光靠「尾部个数」表达不出来。
+  std::uint64_t defaultMask = 0;
+  int varargSlot = -1;
+  int kwargSlot = -1;
+  int kwonlyStart = -1;
+  // 具名参数的名字，按槽号排列（*args / **kwargs 不在其中）。
+  std::vector<std::string> paramNames;
 };
 
 // 常量。类型与值分开存，写二进制时按类型序列化。
@@ -97,6 +105,12 @@ class CodeGen {
     int localCount = 0;
     int defaultCount = 0;
     int defaultSlot = -1;
+    // 每个具名参数一位：置位表示它有默认值。`def f(*, a=1, b)` 的默认值
+    // 不连续，光有「尾部个数」表达不出来。
+    std::uint64_t defaultMask = 0;
+    int varargSlot = -1;
+    int kwargSlot = -1;
+    int kwonlyStart = -1;
     std::vector<std::string> localNames;  // 槽号 → 名字
   };
 
@@ -181,6 +195,8 @@ class CodeGen {
   bool sliceExpr(const Node& node, const Node& parent);
   // 脚本函数调用：签名已知，关键字参数在编译期重排成位置顺序。
   bool callScript(const Node& node, int index);
+  // 签名含可变参数或实参有 `*`/`**` 展开：走 CALL_DYN，由 VM 绑定。
+  bool callDynamic(const Node& node, int index);
   bool call(const Node& node);
   bool constant(const Node& node);
 

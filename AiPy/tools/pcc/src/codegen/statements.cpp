@@ -145,6 +145,8 @@ bool CodeGen::statement(const Node& node) {
     case Kind::FunctionDef:
       // 顶层 def 的签名已在 registerFunction 登记过，这里只发默认值求值：
       // CPython 在**执行到这一句时**求值默认参数，所以位置必须在这里。
+      // 函数体里的 def 仍然拒绝——嵌套函数要闭包，而语言里没有。
+      if (block_ != &module_) return failAt(diag::nestedFunction(node.text), node);
       return emitDefaultValues(node, *block_);
 
     case Kind::Delete:

@@ -75,7 +75,10 @@ MAGIC = b'AIPYBC01'
 # 2：加入扩展表（extensions）。旧版产物没有它，加载器会读到位错的数据，
 # 所以必须升版本、让旧 .bc 在加载时报「版本不一致」而不是算出乱码。
 # 3：函数表新增 defaultCount / defaultSlot（默认参数）。
-VERSION = 3
+# 4：函数表新增 vararg / kwarg / kwonly / 参数名。
+# 5：函数表新增 defaultMask（默认值可能不连续），defaultCount 语义变为
+#    「有默认值的参数个数」，不再能由「尾部个数」推出。
+VERSION = 5
 
 # 常量类型标记，与 cpp 侧 ConstType 一致。
 CONST_NONE = 0
@@ -176,6 +179,19 @@ def pack(program):
         out.u16(function.get('defaultCount', 0))
         slot = function.get('defaultSlot', -1)
         out.u16(0xFFFF if slot < 0 else slot)
+        mask = function.get('defaultMask', 0)
+        out.u32(mask & 0xFFFFFFFF)
+        out.u32((mask >> 32) & 0xFFFFFFFF)
+        vararg = function.get('varargSlot', -1)
+        out.u16(0xFFFF if vararg < 0 else vararg)
+        kwarg = function.get('kwargSlot', -1)
+        out.u16(0xFFFF if kwarg < 0 else kwarg)
+        kwonly = function.get('kwonlyStart', -1)
+        out.u16(0xFFFF if kwonly < 0 else kwonly)
+        names = function.get('paramNames', [])
+        out.u16(len(names))
+        for name in names:
+            out.text(name)
         out.u32(len(function['code']))
         out.u16(len(function['lines']))
         name = function.get('name', '?').encode('utf-8')

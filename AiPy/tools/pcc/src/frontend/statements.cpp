@@ -653,13 +653,13 @@ NodePtr Parser::parseFunctionArgs() {
     if (matchOp("*")) {
       args->hasVararg = true;
       seenStar = true;
-      if (check(TokenType::Name)) advance();
+      if (check(TokenType::Name)) args->varargName = advance().text;
       if (!matchOp(",")) break;
       continue;
     }
     if (matchOp("**")) {
       args->hasKwarg = true;
-      if (check(TokenType::Name)) advance();
+      if (check(TokenType::Name)) args->kwargName = advance().text;
       if (!matchOp(",")) break;
       continue;
     }
@@ -669,21 +669,26 @@ NodePtr Parser::parseFunctionArgs() {
       return nullptr;
     }
     const std::string name = advance().text;
-    if (seenStar || seenKwonly) args->hasKwonly = true;
-    args->params.push_back(name);
+    const bool keywordOnly = seenStar || seenKwonly;
+    if (keywordOnly) {
+      args->hasKwonly = true;
+      args->kwonlyParams.push_back(name);
+    } else {
+      args->params.push_back(name);
+    }
 
+    // 默认值表达式跟着它自己的参数走，而不是按书写顺序堆在一起：
+    // 仅关键字参数的默认值可以不在尾部（`def f(*, a=1, b)` 合法），
+    // 顺序拼接就还原不出「哪个参数有默认值」。
+    NodePtr value;
     if (matchOp("=")) {
-      const Token& valueToken = peek();
-      NodePtr value = expression();
+      value = expression();
       if (!value) return nullptr;
-      ++args->defaults;
-      // 默认值表达式按参数顺序追加到 children（parameters 的索引＝参数序号）。
-      // CPython 在**定义处**求值，所以这些表达式必须留下来编译到模块级。
-      args->children.push_back(std::move(value));
-      if (args->defaultLine == 0) {
-        args->defaultLine = valueToken.line;
-        args->defaultCol = valueToken.col;
-      }
+    }
+    if (keywordOnly) {
+      args->kwonlyDefaults.push_back(std::move(value));
+    } else {
+      args->paramDefaults.push_back(std::move(value));
     }
     if (!matchOp(",")) break;
   }

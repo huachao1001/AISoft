@@ -365,10 +365,29 @@ bool loadBytecodeFile(const std::string& path, LoadedProgram* program,
   for (std::uint16_t i = 0; i < functionCount; ++i) {
     std::uint16_t paramCount = 0, localSlots = 0, lineCount = 0, nameLen = 0;
     std::uint16_t defaultCount = 0, defaultSlot = 0;
+    std::uint32_t maskLow = 0, maskHigh = 0;
+    std::uint16_t varargSlot = 0, kwargSlot = 0, kwonlyStart = 0, nameCount = 0;
     std::uint32_t codeLen = 0;
     if (!reader.u16(&paramCount) || !reader.u16(&localSlots) ||
         !reader.u16(&defaultCount) || !reader.u16(&defaultSlot) ||
-        !reader.u32(&codeLen) || !reader.u16(&lineCount) ||
+        !reader.u32(&maskLow) || !reader.u32(&maskHigh) ||
+        !reader.u16(&varargSlot) || !reader.u16(&kwargSlot) ||
+        !reader.u16(&kwonlyStart) || !reader.u16(&nameCount)) {
+      *error = "bytecode truncated in a function header";
+      return false;
+    }
+    // 名字紧跟在 nameCount 之后（pack 的写出顺序），必须在读 codeLen 之前
+    // 消费掉——顺序反了会把名字的首字节当成代码长度。
+    for (std::uint16_t n = 0; n < nameCount; ++n) {
+      std::string param;
+      if (!reader.text(&param)) {
+        *error = "bytecode truncated in a parameter name (function " +
+                 std::to_string(i) + ", name " + std::to_string(n) + " of " +
+                 std::to_string(nameCount) + ")";
+        return false;
+      }
+    }
+    if (!reader.u32(&codeLen) || !reader.u16(&lineCount) ||
         !reader.u16(&nameLen)) {
       *error = "bytecode truncated in a function header";
       return false;

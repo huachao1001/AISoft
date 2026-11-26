@@ -23,6 +23,10 @@ const char* const kOpNames[] = {
     "SETUP_EXC", "POP_EXC", "RAISE", "RAISE_TYPE", "RERAISE",
     "EXC_MATCH", "CURRENT_EXC", "CLEAR_EXC",
     "DEL_LOCAL", "DEL_GLOBAL", "BUILD_TUPLE", "BUILD_SET",
+    // 追加在末尾：Op 的数值就是字节码里的操作码，插到中间会让已生成的
+    // .bc 与 .pylib 内的字节码被执行成别的指令。
+    "CALL_DYN",
+    "DICT_MERGE",
 };
 
 constexpr int kOpCount = static_cast<int>(sizeof(kOpNames) / sizeof(kOpNames[0]));

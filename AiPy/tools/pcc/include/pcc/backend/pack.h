@@ -18,7 +18,7 @@ namespace pcc {
 
 // 文件头：`AIPYBC01` + u16 版本。
 constexpr char kBytecodeMagic[8] = {'A', 'I', 'P', 'Y', 'B', 'C', '0', '1'};
-constexpr std::uint16_t kBytecodeVersion = 3;
+constexpr std::uint16_t kBytecodeVersion = 5;
 
 // 常量类型标记，与 cpp 侧 ConstType 一致。
 enum class ConstType : std::uint8_t {

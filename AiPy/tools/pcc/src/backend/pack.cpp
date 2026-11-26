@@ -137,6 +137,19 @@ std::vector<std::uint8_t> packProgram(const Program& program) {
     out.u16(function.defaultSlot < 0
                 ? 0xFFFF
                 : static_cast<std::uint32_t>(function.defaultSlot));
+    out.u32(static_cast<std::uint32_t>(function.defaultMask & 0xFFFFFFFFu));
+    out.u32(static_cast<std::uint32_t>(function.defaultMask >> 32));
+    out.u16(function.varargSlot < 0
+                ? 0xFFFF
+                : static_cast<std::uint32_t>(function.varargSlot));
+    out.u16(function.kwargSlot < 0
+                ? 0xFFFF
+                : static_cast<std::uint32_t>(function.kwargSlot));
+    out.u16(function.kwonlyStart < 0
+                ? 0xFFFF
+                : static_cast<std::uint32_t>(function.kwonlyStart));
+    out.u16(static_cast<std::uint32_t>(function.paramNames.size()));
+    for (const std::string& name : function.paramNames) out.text(name);
     out.u32(static_cast<std::uint32_t>(function.code.size()));
     out.u16(static_cast<std::uint32_t>(function.lines.size()));
     out.u16(static_cast<std::uint32_t>(function.name.size()));

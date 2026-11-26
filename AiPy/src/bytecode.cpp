@@ -159,6 +159,19 @@ Result load(const std::uint8_t* data, std::size_t size) {
     // 无默认值时写 0xFFFF：u16 的 -1，避免与合法槽号 0 混淆。
     const std::uint16_t defaultSlot = reader.u16();
     function.defaultSlot = defaultSlot == 0xFFFF ? -1 : defaultSlot;
+    const std::uint32_t maskLow = reader.u32();
+    const std::uint32_t maskHigh = reader.u32();
+    function.defaultMask =
+        (static_cast<std::uint64_t>(maskHigh) << 32) | maskLow;
+    const std::uint16_t varargSlot = reader.u16();
+    function.varargSlot = varargSlot == 0xFFFF ? -1 : varargSlot;
+    const std::uint16_t kwargSlot = reader.u16();
+    function.kwargSlot = kwargSlot == 0xFFFF ? -1 : kwargSlot;
+    const std::uint16_t kwonlyStart = reader.u16();
+    function.kwonlyStart = kwonlyStart == 0xFFFF ? -1 : kwonlyStart;
+    const std::uint16_t nameCount = reader.u16();
+    function.paramNames.reserve(nameCount);
+    for (int n = 0; n < nameCount; ++n) function.paramNames.push_back(reader.text());
     const std::uint32_t codeLength = reader.u32();
     const std::uint16_t lineCount = reader.u16();
     const std::uint16_t nameLength = reader.u16();

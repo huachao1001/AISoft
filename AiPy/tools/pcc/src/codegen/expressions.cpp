@@ -341,23 +341,30 @@ bool CodeGen::sliceExpr(const Node& node, const Node& parent) {
 bool CodeGen::callScript(const Node& node, int index) {
   // 脚本函数的签名在编译期完全已知，所以关键字参数在这里**重排**成位置
   // 顺序，VM 不需要认识关键字。`f(b=1, a=2)` 生成与 `f(2, 1)` 相同的代码。
-  const std::vector<std::string>& params =
-      blocks_[static_cast<std::size_t>(
-                  functions_[static_cast<std::size_t>(index)].blockIndex)]
-          .localNames;
   const Block& calleeBlock =
       blocks_[static_cast<std::size_t>(
           functions_[static_cast<std::size_t>(index)].blockIndex)];
-  const int paramCount = static_cast<int>(params.size());
+  const std::vector<std::string>& params = calleeBlock.localNames;
+  const int paramCount = calleeBlock.paramCount;
   const int defaultCount = calleeBlock.defaultCount;
   const int defaultSlot = calleeBlock.defaultSlot;
+
+  // 形参里有 `*args` / `**kwargs` / 仅关键字参数，或实参里有 `*` / `**`
+  // 展开时，实参的个数与名字要到运行期才知道，编译期拍平不了：改发
+  // [位置实参列表, 关键字字典]，由 VM 按 CPython 规则绑定。
+  bool needsDynamic = calleeBlock.varargSlot >= 0 ||
+                      calleeBlock.kwargSlot >= 0 ||
+                      calleeBlock.kwonlyStart >= 0;
+  for (std::size_t i = 0; i < node.children.size() - 1; ++i) {
+    if (node.children[1 + i]->kind == Kind::Starred) needsDynamic = true;
+  }
+  if (needsDynamic) return callDynamic(node, index);
 
   const std::size_t supplied = node.children.size() - 1;
   std::vector<const Node*> ordered(static_cast<std::size_t>(paramCount),
                                    nullptr);
   std::size_t positional = 0;
   std::size_t highest = 0;
-  bool any = false;
 
   for (std::size_t i = 0; i < supplied; ++i) {
     const Node& argument = *node.children[1 + i];
@@ -379,13 +386,7 @@ bool CodeGen::callScript(const Node& node, int index) {
       }
       ordered[static_cast<std::size_t>(slot)] = argument.children[0].get();
       highest = std::max(highest, static_cast<std::size_t>(slot) + 1);
-      any = true;
       continue;
-    }
-    if (argument.kind == Kind::Starred) {
-      // `*args` / `**kwargs` 在调用处展开，下一步再做；现在明确拒绝，
-      // 免得被当成普通位置参数静默传错。
-      return failAt(diag::variadicParams(), argument);
     }
     if (positional >= static_cast<std::size_t>(paramCount)) {
       return failAt(diag::tooManyArguments(node.children[0]->text), argument);
@@ -398,11 +399,12 @@ bool CodeGen::callScript(const Node& node, int index) {
     highest = std::max(highest, positional);
   }
 
-  // 中间的洞：落在默认值区间就取默认值补上，否则是少传必需参数。
-  const int firstDefault = paramCount - defaultCount;
+  // 中间的洞：有默认值就取默认值补上，否则是少传必需参数。
   for (std::size_t i = 0; i < highest; ++i) {
     if (ordered[i] != nullptr) continue;
-    if (static_cast<int>(i) < firstDefault) {
+    const bool hasDefault =
+        i < 64 && (calleeBlock.defaultMask & (std::uint64_t(1) << i)) != 0;
+    if (!hasDefault) {
       return failAt(diag::missingArgument(node.children[0]->text, params[i]),
                     node);
     }
@@ -415,17 +417,72 @@ bool CodeGen::callScript(const Node& node, int index) {
       if (!expr(*ordered[i])) return false;
       continue;
     }
-    // 洞在默认值区间：从隐藏槽取这一个默认值。这与「按位置紧凑传参」
-    // 不同——紧凑传会让下标错位，把 c 的值灌进 b。
+    // 洞有默认值：从隐藏槽按下标取这一个。不能紧凑传参——那会把后面的
+    // 值灌进前面缺的那个参数。
     emit("LOAD_GLOBAL", node);
     emitU16(defaultSlot);
     emit("CONST", node);
-    emitU16(constIndexOfInt(static_cast<long long>(i) - firstDefault));
+    emitU16(constIndexOfInt(static_cast<long long>(i)));
     emit("GET_ITEM", node);
   }
   emit("CALL", node);
   emitU16(index);
   emitU8(static_cast<int>(highest));
+  return true;
+}
+
+bool CodeGen::callDynamic(const Node& node, int index) {
+  // 栈形状：[位置实参列表, 关键字字典]。
+  //
+  // 位置实参按书写顺序拼进一个列表。普通实参用 `BUILD_LIST 1` + `BIN ADD`
+  // 追加；`*expr` 先过一遍内建 `list()` 再拼接——展开的对象是任意可迭代
+  // 类型，`list + tuple` 在 CPython 里是 TypeError，归一成列表才与
+  // 「展开后逐个变成位置实参」的语义一致。
+  emit("BUILD_LIST", node);
+  emitU16(0);
+
+  for (std::size_t i = 0; i < node.children.size() - 1; ++i) {
+    const Node& argument = *node.children[1 + i];
+    if (argument.kind == Kind::Keyword) continue;
+    if (argument.kind == Kind::Starred) {
+      // `**d` 是关键字展开，不是位置展开；它在下半段处理。
+      if (argument.flag) continue;
+      if (!expr(*argument.children[0])) return false;
+      emit("CALL_BUILTIN", argument);
+      emitU16(builtinIndex("list"));
+      emitU8(1);
+      emit("BIN", argument);
+      emitU8(0);  // BinOp::kAdd
+      continue;
+    }
+    if (!expr(argument)) return false;
+    emit("BUILD_LIST", argument);
+    emitU16(1);
+    emit("BIN", argument);
+    emitU8(0);  // BinOp::kAdd
+  }
+
+  // 关键字：`name=value` 直接进字典，`**expr` 合并进来。
+  emit("BUILD_DICT", node);
+  emitU16(0);
+  for (std::size_t i = 0; i < node.children.size() - 1; ++i) {
+    const Node& argument = *node.children[1 + i];
+    if (argument.kind == Kind::Keyword) {
+      emit("DUP", argument);
+      emit("CONST", argument);
+      emitU16(constIndexOfStr(argument.text));
+      if (!expr(*argument.children[0])) return false;
+      emit("SET_ITEM", argument);
+      continue;
+    }
+    if (argument.kind != Kind::Starred || !argument.flag) continue;  // `*` 不是 `**`
+    // `**expr`：把字典并进关键字字典。栈上是 [关键字字典, 展开值]。
+    if (!expr(*argument.children[0])) return false;
+    emit("DICT_MERGE", argument);
+  }
+
+  emit("CALL_DYN", node);
+  emitU16(index);
   return true;
 }
 

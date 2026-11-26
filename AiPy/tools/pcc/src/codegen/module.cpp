@@ -40,6 +40,13 @@ bool CodeGen::compile(const Node& module) {
     out.localCount = block.localCount;
     out.defaultCount = block.defaultCount;
     out.defaultSlot = block.defaultSlot;
+    out.defaultMask = block.defaultMask;
+    out.varargSlot = block.varargSlot;
+    out.kwargSlot = block.kwargSlot;
+    out.kwonlyStart = block.kwonlyStart;
+    out.paramNames.assign(block.localNames.begin(),
+                          block.localNames.begin() +
+                              static_cast<std::ptrdiff_t>(block.paramCount));
     program_.functions.push_back(std::move(out));
   }
   return true;
@@ -112,16 +119,7 @@ bool CodeGen::compileModule(const Node& module) {
 
   // 默认值在**定义处**求值（CPython 语义）：它的求值代码必须出现在
   // def 语句本身的位置，而不是模块级语句之前——否则 `def f(a=n)` 里
-  // 的 n 会在 n 赋值之前被求值，拿到 None。
-  //
-  // 这里只做检查，实际发射在 statement() 处理 FunctionDef 时。
-  for (const Node* node : body) {
-    if (node->kind != Kind::FunctionDef) continue;
-    const Node& args = *node->children[0];
-    if (args.children.size() != args.defaults) {
-      return failAt(diag::defaultParams(), *node);
-    }
-  }
+  // 的 n 会在 n 赋值之前被求值，拿到 None。实际发射在 statement() 里。
 
   // 模块级语句：按源码顺序执行。FunctionDef 也要走 statement()——它会在
   // 定义处求值默认参数（CPython 语义），跳过就等于默认值永远是 None。
@@ -190,9 +188,6 @@ bool CodeGen::registerFunction(const Node& node) {
   }
 
   const Node& args = *node.children[0];
-  if (args.hasVararg || args.hasKwarg || args.hasKwonly) {
-    return failAt(diag::variadicParams(), node);
-  }
   if (args.hasPosonly) {
     return fail(diag::positionalOnlyParams(), args.posonlyLine,
                 args.posonlyCol + 1);
@@ -200,20 +195,62 @@ bool CodeGen::registerFunction(const Node& node) {
 
   // 方法（在 Activity 里）去掉第一个 self 参数。
   const bool isMethod = !args.params.empty() && args.params[0] == "self";
+  const std::size_t firstParam = isMethod ? 1 : 0;
 
+  // 槽序：位置参数 → 仅关键字参数 → *args → **kwargs。
+  //
+  // 前 paramCount 个必须是**具名参数**且连续（位置段 + 仅关键字段），VM 的
+  // 绑定逻辑靠这个区间按下标匹配。vararg/kwarg 是具名参数之外的局部量，
+  // 只能排在它们后面——这一点与 CPython 的 co_varnames 顺序不同，但脚本
+  // 观察不到槽号，只有「名字能读到正确值」这一条约束。
   Block block;
   block.name = node.text;
-  for (std::size_t i = isMethod ? 1 : 0; i < args.params.size(); ++i) {    block.localNames.push_back(args.params[i]);
+  for (std::size_t i = firstParam; i < args.params.size(); ++i) {
+    block.localNames.push_back(args.params[i]);
   }
   block.paramCount = static_cast<int>(block.localNames.size());
-  // 默认值只能出现在尾部，所以个数就足以描述哪些参数可选。
-  block.defaultCount = static_cast<int>(args.defaults);
-  if (block.defaultCount > 0) {
+  block.localCount = block.paramCount;
+  if (!args.kwonlyParams.empty()) {
+    block.kwonlyStart = block.paramCount;
+    for (const std::string& name : args.kwonlyParams) {
+      block.localNames.push_back(name);
+      ++block.paramCount;
+      ++block.localCount;
+    }
+  }
+  if (args.hasVararg) {
+    block.varargSlot = block.localCount++;
+    block.localNames.push_back(args.varargName);
+  }
+  if (args.hasKwarg) {
+    block.kwargSlot = block.localCount++;
+    block.localNames.push_back(args.kwargName);
+  }
+
+  // 默认值：每个具名参数一位，位在参数下标上。这样 `def f(*, a=1, b)`
+  // 这种默认值不连续的情况也能精确表达；列表本身与 paramCount 等长，
+  // 没有默认值的位置放 kDeleted 哨兵（None 是合法默认值，不能拿它占位）。
+  std::uint64_t mask = 0;
+  int defaultTotal = 0;
+  for (std::size_t i = firstParam; i < args.paramDefaults.size(); ++i) {
+    if (!args.paramDefaults[i]) continue;
+    const std::size_t slot = i - firstParam;
+    if (slot < 64) mask |= (std::uint64_t(1) << slot);
+    ++defaultTotal;
+  }
+  for (std::size_t i = 0; i < args.kwonlyDefaults.size(); ++i) {
+    if (!args.kwonlyDefaults[i]) continue;
+    const std::size_t slot = static_cast<std::size_t>(block.kwonlyStart) + i;
+    if (slot < 64) mask |= (std::uint64_t(1) << slot);
+    ++defaultTotal;
+  }
+  block.defaultMask = mask;
+  block.defaultCount = defaultTotal;
+  if (defaultTotal > 0) {
     // 默认值在定义处求值后存进这个隐藏全局槽。名字带前缀，避免与脚本变量
     // 撞名；它同时出现在 globalNames 里，热加载会把值一并搬过去。
     block.defaultSlot = globalSlot(std::string("\x01", 1) + "defaults:" + node.text);
   }
-  block.localCount = block.paramCount;
 
   FunctionEntry entry;
   entry.node = &node;
@@ -247,27 +284,49 @@ bool CodeGen::registerFunction(const Node& node) {
 
 bool CodeGen::emitDefaultValues(const Node& node, Block& block) {
   (void)block;
-  // 解析器把默认值表达式按参数顺序存进 Arguments 的 children：
-  // 它在 params 尾部，正好是该函数「尾部那几个参数」的默认值。
+  // CPython 在**执行到 def 这一句时**求值默认参数。所以这段代码必须发在
+  // def 语句自己的位置，而不能提到模块级之前。
   const Node& args = *node.children[0];
-  if (args.children.size() != args.defaults) {
-    return failAt(diag::defaultParams(), node);
-  }
-  if (args.children.empty()) return true;
-  // 只能用在顶层：嵌套函数不支持，走到这里说明是嵌套 def。
   const int index = functionIndex(node.text);
   if (index < 0) return failAt(diag::nestedFunction(node.text), node);
-  const int slot = blocks_[static_cast<std::size_t>(
-      functions_[static_cast<std::size_t>(index)].blockIndex)].defaultSlot;
-  if (slot < 0) return true;
+  const Block& target =
+      blocks_[static_cast<std::size_t>(
+          functions_[static_cast<std::size_t>(index)].blockIndex)];
+  if (target.defaultSlot < 0) return true;
 
-  for (const NodePtr& value : args.children) {
-    if (!expr(*value)) return false;
-  }
+  const bool isMethod = !args.params.empty() && args.params[0] == "self";
+  const std::size_t firstParam = isMethod ? 1 : 0;
+
+  // 列表与 paramCount 等长，按参数下标直接放默认值。没有默认值的位置只是
+  // 占位（None）——函数表里的 defaultMask 告诉 VM 哪些位置是真的，占位值
+  // 永远不会被读到。用等长列表而不是「紧凑尾部」，是为了让仅关键字参数
+  // `def f(*, a=1, b)` 这种不连续的默认值也能按下标找到。
+  for (int i = 0; i < target.paramCount; ++i) emit("NONE", node);
   emit("BUILD_LIST", node);
-  emitU16(static_cast<int>(args.children.size()));
+  emitU16(target.paramCount);
+
+  // 默认值列表与 paramCount 等长，下标就是去掉 self 之后的参数下标。
+  // `paramDefaults` 与 args.params 平行，所以有默认值的位置参数在去掉
+  // self 之后的下标是 i - firstParam。
+  for (std::size_t i = firstParam; i < args.paramDefaults.size(); ++i) {
+    if (!args.paramDefaults[i]) continue;
+    emit("DUP", node);
+    emit("CONST", node);
+    emitU16(constIndexOfInt(static_cast<long long>(i - firstParam)));
+    if (!expr(*args.paramDefaults[i])) return false;
+    emit("SET_ITEM", node);
+  }
+  for (std::size_t i = 0; i < args.kwonlyDefaults.size(); ++i) {
+    if (!args.kwonlyDefaults[i]) continue;
+    emit("DUP", node);
+    emit("CONST", node);
+    emitU16(constIndexOfInt(static_cast<long long>(target.kwonlyStart) +
+                            static_cast<long long>(i)));
+    if (!expr(*args.kwonlyDefaults[i])) return false;
+    emit("SET_ITEM", node);
+  }
   emit("STORE_GLOBAL", node);
-  emitU16(slot);
+  emitU16(target.defaultSlot);
   return true;
 }
 
@@ -283,10 +342,18 @@ bool CodeGen::compileFunctionBody(const Node& node) {
 
   const std::set<std::string>& selfAssigned = entry.selfAssigned;
 
-  // 参数占前 paramCount 个槽，它们是真正的局部量。
+  // 形参占前 paramCount 个槽（位置参数 + 仅关键字参数）；*args / **kwargs
+  // 紧跟在后面。它们都是调用时绑定的局部量，不能因为预扫描登记过就豁免
+  // 「漏写 global」的检查——但**其它**局部量也不该豁免，所以这里只收形参。
   std::set<std::string> params;
   for (int slot = 0; slot < block.paramCount; ++slot) {
     params.insert(block.localNames[static_cast<std::size_t>(slot)]);
+  }
+  if (block.varargSlot >= 0) {
+    params.insert(block.localNames[static_cast<std::size_t>(block.varargSlot)]);
+  }
+  if (block.kwargSlot >= 0) {
+    params.insert(block.localNames[static_cast<std::size_t>(block.kwargSlot)]);
   }
 
   // 函数里对模块级的赋值必须写 global：否则按 CPython 就是新建局部量，

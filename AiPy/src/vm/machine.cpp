@@ -117,6 +117,124 @@ __declspec(noinline) bool unwindException(std::vector<Frame>& frames,
 
 }  // namespace
 
+// 按 CPython 的规则把实参绑到局部槽上。返回 false 表示不匹配，
+// `error` 里是给脚本看的消息。
+//
+// 绑定顺序：位置参数 → 按名匹配关键字 → 检查必需参数 → 补默认值
+// → 收集 *args / **kwargs。
+bool bindArguments(const Function& fn, const Value& defaults,
+                   const std::vector<Value>& positional, const List& keywordKeys,
+                   const List& keywordValues, std::vector<Value>* locals,
+                   std::string* error) {
+  const int total = fn.paramCount;
+  const int kwonlyStart = fn.kwonlyStart < 0 ? total : fn.kwonlyStart;
+  std::vector<bool> bound(static_cast<std::size_t>(total), false);
+
+  // 1. 位置实参只能喂位置参数段（kwonlyStart 之前）。多出来的留给 *args。
+  std::size_t positionalUsed = 0;
+  for (; positionalUsed < positional.size(); ++positionalUsed) {
+    if (static_cast<int>(positionalUsed) >= kwonlyStart) break;
+    (*locals)[positionalUsed] = positional[positionalUsed];
+    bound[positionalUsed] = true;
+  }
+  if (positionalUsed < positional.size() && fn.varargSlot < 0) {
+    *error = "takes " + std::to_string(kwonlyStart) +
+             " positional argument" + (kwonlyStart == 1 ? "" : "s") +
+             " but " + std::to_string(positional.size()) + " " +
+             (positional.size() == 1 ? "was" : "were") + " given";
+    return false;
+  }
+
+  // 2. 关键字实参：按名字找槽位；找不到且有 **kwargs 就收进去，否则报错。
+  List extraKeys;
+  List extraValues;
+  for (std::size_t i = 0; i < keywordKeys.size(); ++i) {
+    const std::string& name = keywordKeys[i].asString();
+    int slot = -1;
+    for (int p = 0; p < total; ++p) {
+      if (fn.paramNames[static_cast<std::size_t>(p)] == name) {
+        slot = p;
+        break;
+      }
+    }
+    if (slot < 0) {
+      if (fn.kwargSlot < 0) {
+        *error = "got an unexpected keyword argument '" + name + "'";
+        return false;
+      }
+      extraKeys.push_back(keywordKeys[i]);
+      extraValues.push_back(keywordValues[i]);
+      continue;
+    }
+    if (bound[static_cast<std::size_t>(slot)]) {
+      *error = "got multiple values for argument '" + name + "'";
+      return false;
+    }
+    (*locals)[static_cast<std::size_t>(slot)] = keywordValues[i];
+    bound[static_cast<std::size_t>(slot)] = true;
+  }
+
+  // 3. 没绑上的：有默认值就取，没有就报缺参。
+  const List& defaultValues = defaults.asList();
+  if (fn.defaultCount > 0 &&
+      static_cast<int>(defaultValues.size()) != total) {
+    *error = "default value slot is corrupt (compiler bug)";
+    return false;
+  }
+  std::vector<std::string> missingRequired;
+  std::vector<std::string> missingKeywordOnly;
+  for (int slot = 0; slot < total; ++slot) {
+    if (bound[static_cast<std::size_t>(slot)]) continue;
+    const bool hasDefault =
+        slot < 64 && (fn.defaultMask & (std::uint64_t(1) << slot)) != 0;
+    if (hasDefault) {
+      (*locals)[static_cast<std::size_t>(slot)] =
+          defaultValues[static_cast<std::size_t>(slot)];
+      continue;
+    }
+    (slot >= kwonlyStart ? missingKeywordOnly : missingRequired)
+        .push_back(fn.paramNames[static_cast<std::size_t>(slot)]);
+  }
+  // 文案照抄 CPython：位置参数与仅关键字参数的缺参报错是两套说法。
+  if (!missingRequired.empty()) {
+    *error = "missing " + std::to_string(missingRequired.size()) +
+             " required positional argument" +
+             (missingRequired.size() == 1 ? "" : "s") + ": ";
+    for (std::size_t i = 0; i < missingRequired.size(); ++i) {
+      if (i > 0) *error += " and " ;
+      *error += "'" + missingRequired[i] + "'";
+    }
+    return false;
+  }
+  if (!missingKeywordOnly.empty()) {
+    *error = "missing " + std::to_string(missingKeywordOnly.size()) +
+             " required keyword-only argument" +
+             (missingKeywordOnly.size() == 1 ? "" : "s") + ": ";
+    for (std::size_t i = 0; i < missingKeywordOnly.size(); ++i) {
+      if (i > 0) *error += " and ";
+      *error += "'" + missingKeywordOnly[i] + "'";
+    }
+    return false;
+  }
+
+  // 4. *args：多出来的位置实参打包成元组。
+  if (fn.varargSlot >= 0) {
+    List rest;
+    for (std::size_t i = static_cast<std::size_t>(kwonlyStart);
+         i < positional.size(); ++i) {
+      rest.push_back(positional[i]);
+    }
+    (*locals)[static_cast<std::size_t>(fn.varargSlot)] =
+        Value::tuple(std::move(rest));
+  }
+
+  // 5. **kwargs：没对上任何形参的关键字打包成字典。
+  if (fn.kwargSlot >= 0) {
+    (*locals)[static_cast<std::size_t>(fn.kwargSlot)] =
+        Value::dict(extraKeys, extraValues);
+  }
+  return true;
+}
 
 const Program* currentProgramPointer() { return g_currentProgram; }
 void setCurrentProgramPointer(const Program* program) { g_currentProgram = program; }
@@ -129,6 +247,7 @@ const Program* currentProgram() { return detail::currentProgramPointer(); }
 using detail::applyBin;
 using detail::applyCmp;
 using detail::applyUnary;
+using detail::bindArguments;
 using detail::callMethod;
 using detail::Frame;
 using detail::read16;
@@ -451,21 +570,94 @@ static Result execute(const Program& program, std::vector<Value>& globals,
                       "，脚本里可能有无限递归");
         }
         const Function& fn = program.functions[index];
-        // 默认参数：参数只能缺在尾部，缺口从 defaultSlot 里取。
-        if (argc > fn.paramCount) {
-          return fail("函数 " + fn.name + " 需要 " +
-                      std::to_string(fn.paramCount) + " 个参数，实际给了 " +
-                      std::to_string(argc) + " 个");
+
+        std::vector<Value> positional(static_cast<std::size_t>(argc));
+        for (int i = 0; i < argc; ++i) {
+          positional[static_cast<std::size_t>(i)] = stack[sp - static_cast<std::size_t>(argc) + static_cast<std::size_t>(i)];
         }
-        const int missing = fn.paramCount - argc;
-        if (missing > 0) {
-          if (fn.defaultCount < missing || fn.defaultSlot < 0 ||
-              fn.defaultSlot >= static_cast<int>(globals.size())) {
-            return fail("函数 " + fn.name + " 需要 " +
-                        std::to_string(fn.paramCount - fn.defaultCount) +
-                        " 到 " + std::to_string(fn.paramCount) +
-                        " 个参数，实际给了 " + std::to_string(argc) + " 个");
+
+        std::vector<Value> locals(static_cast<std::size_t>(fn.localCount), Value());
+        const Value defaults =
+            fn.defaultSlot >= 0 && fn.defaultSlot < static_cast<int>(globals.size())
+                ? globals[static_cast<std::size_t>(fn.defaultSlot)]
+                : Value();
+        std::string bindError;
+        if (!bindArguments(fn, defaults, positional, List{}, List{}, &locals,
+                           &bindError)) {
+          raiseException("TypeError", fn.name + "() " + bindError);
+          break;
+        }
+        sp -= static_cast<std::size_t>(argc);
+
+        Frame callee;
+        callee.code = &fn.code;
+        callee.lines = &fn.lines;
+        callee.function = &fn;
+        callee.pc = 0;
+        callee.stackBase = sp;
+        callee.locals = std::move(locals);
+        frames.push_back(std::move(callee));
+        break;
+      }
+
+      case Op::kDictMerge: {
+        // 栈上是 [目标字典, 来源字典]。键重复抛 TypeError，与 CPython 一致。
+        if (sp < 2) return fail("字典合并缺少操作数（编译器 bug）");
+        const Value source = stack[--sp];
+        Value& target = stack[sp - 1];
+        if (!target.isDict() || !source.isDict()) {
+          raiseException("TypeError",
+                         "argument after ** must be a mapping, not " +
+                             typeName(source));
+          break;
+        }
+        const List& keys = source.dictKeys();
+        const List& values = source.dictValues();
+        bool duplicate = false;
+        std::string duplicateName;
+        for (std::size_t i = 0; i < keys.size(); ++i) {
+          if (target.dictIndex(keys[i]) >= 0) {
+            duplicate = true;
+            duplicateName = keys[i].toString();
+            break;
           }
+          setItem(target, keys[i], values[i]);
+        }
+        if (duplicate) {
+          raiseException("TypeError",
+                         "got multiple values for keyword argument '" +
+                             duplicateName + "'");
+        }
+        break;
+      }
+
+      case Op::kCallDyn: {
+        // 栈上是 [位置实参列表, 关键字字典]。位置实参的**个数**与关键字的
+        // **名字**都要到运行期才知道（`*args` / `**kwargs` 展开），所以没办
+        // 法像 kCall 那样在编译期拍平。
+        const std::uint16_t index = read16(code, frame.pc);
+        frame.pc += 2;
+        if (index >= program.functions.size()) return fail("函数号越界（编译器 bug）");
+        if (frames.size() >= static_cast<std::size_t>(Machine::kMaxCallDepth)) {
+          return fail("调用层数超过 " + std::to_string(Machine::kMaxCallDepth) +
+                      "，脚本里可能有无限递归");
+        }
+        const Function& fn = program.functions[index];
+
+        const Value keywords = stack[--sp];
+        const Value positionals = stack[--sp];
+
+        std::vector<Value> locals(static_cast<std::size_t>(fn.localCount), Value());
+        const Value defaults =
+            fn.defaultSlot >= 0 && fn.defaultSlot < static_cast<int>(globals.size())
+                ? globals[static_cast<std::size_t>(fn.defaultSlot)]
+                : Value();
+        std::string bindError;
+        if (!bindArguments(fn, defaults, positionals.asList(),
+                           keywords.dictKeys(), keywords.dictValues(), &locals,
+                           &bindError)) {
+          raiseException("TypeError", fn.name + "() " + bindError);
+          break;
         }
 
         Frame callee;
@@ -473,25 +665,8 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         callee.lines = &fn.lines;
         callee.function = &fn;
         callee.pc = 0;
-        callee.stackBase = sp - argc;  // 参数已在栈上
-        callee.locals.assign(static_cast<size_t>(fn.localCount), Value());
-        for (int i = 0; i < argc; ++i) {
-          callee.locals[static_cast<size_t>(i)] = stack[callee.stackBase + static_cast<size_t>(i)];
-        }
-        if (missing > 0) {
-          // 默认值按尾部对齐：第一个有默认值的参数下标 = paramCount - defaultCount。
-          const Value& stored = globals[static_cast<size_t>(fn.defaultSlot)];
-          const List& defaults = stored.asList();
-          const int firstDefault = fn.paramCount - fn.defaultCount;
-          if (static_cast<int>(defaults.size()) != fn.defaultCount) {
-            return fail("函数 " + fn.name + " 的默认值槽损坏（编译器 bug）");
-          }
-          for (int i = argc; i < fn.paramCount; ++i) {
-            callee.locals[static_cast<size_t>(i)] =
-                defaults[static_cast<size_t>(i - firstDefault)];
-          }
-        }
-        sp = callee.stackBase;  // 参数移进 locals 后从共享栈弹出
+        callee.stackBase = sp;
+        callee.locals = std::move(locals);
         frames.push_back(std::move(callee));
         break;
       }
