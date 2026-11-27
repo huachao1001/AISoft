@@ -17,7 +17,10 @@ bool CodeGen::statement(const Node& node) {
     case Kind::Expr: {
       const Node& value = *node.children[0];
       if (value.kind == Kind::YieldFrom) {
-        return failAt("'yield from' is not supported", value);
+        // `yield from x` 作为语句：编译成迭代 + YIELD，yield 的值丢掉。
+        if (!expr(value)) return false;
+        emit("POP", node);
+        return true;
       }
       if (value.kind == Kind::Yield) {
         // `yield x` 作为语句：yield 的值没人要，直接丢掉。

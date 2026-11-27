@@ -280,8 +280,23 @@ NodePtr Parser::smallStatement() {
   if (checkName("from")) return fromImportStatement();
   if (checkName("type") && peek(1).type == TokenType::Name &&
       peek(2).type == TokenType::Op && peek(2).text == "=") {
-    // Python 3.12 的 type 别名语句。识别出来并拒绝，比报「语法错误」有用。
-    return rejectRemainder(Kind::TypeAlias);
+    // Python 3.12 的 type 别名语句。语义就是「把右边绑给这个名字」，
+    // 差别只在延迟求值（`TypeAliasType`）。这里直接降级成普通赋值：
+    // 本语言没有运行时注解系统，`X = int` 已经是脚本能观察到的全部行为。
+    const Token& keyword = peek();
+    advance();  // type
+    const Token& name = peek();
+    advance();  // 别名
+    advance();  // =
+    NodePtr value = expressionList();
+    if (!value) return nullptr;
+    auto statement = make_node(Kind::Assign, keyword.line, keyword.col);
+    auto target = make_node(Kind::Name, name.line, name.col);
+    target->text = name.text;
+    statement->children.push_back(std::move(target));
+    statement->children.push_back(std::move(value));
+    statement->bodyCount = 0;
+    return statement;
   }
 
   // ── 赋值 / 增量赋值 / 类型注解 / 表达式语句 ──

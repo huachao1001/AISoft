@@ -795,12 +795,17 @@ bool CodeGen::compileFunctionBody(const Node& node,
     while (!pending.empty() && !block.isGenerator) {
       const Node* current = pending.back();
       pending.pop_back();
-      if (current->kind == Kind::Yield) {
+      if (current->kind == Kind::Yield || current->kind == Kind::YieldFrom) {
         block.isGenerator = true;
         break;
       }
       // lambda 体不算外层函数的：它自己就是生成器与否由它自己决定。
       if (current->kind == Kind::Lambda) continue;
+      // 内层 def 同理：它的 yield 属于它自己。
+      if (current->kind == Kind::FunctionDef ||
+          current->kind == Kind::AsyncFunctionDef) {
+        continue;
+      }
       for (const auto& child : current->children) pending.push_back(child.get());
     }
   }

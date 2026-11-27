@@ -26,6 +26,7 @@ Value applyBin(BinOp op, const Value& a, const Value& b) {
     case BinOp::kBitXor: return bitXor(a, b);
     case BinOp::kShl: return shiftLeft(a, b);
     case BinOp::kShr: return shiftRight(a, b);
+    case BinOp::kMatMult: return matMult(a, b);
   }
   return Value();
 }

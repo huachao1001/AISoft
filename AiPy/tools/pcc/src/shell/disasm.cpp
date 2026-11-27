@@ -642,10 +642,10 @@ void disassemble(const LoadedProgram& program, const std::string& path) {
       char buffer[128];
       if (name == "CONST" && operands[0] < static_cast<int>(program.consts.size())) {
         text = program.consts[static_cast<std::size_t>(operands[0])];
-      } else if ((name == "BIN" || name == "INPLACE") && operands[0] < 12) {
+      } else if ((name == "BIN" || name == "INPLACE") && operands[0] < 13) {
         static const char* const kBinopNames[] = {
             "ADD", "SUB", "MUL", "DIV", "FLOOR_DIV", "MOD", "POW",
-            "BIT_AND", "BIT_OR", "BIT_XOR", "SHL", "SHR"};
+            "BIT_AND", "BIT_OR", "BIT_XOR", "SHL", "SHR", "MATMULT"};
         text = kBinopNames[operands[0]];
       } else if (name == "CMP" && operands[0] < 8) {
         static const char* const kCmpopNames[] = {

@@ -524,6 +524,8 @@ Value iff(const Value& condition, const std::function<Value()>& ifTrue,
 Value contains(const Value& container, const Value& item);
 // 按位：& | ^
 Value bitAnd(const Value& a, const Value& b);
+// `a @ b`：总是 TypeError（本语言没有矩阵），错误文案与 CPython 一致。
+Value matMult(const Value& a, const Value& b);
 Value bitOr(const Value& a, const Value& b);
 Value bitXor(const Value& a, const Value& b);
 Value shiftLeft(const Value& a, const Value& b);

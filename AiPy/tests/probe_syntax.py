@@ -135,7 +135,8 @@ CASES = [
     ('运算符', '按位取反', 'x = ~5\n', 'ok'),
     ('运算符', '负号', 'x = -5\n', 'ok'),
     ('运算符', 'not', 'x = not True\n', 'ok'),
-    ('运算符', '矩阵乘 @', 'x = a @ b\n', 'no'),
+    ('运算符', '矩阵乘 @', 'x = 1 @ 2\n', 'raises'),
+    ('运算符', '矩阵乘 运行期 TypeError', 'try:\n    x = 1 @ 2\nexcept TypeError:\n    x = 0\n', 'ok'),
     ('运算符', '海象 :=', 'if (n := 5) > 0:\n    x = n\n', 'ok'),
     ('运算符', '海象 绑定可见', 'x = (n := 7)\n', 'ok'),
 
@@ -271,7 +272,8 @@ CASES = [
     ('语句', 'match 类模式', 'match 1:\n    case int():\n        x = 1\n', 'no'),
     ('语句', 'global', 'x = 1\ndef f():\n    global x\n    x = 2\n', 'ok'),
     ('语句', 'nonlocal', 'def f():\n    y = 1\n    def g():\n        nonlocal y\n        y = 2\n', 'ok'),
-    ('语句', '类型别名 type', 'type X = int\n', 'no'),
+    ('语句', '类型别名 type', 'type X = int\n', 'ok'),
+    ('语句', '类型别名 使用', 'type N = list\nx = N()\n', 'ok'),
 
     # ── 控制流 ──
     ('控制流', 'if', 'if True:\n    x = 1\n', 'ok'),
@@ -332,7 +334,8 @@ CASES = [
     ('函数', '生成器 yield 带值', 'def f(n):\n    for x in [1, 2]:\n        yield x * n\n', 'ok'),
     ('函数', '生成器 yield 无操作数', 'def f():\n    yield\n', 'ok'),
     ('函数', '生成器里的 yield 表达式', 'def f():\n    x = yield 1\n    yield x\n', 'ok'),
-    ('函数', 'yield from 拒绝', 'def f():\n    yield from [1, 2]\n', 'no'),
+    ('函数', 'yield from', 'def f():\n    yield from [1, 2]\n', 'ok'),
+    ('函数', 'yield from 函数', 'def g():\n    yield 1\ndef f():\n    yield from g()\n', 'ok'),
     ('函数', 'async def', 'async def f():\n    return 1\n', 'ok'),
     ('函数', 'async def 带 await', 'async def f():\n    x = await g()\n    return x\n', 'ok'),
     ('函数', 'await 作为语句', 'async def f():\n    await g()\n', 'ok'),

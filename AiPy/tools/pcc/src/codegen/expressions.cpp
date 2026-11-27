@@ -448,8 +448,34 @@ bool CodeGen::expr(const Node& node) {
       return true;
     }
 
-    case Kind::YieldFrom:
-      return failAt("'yield from' is not supported", node);
+    case Kind::YieldFrom: {
+      // `yield from EXPR` 降级成 `for _v in EXPR: yield _v`：
+      // 复用已有的迭代 + YIELD，惰性与「逐项暂停」的语义天然成立，
+      // 不需要为它加一条会自己驱动内层生成器的指令。
+      //
+      // 副作用：`x = yield from g` 拿不到内层 return 的值（CPython 有）。
+      // 这里表达式位置只在语句里出现，取到的是 None，与 `for` 循环一致。
+      if (node.children.empty()) return failAt(diag::unsupportedExpression(
+                                                   "'yield from'"),
+                                               node);
+      if (!expr(*node.children[0])) return false;
+      emit("ITER_INIT", node);
+      const int loopTop = static_cast<int>(block_->code.size());
+      emit("ITER_NEXT", node);
+      const int exitFixup = static_cast<int>(block_->code.size());
+      emitU16(0);
+      emit("YIELD", node);
+      // 恢复时 VM 会往栈顶补一个 send 值（None），必须消费掉：否则它会
+      // 留在栈上，把下面的 [迭代器, 下标] 挤错位，第二轮迭代读到错的东西。
+      emit("POP", node);
+      emit("JUMP", node);
+      emitU16(loopTop);
+      patchU16(static_cast<std::size_t>(exitFixup),
+               static_cast<int>(block_->code.size()));
+      // 赋给变量时值取 None（内层的 return 值没传出来）。
+      emit("NONE", node);
+      return true;
+    }
 
     default:
       break;

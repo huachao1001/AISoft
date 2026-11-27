@@ -1151,6 +1151,57 @@ CASES = [
         'print(repr(...))\n',
         'Ellipsis\nTrue\nFalse\n<class \'ellipsis\'>\n2\nEllipsis\n',
     ),
+    (
+        'yield from',
+        'def inner():\n'
+        '    yield 1\n'
+        '    yield 2\n'
+        'def outer():\n'
+        '    yield 0\n'
+        '    yield from inner()\n'
+        '    yield 3\n'
+        'for v in outer():\n'
+        '    print(v)\n'
+        'print(list(outer()))\n'
+        'def chain():\n'
+        '    yield from [10, 20]\n'
+        '    yield from [30]\n'
+        'print(list(chain()))\n',
+        '0\n1\n2\n3\n[0, 1, 2, 3]\n[10, 20, 30]\n',
+    ),
+    (
+        'yield from 惰性',
+        'def inner():\n'
+        '    yield 1\n'
+        '    yield 2\n'
+        'def outer():\n'
+        '    print("outer start")\n'
+        '    yield from inner()\n'
+        '    print("outer end")\n'
+        'g = outer()\n'
+        'print("created")\n'
+        'print(next(g))\n'
+        'print(next(g))\n'
+        'try:\n'
+        '    print(next(g))\n'
+        'except Exception:\n'
+        '    print("done")\n',
+        'created\nouter start\n1\n2\nouter end\ndone\n',
+    ),
+    (
+        '类型别名与矩阵乘',
+        'type Names = list\n'
+        'x = Names()\n'
+        'x.append(1)\n'
+        'print(x)\n'
+        'print(Names is list)\n'
+        'try:\n'
+        '    y = 1 @ 2\n'
+        'except TypeError as e:\n'
+        '    print("TypeError", e)\n',
+        "[1]\nTrue\nTypeError unsupported operand type(s) for @: 'int' "
+        "and 'int'\n",
+    ),
     # ── id / hash ──
     (
         'id 对同一对象稳定',

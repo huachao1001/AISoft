@@ -236,6 +236,11 @@ enum class Op : std::uint8_t {
 enum class BinOp : std::uint8_t {
   kAdd, kSub, kMul, kDiv, kFloorDiv, kMod, kPow,
   kBitAnd, kBitOr, kBitXor, kShl, kShr,
+  // `a @ b`。本语言没有矩阵类型，所以它总是（除了自定义类的
+  // `__matmul__`——这里也没有）报 CPython 同款 TypeError。保留成一条
+  // 正常指令而不是编译期拒绝：`a @ b` 在 CPython 里是合法语法，
+  // 编译期报「不支持运算符」会让脚本无法迁移。
+  kMatMult,
 };
 
 enum class CmpOp : std::uint8_t {

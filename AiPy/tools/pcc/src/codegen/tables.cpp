@@ -87,6 +87,7 @@ constexpr int kBuiltinCount =
 const char* const kBinOps[] = {
     "ADD", "SUB", "MUL", "DIV", "FLOOR_DIV", "MOD", "POW",
     "BIT_AND", "BIT_OR", "BIT_XOR", "SHL", "SHR",
+    "MATMULT",
 };
 const char* const kCmpOps[] = {"EQ", "NE", "LT", "LE", "GT", "GE", "IN", "NOT_IN",
                                 "IS", "IS_NOT"};
@@ -119,7 +120,7 @@ bool Tables::isBuiltin(const std::string& name) {
 int Tables::binopNumber(Kind op) {
   const char* spelling = binopSpelling(op);
   if (spelling == nullptr) return -1;
-  return findIn(kBinOps, 12, spelling);
+  return findIn(kBinOps, 13, spelling);
 }
 
 int Tables::cmpopNumber(Kind op) {
@@ -148,7 +149,7 @@ const char* Tables::binopSpelling(Kind op) {
     case Kind::BitXor: return "BIT_XOR";
     case Kind::LShift: return "SHL";
     case Kind::RShift: return "SHR";
-    case Kind::MatMult: return "MatMult";
+    case Kind::MatMult: return "MATMULT";
     default: return nullptr;
   }
 }

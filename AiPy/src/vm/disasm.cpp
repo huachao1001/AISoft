@@ -32,6 +32,7 @@ const char* binName(BinOp op) {
     case BinOp::kBitXor: return "^";
     case BinOp::kShl: return "<<";
     case BinOp::kShr: return ">>";
+    case BinOp::kMatMult: return "@";
   }
   return "?";
 }

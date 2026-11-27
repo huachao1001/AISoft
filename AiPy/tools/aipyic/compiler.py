@@ -72,7 +72,7 @@ OPCODES = [
 
 # 二元算子编号，与 vm.h 的 BinOp 一致。
 BINOPS = ['ADD', 'SUB', 'MUL', 'DIV', 'FLOOR_DIV', 'MOD', 'POW',
-          'BIT_AND', 'BIT_OR', 'BIT_XOR', 'SHL', 'SHR']
+          'BIT_AND', 'BIT_OR', 'BIT_XOR', 'SHL', 'SHR', 'MATMULT']
 
 CMPOPS = ['EQ', 'NE', 'LT', 'LE', 'GT', 'GE', 'IN', 'NOT_IN', 'IS', 'IS_NOT']
 
@@ -1276,7 +1276,10 @@ class Compiler:
     def statement(self, node):
         if isinstance(node, ast.Expr):
             if isinstance(node.value, ast.YieldFrom):
-                raise CompileError('不支持 yield from', self.filename, node.value)
+                # `yield from x` 作为语句：迭代 + YIELD，yield 的值丢掉。
+                self.expr(node.value)
+                self.block.emit('POP', node)
+                return
             if isinstance(node.value, ast.Yield):
                 # `yield x` 作为语句：yield 的值没人要，直接丢掉。
                 self.expr(node.value)
@@ -2303,7 +2306,23 @@ class Compiler:
             return
 
         if isinstance(node, ast.YieldFrom):
-            raise CompileError('不支持 yield from', self.filename, node)
+            # `yield from EXPR` 降级成 `for _v in EXPR: yield _v`：复用已有的
+            # 迭代 + YIELD，惰性天然成立。`x = yield from g` 拿不到内层
+            # return 的值（CPython 有），取到 None。
+            self.expr(node.value)
+            self.block.emit('ITER_INIT', node)
+            loop_top = len(self.block.code)
+            self.block.emit('ITER_NEXT', node)
+            exit_fixup = len(self.block.code)
+            self.block.emit_u16(0)
+            self.block.emit('YIELD', node)
+            # 恢复时 VM 会往栈顶补一个 send 值（None），必须消费掉。
+            self.block.emit('POP', node)
+            self.block.emit('JUMP', node)
+            self.block.emit_u16(loop_top)
+            self.block.patch_u16(exit_fixup, len(self.block.code))
+            self.block.emit('NONE', node)
+            return
 
         if isinstance(node, ast.Await):
             # `await 协程`：求值协程对象，再让 VM 驱动它跑到底取返回值。
@@ -2720,6 +2739,7 @@ class Compiler:
             ast.FloorDiv: 'FLOOR_DIV', ast.Mod: 'MOD', ast.Pow: 'POW',
             ast.BitAnd: 'BIT_AND', ast.BitOr: 'BIT_OR', ast.BitXor: 'BIT_XOR',
             ast.LShift: 'SHL', ast.RShift: 'SHR',
+            ast.MatMult: 'MATMULT',
         }
         name = table.get(type(op))
         if name is None:

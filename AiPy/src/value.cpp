@@ -1465,6 +1465,15 @@ Value bitError(const char* op, const Value& a, const Value& b) {
 
 }  // namespace
 
+// `a @ b`：本语言没有矩阵类型，也没有 `__matmul__`，所以按 CPython 的
+// 规则报同款 TypeError。做成正常算子而不是编译期拒绝，是因为 `@` 在
+// Python 里是合法语法——编译期拦下会让脚本没法迁移过来。
+Value matMult(const Value& a, const Value& b) {
+  raiseException("TypeError", std::string("unsupported operand type(s) for @: '") +
+                                  typeName(a) + "' and '" + typeName(b) + "'");
+  return Value();
+}
+
 Value bitAnd(const Value& a, const Value& b) {
   if (a.isSet() && b.isSet()) {
     List out;
