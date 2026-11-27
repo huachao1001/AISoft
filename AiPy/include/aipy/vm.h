@@ -212,6 +212,25 @@ enum class Op : std::uint8_t {
   // 关键字」的场合。其它方法收到关键字一律报 TypeError，与 CPython 一致
   // ——不静默忽略，否则 `x.append(a=1)` 会变成「追加了 None」。
   kCallMethodKw,
+
+  // ── 闭包单元（nested def / nonlocal）──
+  //
+  // 被内层函数引用的外层局部量改存成「单元」——一个单元素列表
+  // `[值]`。内层捕获的是**这个列表的引用**，于是内层的写能传回外层，
+  // 外层的写也能被内层看见（`nonlocal` 与自递归都靠这条）。
+  //
+  // 为什么用列表而不是给 HeapData 加 cell 类型：列表已经有共享载荷
+  // 与 `[0]` 读写语义，不需要新数据类型、也不需要动 Value 的大小。
+  //
+  // MAKE_CELL u16 槽号：把槽里的值包成 `[值]` 再存回同一槽。
+  kMakeCell,   // u16 槽号
+
+  // LOAD_CELL u16 槽号：取 `[值]` 里的 `[0]` 压栈。
+  kLoadCell,   // u16 槽号
+
+  // STORE_CELL u16 槽号：弹栈顶写进 `[值]` 的 `[0]`。`nonlocal x = 1`
+  // 与外层普通赋值都走它——写的是共享载荷，所以内层改动能传回外层。
+  kStoreCell,  // u16 槽号
 };
 
 enum class BinOp : std::uint8_t {

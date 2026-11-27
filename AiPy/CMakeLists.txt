@@ -146,6 +146,7 @@ add_executable(pcc
   tools/pcc/src/codegen/emit.cpp
   tools/pcc/src/codegen/tables.cpp
   tools/pcc/src/codegen/scope.cpp
+  tools/pcc/src/codegen/nested.cpp
   tools/pcc/src/codegen/module.cpp
   tools/pcc/src/codegen/statements.cpp
   tools/pcc/src/codegen/expressions.cpp

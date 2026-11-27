@@ -188,6 +188,18 @@ std::vector<std::string> disassemble(const Program& program) {
                       read16(code, pc), code[pc + 2], code[pc + 3]);
         pc += 4;
         break;
+      case Op::kMakeCell:
+        std::snprintf(text, sizeof(text), "make_cell %u", read16(code, pc));
+        pc += 2;
+        break;
+      case Op::kLoadCell:
+        std::snprintf(text, sizeof(text), "load_cell %u", read16(code, pc));
+        pc += 2;
+        break;
+      case Op::kStoreCell:
+        std::snprintf(text, sizeof(text), "store_cell %u", read16(code, pc));
+        pc += 2;
+        break;
       case Op::kMakeClassMethod:
         std::snprintf(text, sizeof(text), "make_class_method");
         break;

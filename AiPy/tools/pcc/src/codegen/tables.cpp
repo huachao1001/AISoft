@@ -44,6 +44,9 @@ const char* const kOpNames[] = {
     "CALL_BUILTIN_KW",
     "MAKE_BUILTIN_FUNCTION",
     "CALL_METHOD_KW",
+    "MAKE_CELL",
+    "LOAD_CELL",
+    "STORE_CELL",
 };
 
 constexpr int kOpCount = static_cast<int>(sizeof(kOpNames) / sizeof(kOpNames[0]));

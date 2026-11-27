@@ -57,6 +57,12 @@ std::string dottedName(const Node& node) {
 }  // namespace
 
 bool CodeGen::nameRead(const std::string& name, const Node& node) {
+  // 闭包单元优先：这个名字在父函数里是 cell，在本函数里是捕获的自由变量，
+  // 两种都存着单元素列表，读它要取 `[0]`。
+  if (loadsCell(name)) {
+    nameTarget(name, node);
+    return true;
+  }
   // 同名变量优先于类型名：`int = 5` 之后再读 `int` 必须是 5，不是
   // `<class 'int'>`（CPython 里赋值遮蔽内建）。
   //
@@ -380,8 +386,18 @@ bool CodeGen::expr(const Node& node) {
       return true;
     }
 
-    case Kind::NamedExpr:
-      return failAt(diag::unsupportedExpression("NamedExpr"), node);
+    case Kind::NamedExpr: {
+      // `(n := 5)`：先把值存进名字，再把同一个值留在栈上当表达式结果。
+      // DUP 之后存一份、留一份，所以 `print(n := 3)` 既打印 3 也绑定了 n。
+      const Node& target = *node.children[0];
+      if (target.kind != Kind::Name) {
+        return failAt("assignment expression target must be a name", node);
+      }
+      if (!expr(*node.children[1])) return false;
+      emit("DUP", node);
+      nameStore(target.text, node);
+      return true;
+    }
 
     case Kind::SetLit: {
       for (const auto& element : node.children) {

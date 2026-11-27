@@ -145,6 +145,11 @@ bool CodeGen::compileModule(const Node& module) {
     }
   }
 
+  // 嵌套 def 的函数体：名字是 `<外层>.<本层>`，必须显式传进去。
+  for (const std::string& nested : nestedFunctionNames_) {
+    if (!compileFunctionBodyByIndex(nested)) return false;
+  }
+
   // 类的方法体也要编。它们的签名已在 registerClassMethods 里登记，
   // 函数表里的名字是 `<类>.<方法>`，所以要显式传进去。
   for (const Node* cls : plainClasses) {
@@ -451,6 +456,8 @@ bool CodeGen::registerFunction(const Node& node) {
   functionNames_.push_back(node.text);
   blocks_.push_back(std::move(block));
   functions_.push_back(std::move(entry));
+  // 嵌套 def：递归登记，并算出自由变量、在父块里标记要建单元的局部量。
+  if (!registerNestedFunctions(node, node.text, &blocks_.back())) return false;
   return true;
 }
 
@@ -570,9 +577,13 @@ bool CodeGen::emitDefaultValues(const Node& node, Block& block) {
   (void)block;
   // CPython 在**执行到 def 这一句时**求值默认参数。所以这段代码必须发在
   // def 语句自己的位置，而不能提到模块级之前。
-  const Node& args = *node.children[0];
   const int index = rawFunctionIndex(node.text);
   if (index < 0) return failAt(diag::nestedFunction(node.text), node);
+  return emitDefaultValuesFor(node, index);
+}
+
+bool CodeGen::emitDefaultValuesFor(const Node& node, int index) {
+  const Node& args = *node.children[0];
   const Block& target =
       blocks_[static_cast<std::size_t>(
           functions_[static_cast<std::size_t>(index)].blockIndex)];
@@ -725,6 +736,14 @@ bool CodeGen::compileFunctionBody(const Node& node) {
   return compileFunctionBody(node, node.text);
 }
 
+bool CodeGen::compileFunctionBodyByIndex(const std::string& qualified) {
+  const int index = rawFunctionIndex(qualified);
+  if (index < 0) return false;
+  const FunctionEntry& entry = functions_[static_cast<std::size_t>(index)];
+  if (entry.node == nullptr) return false;
+  return compileFunctionBody(*entry.node, qualified);
+}
+
 bool CodeGen::compileFunctionBody(const Node& node,
                                   const std::string& qualifiedName) {
   const int index = rawFunctionIndex(qualifiedName);
@@ -802,6 +821,12 @@ bool CodeGen::compileFunctionBody(const Node& node,
                                            : qualifiedName.substr(0, dot);
 
   bool ok = true;
+  // 闭包单元：本函数里被内层引用的局部量要先包成 `[值]`。必须在函数体
+  // 之前做——函数体第一句就可能读取或写入它。
+  for (const std::string& name : block.cellNames) {
+    emit("MAKE_CELL", node);
+    emitU16(slotOfIn(&block, name));
+  }
   for (std::size_t i = 0; i < node.bodyCount && ok; ++i) {
     ok = statement(*node.children[1 + i]);
   }

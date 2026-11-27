@@ -1028,6 +1028,59 @@ CASES = [
         'print(g(5))\n',
         '6\n6\n10\n',
     ),
+    (
+        '嵌套函数与闭包',
+        'def outer(x):\n'
+        '    def inner(y):\n'
+        '        return x + y\n'
+        '    return inner(10)\n'
+        'print(outer(5))\n'
+        'def make_adder(a):\n'
+        '    def add(b):\n'
+        '        return a + b\n'
+        '    return add\n'
+        'f = make_adder(3)\n'
+        'g = make_adder(100)\n'
+        'print(f(4))\n'
+        'print(g(4))\n',
+        '15\n7\n104\n',
+    ),
+    (
+        'nonlocal 计数',
+        'def counter():\n'
+        '    n = 0\n'
+        '    def step():\n'
+        '        nonlocal n\n'
+        '        n += 1\n'
+        '        return n\n'
+        '    return step\n'
+        'c = counter()\n'
+        'print(c())\n'
+        'print(c())\n'
+        'print(c())\n',
+        '1\n2\n3\n',
+    ),
+    (
+        '嵌套递归',
+        'def fact(n):\n'
+        '    def go(k):\n'
+        '        if k <= 1:\n'
+        '            return 1\n'
+        '        return k * go(k - 1)\n'
+        '    return go(n)\n'
+        'print(fact(5))\n',
+        '120\n',
+    ),
+    (
+        '海象运算符',
+        'n = 0\n'
+        'if (n := 5) > 3:\n'
+        '    print(n)\n'
+        'xs = [1, 2, 3]\n'
+        'if (m := len(xs)) > 2:\n'
+        '    print(m)\n',
+        '5\n3\n',
+    ),
     # ── id / hash ──
     (
         'id 对同一对象稳定',

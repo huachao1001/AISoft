@@ -70,6 +70,12 @@ bool CodeGen::isLocal(const std::string& name) const {
 }
 
 void CodeGen::nameTarget(const std::string& name, const Node& node) {
+  // 闭包单元：读的是 `[值]` 里的值。
+  if (loadsCell(name)) {
+    emit("LOAD_CELL", node);
+    emitU16(cellSlot(name));
+    return;
+  }
   if (isLocal(name)) {
     emit("LOAD_LOCAL", node);
     emitU16(slotOf(name));
@@ -80,6 +86,12 @@ void CodeGen::nameTarget(const std::string& name, const Node& node) {
 }
 
 void CodeGen::nameStore(const std::string& name, const Node& node) {
+  // 闭包单元：写的是共享载荷 `[0]`，内层改动因此能被外层看见。
+  if (loadsCell(name)) {
+    emit("STORE_CELL", node);
+    emitU16(cellSlot(name));
+    return;
+  }
   if (isLocal(name)) {
     emit("STORE_LOCAL", node);
     emitU16(slotOf(name));

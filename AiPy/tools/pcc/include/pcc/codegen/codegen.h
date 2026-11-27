@@ -131,6 +131,12 @@ class CodeGen {
     bool isCoroutine = false;
     // lambda 捕获的外层名字，顺序与 MAKE_FUNCTION 压栈一致。
     std::vector<std::string> captures;
+    // 槽里存的是「单元」（单元素列表）的名字。父函数里是被内层引用的
+    // 局部量，子函数里是从外层捕获来的自由变量。读写走 LOAD_CELL /
+    // STORE_CELL，于是内层的写能传回外层（nonlocal 与自递归靠这条）。
+    std::vector<std::string> cellNames;
+    // 需要从外层捕获的名字，顺序即捕获槽顺序（也是 MAKE_FUNCTION 压栈顺序）。
+    std::vector<std::string> captureNames;
     std::vector<std::string> localNames;  // 槽号 → 名字
   };
 
@@ -207,6 +213,24 @@ class CodeGen {
   bool compileFunctionBody(const Node& node);
   // 把默认参数值在定义处求值，存进函数自己的隐藏全局槽。
   bool emitDefaultValues(const Node& node, Block& block);
+  // 嵌套函数：递归登记 `<外层>.<名字>……`，算出每个的函数自由变量，
+  // 并在父块里为被引用的局部量登记「单元」。
+  bool registerNestedFunctions(const Node& fnNode, const std::string& qualified,
+                               Block* parent);
+  // 收集 body 要跨作用域读取的名字（自由变量），顺序即捕获槽顺序。
+  void collectFreeNames(const Node& body, const Block& self, const Block& parent,
+                        std::vector<std::string>* out) const;
+  // 这个名字在本块里是否走「单元」（LOAD_CELL / STORE_CELL）。
+  bool loadsCell(const std::string& name) const;
+  int cellSlot(const std::string& name);
+  // 按函数表名字编函数体（嵌套 def 用；名字是 `<外层>.<本层>`）。
+  bool compileFunctionBodyByIndex(const std::string& qualified);
+  // 造一个函数值并压栈：先压捕获（单元对象），再 MAKE_FUNCTION。
+  bool emitFunctionValue(int index, const Node& node);
+  // 嵌套 def 的定义处：求值默认值、压捕获、MAKE_FUNCTION、应用装饰器、存名字。
+  bool nestedDefStatement(const Node& node);
+  // 按函数号求值默认参数（嵌套 def 用；名字不唯一，不能按 node.text 查）。
+  bool emitDefaultValuesFor(const Node& node, int index);
   // lambda 表达式：登记一个隐藏函数，返回函数下标；函数体进待编译队列。
   int registerLambda(const Node& node);
   // lambda 的默认值在定义处求值，与 def 同构（节点形状不同）。
@@ -276,6 +300,8 @@ class CodeGen {
   // 等待编译函数体的 lambda：登记时只知道签名，函数体要等模块级代码
   // 编到那一句时才编（与 def 一样，函数名与全局槽必须先就位）。
   std::vector<int> pendingLambdas_;
+  // 嵌套 def 的函数表名（`<外层>.<本层>`），按登记顺序，供函数体编译。
+  std::vector<std::string> nestedFunctionNames_;
   int lambdaCounter_ = 0;
   // 带装饰器的 def：这个名字在运行期装的是装饰器返回的值，不再是「脚本
   // 函数」。按名查函数号时要跳过它，调用得走 CALL_VALUE。

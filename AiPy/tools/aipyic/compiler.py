@@ -67,6 +67,7 @@ OPCODES = [
     'MAKE_SUPER', 'YIELD', 'AWAIT',
     'MAKE_STATIC_METHOD', 'MAKE_CLASS_METHOD', 'LOAD_TYPE', 'UNPACK',
     'CALL_BUILTIN_KW', 'MAKE_BUILTIN_FUNCTION', 'CALL_METHOD_KW',
+    'MAKE_CELL', 'LOAD_CELL', 'STORE_CELL',
 ]
 
 # 二元算子编号，与 vm.h 的 BinOp 一致。
@@ -171,6 +172,10 @@ class Block:
         self.kwonly_start = -1
         # 位置-only 参数个数（`def f(a, b, /, c)` 里是 2）。
         self.posonly_count = 0
+        # 槽里存的是「单元」（单元素列表）的名字，收发走 LOAD_CELL /
+        # STORE_CELL。父函数里是被内层引用的局部量，子函数里是捕获的自由变量。
+        self.cell_names = []
+        self.capture_names = []
         self.capture_start = -1
         # 函数体里有 yield：调用它得到生成器，不是返回值。
         self.is_generator = False
@@ -293,6 +298,8 @@ class Compiler:
         self.function_by_name = {}
         # lambda 没有名字，函数表里用 <lambda>N 做唯一标识（只用于报错）。
         self.lambda_counter = 0
+        # 嵌套 def 的函数表名（`<外层>.<本层>`），函数体最后统一编译。
+        self.nested_function_names = []
         # 带装饰器的 def：名字运行期装的是装饰器返回值，不能再按名解析成
         # 函数号，调用得走按值调用。
         self.decorated_names = set()
@@ -395,7 +402,11 @@ class Compiler:
         return name in self.block.locals
 
     def name_target(self, name, node):
-        """写出一个名字：局部优先，否则当全局。"""
+        """写出一个名字：单元优先，其次局部，否则当全局。"""
+        if self.loads_cell(name):
+            self.block.emit('LOAD_CELL', node)
+            self.block.emit_u16(self.block.slot_of(name))
+            return
         if self.is_local(name):
             self.block.emit('LOAD_LOCAL', node)
             self.block.emit_u16(self.block.slot_of(name))
@@ -404,6 +415,10 @@ class Compiler:
             self.block.emit_u16(self.global_slot(name))
 
     def name_store(self, name, node):
+        if self.loads_cell(name):
+            self.block.emit('STORE_CELL', node)
+            self.block.emit_u16(self.block.slot_of(name))
+            return
         if self.is_local(name):
             self.block.emit('STORE_LOCAL', node)
             self.block.emit_u16(self.block.slot_of(name))
@@ -456,6 +471,14 @@ class Compiler:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 self.register_function(node)
 
+        # 嵌套 def：登记必须在**父函数的局部量预扫描之后**，否则算不出
+        # 「哪些外层名字被内层引用」。
+        for node in body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                index = self.function_by_name[node.name]
+                self.register_nested_functions(
+                    node, node.name, self.functions[index]['block'])
+
         # 模块级变量先全部占好槽：函数里读模块级变量要能找到它。
         for node in body:
             for name in self.assigned_names(node):
@@ -479,6 +502,11 @@ class Compiler:
         for node in body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 self.compile_function_body(node)
+
+        # 嵌套 def 的函数体：名字是 `<外层>.<本层>`，显式传进去。
+        for name in self.nested_function_names:
+            entry = self.functions[self.function_by_name[name]]
+            self.compile_function_body(entry['node'], name)
 
         # 类的方法体也要编。
         for node in plain_classes:
@@ -697,22 +725,30 @@ class Compiler:
         # `self.x = ...` 展开来的名字也不算：它们是 Activity 的字段（模块级
         # 状态），被 MethodFlattener 改写成与模块变量同名，但意图是改实例。
         declared_global = set()
-        for child in ast.walk(node):
+        declared_nonlocal = set()
+        # 只扫本函数的语句，**不钻进内层 def**：内层的 global / nonlocal
+        # 与赋值都是它自己的作用域，算到父函数上会让父块的局部量判错。
+        for child in self._scope_nodes(node):
             if isinstance(child, ast.Global):
                 declared_global.update(child.names)
+            elif isinstance(child, ast.Nonlocal):
+                declared_nonlocal.update(child.names)
         self_assigned = getattr(node, 'aipy_self_assigned', set())
 
         # 记下「预扫描登记的局部名」，供 global 检查区分「本就是局部」与
         # 「因为预扫描才进了 locals」：后者若同时是模块级变量，仍然是漏写
         # global 的笔误，该拒绝。
         preassigned = set()
-        for child in ast.walk(node):
+        for child in self._scope_nodes(node):
             if not isinstance(child, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
                 continue
             targets = child.targets if isinstance(child, ast.Assign) else [child.target]
             for target in targets:
                 for target_name in self.target_names(target):
                     if target_name in declared_global or target_name in self_assigned:
+                        continue
+                    # `nonlocal x` 的 x 是外层的变量，不是本函数的局部量。
+                    if target_name in declared_nonlocal:
                         continue
                     block.slot_of(target_name)
                     preassigned.add(target_name)
@@ -721,6 +757,112 @@ class Compiler:
         index = len(self.functions)
         self.function_by_name[name] = index
         self.functions.append({'block': block, 'node': node})
+
+
+    # ── 嵌套函数 ──
+
+    def register_nested_functions(self, fn_node, qualified, parent):
+        pending_nested = []
+        self._register_nested_pass(fn_node, qualified, parent, pending_nested)
+        for child, block, owner in pending_nested:
+            free = self.free_names(child, block, owner)
+            block.capture_names = free
+            if free:
+                block.capture_start = block.local_count
+                for captured in free:
+                    block.slot_of(captured)
+            for captured in free:
+                if captured not in owner.cell_names:
+                    owner.cell_names.append(captured)
+
+    def _register_nested_pass(self, fn_node, qualified, parent, pending_nested):
+        for child in fn_node.body:
+            if not isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            name = qualified + '.' + child.name
+            if name in self.function_by_name:
+                raise CompileError('函数 "%s" 定义了两次' % name,
+                                   self.filename, child)
+            self.register_function(child, name)
+            self.nested_function_names.append(name)
+            block = self.functions[self.function_by_name[name]]['block']
+            pending_nested.append((child, block, parent))
+            self._register_nested_pass(child, name, block, pending_nested)
+
+    def _scope_nodes(self, fn_node):
+        """遍历本函数作用域内的节点：进入语句的嵌套体，但不进内层 def。"""
+        queue = list(fn_node.body)
+        while queue:
+            current = queue.pop(0)
+            yield current
+            if self._is_fn(current):
+                continue
+            queue.extend(ast.iter_child_nodes(current))
+
+    @staticmethod
+    def _is_fn(node):
+        return isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+
+    def _collect_nonlocals(self, fn_node):
+        """函数体里声明的 nonlocal 名字（不钻进更内层的函数）。"""
+        out = set()
+        queue = list(fn_node.body)
+        while queue:
+            current = queue.pop(0)
+            if isinstance(current, ast.Nonlocal):
+                out.update(current.names)
+            if self._is_fn(current):
+                continue
+            queue.extend(ast.iter_child_nodes(current))
+        return out
+
+    def _collect_reads(self, node, out):
+        """读到的名字（不钻进内层函数体 / lambda 体；def 的默认值与
+        装饰器在外层求值，要算进来）。"""
+        queue = [node]
+        while queue:
+            current = queue.pop(0)
+            if isinstance(current, ast.Name):
+                if current.id not in out:
+                    out.append(current.id)
+                continue
+            if isinstance(current, ast.Lambda):
+                continue
+            if self._is_fn(current):
+                args = current.args
+                for item in list(args.defaults) + [
+                        d for d in args.kw_defaults if d is not None]:
+                    queue.append(item)
+                queue.extend(current.decorator_list)
+                continue
+            queue.extend(ast.iter_child_nodes(current))
+
+    def free_names(self, body, self_block, parent):
+        """body 要跨作用域读取的名字，顺序与 C++ 版一致。"""
+        out = []
+        for name in sorted(self._collect_nonlocals(body)):
+            if name in parent.locals and name not in out:
+                out.append(name)
+        reads = []
+        for statement in body.body:
+            self._collect_reads(statement, reads)
+        for name in reads:
+            if name in BUILTIN_INDEX:
+                continue
+            if name in self.function_by_name:
+                continue
+            if name in self_block.locals:
+                continue
+            if name not in parent.locals:
+                continue
+            if name not in out:
+                out.append(name)
+        return out
+
+    def loads_cell(self, name):
+        if self.block is self.module:
+            return False
+        return name in self.block.cell_names or name in self.block.capture_names
 
     def register_class_methods(self, node):
         """类里的方法登记成 `<类>.<方法>`，保留 self 形参。"""
@@ -932,6 +1074,87 @@ class Compiler:
             self.loop_stack = saved_loops
             self.block = saved
 
+    def nested_def_statement(self, node):
+        """嵌套 def 的定义处：求值默认值 → 压捕获 → MAKE_FUNCTION →
+        应用装饰器 → 存进名字。"""
+        qualified = self.block.name + '.' + node.name
+        index = self.function_by_name.get(qualified)
+        if index is None:
+            raise CompileError('函数 "%s" 没有登记' % qualified,
+                               self.filename, node)
+        block = self.functions[index]['block']
+
+        if block.default_slot >= 0:
+            self.emit_default_values_for(node, index)
+
+        self.emit_function_value(index, node)
+        self.name_store(node.name, node)
+
+        for decorator in reversed(node.decorator_list):
+            self.expr(decorator)
+            # [函数值, 装饰器] → [装饰器, 函数值]
+            value_slot = self.block.alloc_slot()
+            deco_slot = self.block.alloc_slot()
+            self.block.emit('STORE_LOCAL', node)
+            self.block.emit_u16(deco_slot)
+            self.block.emit('STORE_LOCAL', node)
+            self.block.emit_u16(value_slot)
+            self.block.emit('LOAD_LOCAL', node)
+            self.block.emit_u16(deco_slot)
+            self.block.emit('LOAD_LOCAL', node)
+            self.block.emit_u16(value_slot)
+            self.block.emit('CALL_VALUE', node)
+            self.block.emit_u8(1)
+        if node.decorator_list:
+            self.name_store(node.name, node)
+
+    def emit_function_value(self, index, node):
+        """先压捕获（单元对象），再 MAKE_FUNCTION。"""
+        block = self.functions[index]['block']
+        for captured in block.capture_names:
+            if self.block is not self.module and self.loads_cell(captured):
+                self.block.emit('LOAD_LOCAL', node)
+                self.block.emit_u16(self.block.slot_of(captured))
+            else:
+                self.name_target(captured, node)
+                # 值捕获：外面不是单元，包一层单元素列表保持一致。
+                self.block.emit('BUILD_LIST', node)
+                self.block.emit_u16(1)
+        self.block.emit('MAKE_FUNCTION', node)
+        self.block.emit_u16(index)
+        self.block.emit_u16(len(block.capture_names))
+
+    def emit_default_values_for(self, node, index):
+        """按函数号求值默认参数（嵌套 def 用）。"""
+        block = self.functions[index]['block']
+        args = node.args
+        is_method = bool(args.args) and args.args[0].arg == 'self'
+        first = 1 if is_method else 0
+
+        for _ in range(block.param_count):
+            self.block.emit('NONE', node)
+        self.block.emit('BUILD_LIST', node)
+        self.block.emit_u16(block.param_count)
+
+        base = len(args.args) - len(args.defaults) - first
+        for offset, default in enumerate(args.defaults):
+            self.block.emit('DUP', node)
+            self.block.emit('CONST', node)
+            self.block.emit_u16(self.const_index(base + offset))
+            self.expr(default)
+            self.block.emit('SET_ITEM', node)
+        for offset, kwarg in enumerate(args.kwonlyargs):
+            if kwarg.arg not in block.kwonly_defaults:
+                continue
+            self.block.emit('DUP', node)
+            self.block.emit('CONST', node)
+            self.block.emit_u16(self.const_index(
+                block.kwonly_start + offset))
+            self.expr(block.kwonly_defaults[kwarg.arg])
+            self.block.emit('SET_ITEM', node)
+        self.block.emit('STORE_GLOBAL', node)
+        self.block.emit_u16(block.default_slot)
+
     def apply_decorators(self, node):
         """`@a @b def f` 等价于 `f = a(b(f))`，最靠近 def 的先应用。"""
         index = self.function_by_name[node.name]
@@ -973,9 +1196,12 @@ class Compiler:
         # 但原本写的是「改实例状态」，那是 Activity 的正当用法。
         self_assigned = getattr(node, 'aipy_self_assigned', set())
         declared_global = set()
+        declared_nonlocal = set()
         for child in ast.walk(node):
             if isinstance(child, ast.Global):
                 declared_global.update(child.names)
+            elif isinstance(child, ast.Nonlocal):
+                declared_nonlocal.update(child.names)
 
         # 参数占前 param_count 个槽，它们是真正的局部量。
         params = set()
@@ -993,6 +1219,8 @@ class Compiler:
                         # `name in block.locals` 不能直接用来豁免：预扫描会
                         # 把所有赋值目标都登记成局部，那样漏写 global 的笔误
                         # 就再也查不出来了。参数才是真正的局部量。
+                        if assigned_name in declared_nonlocal:
+                            continue
                         if assigned_name in self.globals and assigned_name not in declared_global \
                                 and assigned_name not in params:
                             raise CompileError(
@@ -1012,11 +1240,14 @@ class Compiler:
         if isinstance(node, ast.AsyncFunctionDef):
             block.is_coroutine = True
 
-        # 函数体里有 yield 就是生成器（lambda 体不算外层的：它自己决定）。
+        # 函数体里有 yield 就是生成器（lambda 体与内层 def 不算外层的：
+        # 它们各自决定）。
         pending = list(node.body)
         while pending and not block.is_generator:
             current = pending.pop()
             if isinstance(current, ast.Lambda):
+                continue
+            if self._is_fn(current):
                 continue
             if isinstance(current, (ast.Yield, ast.YieldFrom)):
                 block.is_generator = True
@@ -1025,6 +1256,10 @@ class Compiler:
         self.block = block
         self.loop_stack = []
         self.with_stack = []
+        # 闭包单元：本函数里被内层引用的局部量先包成 `[值]`。
+        for cell_name in block.cell_names:
+            block.emit('MAKE_CELL', node)
+            block.emit_u16(block.slot_of(cell_name))
         for statement in node.body:
             self.statement(statement)
         self.with_stack = saved_withs
@@ -1060,10 +1295,9 @@ class Compiler:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             # 顶层 def：签名已在 register_function 登记；这里只发默认值求值，
             # 因为 CPython 在执行到这一句时求值默认参数。
-            # 函数体里的 def 仍然拒绝——见下面的嵌套检查。
             if self.block is not self.module:
-                raise CompileError('不支持嵌套函数 "%s"；请移到模块顶层' % node.name,
-                                   self.filename, node)
+                self.nested_def_statement(node)
+                return
             has_defaults = bool(node.args.defaults) or any(
                 default is not None for default in node.args.kw_defaults)
             if has_defaults:
@@ -1196,7 +1430,9 @@ class Compiler:
             return
 
         if isinstance(node, ast.Nonlocal):
-            raise CompileError('不支持 nonlocal；嵌套函数本身也不支持', self.filename, node)
+            # 声明本身不产字节码：名字早已在 register_nested_functions 里
+            # 被登记成捕获的自由变量。
+            return
 
         if isinstance(node, ast.Assert):
             self.assert_statement(node)
@@ -1955,6 +2191,17 @@ class Compiler:
             self.block.emit('YIELD', node)
             return
 
+        if isinstance(node, ast.NamedExpr):
+            # `(n := 5)`：存一份、留一份，所以 `print(n := 3)` 既打印 3
+            # 也绑定了 n。C++ 版同形（DUP + STORE）。
+            if not isinstance(node.target, ast.Name):
+                raise CompileError('赋值表达式的目标必须是名字',
+                                   self.filename, node)
+            self.expr(node.value)
+            self.block.emit('DUP', node)
+            self.name_store(node.target.id, node)
+            return
+
         raise CompileError('不支持表达式 %s' % type(node).__name__, self.filename, node)
 
     def slice_flags(self, node):
@@ -2383,6 +2630,7 @@ class Compiler:
                 'kwonlyStart': block.kwonly_start,
                 'posonlyCount': block.posonly_count,
                 'captureStart': block.capture_start,
+                'captureNames': block.capture_names,
                 'isGenerator': block.is_generator,
                 'isCoroutine': block.is_coroutine,
                 'paramNames': block.param_names(),

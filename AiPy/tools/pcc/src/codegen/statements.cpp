@@ -154,7 +154,9 @@ bool CodeGen::statement(const Node& node) {
       return true;  // 槽在模块级已经分配好
 
     case Kind::Nonlocal:
-      return failAt(diag::nonlocalUnsupported(), node);
+      // 声明本身不产字节码：名字早已在 registerNestedFunctions 里被登记成
+      // 捕获的自由变量（捕获槽就是单元）。
+      return true;
 
     case Kind::Assert:
       return assertStatement(node);
@@ -172,11 +174,14 @@ bool CodeGen::statement(const Node& node) {
     case Kind::AsyncFunctionDef:
       // 顶层 def 的签名已在 registerFunction 登记过，这里只发默认值求值：
       // CPython 在**执行到这一句时**求值默认参数，所以位置必须在这里。
-      // 函数体里的 def 仍然拒绝——嵌套函数要闭包，而语言里没有。
-      if (block_ != &module_) return failAt(diag::nestedFunction(node.text), node);
-      if (!emitDefaultValues(node, *block_)) return false;
-      if (node.decoratorCount > 0) return applyDecorators(node);
-      return true;
+      if (block_ == &module_) {
+        if (!emitDefaultValues(node, *block_)) return false;
+        if (node.decoratorCount > 0) return applyDecorators(node);
+        return true;
+      }
+      // 嵌套 def：登记早已完成（registerNestedFunctions），这里发
+      // 「求值默认值 → 压捕获 → MAKE_FUNCTION → 存进名字」。
+      return nestedDefStatement(node);
 
     case Kind::Delete:
       return deleteStatement(node);

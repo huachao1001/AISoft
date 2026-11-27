@@ -134,7 +134,8 @@ CASES = [
     ('运算符', '负号', 'x = -5\n', 'ok'),
     ('运算符', 'not', 'x = not True\n', 'ok'),
     ('运算符', '矩阵乘 @', 'x = a @ b\n', 'no'),
-    ('运算符', '海象 :=', 'if (n := 5) > 0:\n    x = n\n', 'no'),
+    ('运算符', '海象 :=', 'if (n := 5) > 0:\n    x = n\n', 'ok'),
+    ('运算符', '海象 绑定可见', 'x = (n := 7)\n', 'ok'),
 
     # ── 比较与逻辑 ──
     ('比较', '等于', 'x = 1 == 1\n', 'ok'),
@@ -263,7 +264,7 @@ CASES = [
     ('关键字', 'sum start 位置', 'x = sum([1, 2], 10)\n', 'ok'),
     ('语句', 'match', 'match 1:\n    case 1:\n        x = 1\n', 'no'),
     ('语句', 'global', 'x = 1\ndef f():\n    global x\n    x = 2\n', 'ok'),
-    ('语句', 'nonlocal', 'def f():\n    y = 1\n    def g():\n        nonlocal y\n        y = 2\n', 'no'),
+    ('语句', 'nonlocal', 'def f():\n    y = 1\n    def g():\n        nonlocal y\n        y = 2\n', 'ok'),
     ('语句', '类型别名 type', 'type X = int\n', 'no'),
 
     # ── 控制流 ──
@@ -298,7 +299,11 @@ CASES = [
     ('函数', '调用处展开列表', 'def f(*args):\n    return 1\nx = f(*[1, 2])\n', 'ok'),
     ('函数', '调用处展开字典', 'def f(**kw):\n    return 1\nx = f(**{"a": 1})\n', 'ok'),
     ('函数', '位置-only 参数', 'def f(a, /):\n    return a\n', 'ok'),
-    ('函数', '嵌套函数', 'def f():\n    def g():\n        return 1\n    return g()\n', 'no'),
+    ('函数', '嵌套函数', 'def f():\n    def g():\n        return 1\n    return g()\n', 'ok'),
+    ('函数', '嵌套函数捕获', 'def f(x):\n    def g(y):\n        return x + y\n    return g(1)\n', 'ok'),
+    ('函数', 'nonlocal 累加', 'def f():\n    n = 0\n    def g():\n        nonlocal n\n        n += 1\n        return n\n    return g\n', 'ok'),
+    ('函数', '嵌套递归', 'def f(n):\n    def go(k):\n        if k <= 1:\n            return 1\n        return k * go(k - 1)\n    return go(n)\n', 'ok'),
+
     ('函数', 'lambda', 'f = lambda x: x + 1\n', 'ok'),
     ('函数', 'lambda 带默认值', 'f = lambda a, b=2: a + b\n', 'ok'),
     ('函数', 'lambda 捕获外层', 'def f(n):\n    return lambda x: x + n\n', 'ok'),

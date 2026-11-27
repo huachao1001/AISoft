@@ -1858,6 +1858,45 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         break;
       }
 
+      case Op::kMakeCell: {
+        // 把槽里的值包成单元素列表 `[值]`。此后这个槽存的是「单元」，
+        // 内层函数捕获的是这个列表的引用，于是读写都共享同一份载荷。
+        const std::uint16_t slot = read16(code, frame.pc);
+        frame.pc += 2;
+        if (slot >= frame.locals.size()) return fail("局部槽越界（编译器 bug）");
+        List cell;
+        cell.push_back(frame.locals[slot]);
+        frame.locals[slot] = Value::list(std::move(cell));
+        break;
+      }
+
+      case Op::kLoadCell: {
+        const std::uint16_t slot = read16(code, frame.pc);
+        frame.pc += 2;
+        if (slot >= frame.locals.size()) return fail("局部槽越界（编译器 bug）");
+        const Value& cell = frame.locals[slot];
+        if (!cell.isList()) {
+          raiseException("RuntimeError", "closure cell is not initialized");
+          break;
+        }
+        const List& items = cell.asList();
+        stack[sp++] = items.empty() ? Value() : items[0];
+        break;
+      }
+
+      case Op::kStoreCell: {
+        const std::uint16_t slot = read16(code, frame.pc);
+        frame.pc += 2;
+        if (slot >= frame.locals.size()) return fail("局部槽越界（编译器 bug）");
+        const Value cell = frame.locals[slot];
+        if (!cell.isList()) {
+          raiseException("RuntimeError", "closure cell is not initialized");
+          break;
+        }
+        setItem(cell, Value(0LL), stack[--sp]);
+        break;
+      }
+
       case Op::kReturn: {
         Value value = sp > frame.stackBase ? stack[--sp] : Value();
         // `A()` 的结果是实例，不是 __init__ 的返回值。
