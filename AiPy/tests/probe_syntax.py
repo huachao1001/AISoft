@@ -115,7 +115,9 @@ CASES = [
     ('字面量', 'bytes 转义', 'x = b"\\x00\\xff"\n', 'ok'),
     ('字面量', 'bytes 拼接不报错', 'x = b"a" b"b"\n', 'ok'),
     ('字面量', 'bytes 与 str 混拼', 'x = b"a" "b"\n', 'no'),
-    ('字面量', 'Ellipsis', 'x = ...\n', 'no'),
+    ('字面量', 'Ellipsis', 'x = ...\n', 'ok'),
+    ('字面量', 'Ellipsis 是单例', 'x = ...\nprint(x is Ellipsis)\n', 'ok'),
+    ('字面量', 'Ellipsis 类型', 'print(type(...))\n', 'ok'),
 
     # ── 运算符 ──
     ('运算符', '加法', 'x = 1 + 2\n', 'ok'),
@@ -262,7 +264,11 @@ CASES = [
     ('内建', 'id', 'x = id([])\n', 'ok'),
     ('内建', 'hash 元组', 'x = hash((1, 2))\n', 'ok'),
     ('关键字', 'sum start 位置', 'x = sum([1, 2], 10)\n', 'ok'),
-    ('语句', 'match', 'match 1:\n    case 1:\n        x = 1\n', 'no'),
+    ('语句', 'match 字面量', 'match 1:\n    case 1:\n        x = 1\n', 'ok'),
+    ('语句', 'match 通配', 'match 1:\n    case _:\n        x = 1\n', 'ok'),
+    ('语句', 'match 或模式', 'match 1:\n    case 1 | 2:\n        x = 1\n', 'ok'),
+    ('语句', 'match 守卫', 'match 1:\n    case 1 if True:\n        x = 1\n', 'ok'),
+    ('语句', 'match 类模式', 'match 1:\n    case int():\n        x = 1\n', 'no'),
     ('语句', 'global', 'x = 1\ndef f():\n    global x\n    x = 2\n', 'ok'),
     ('语句', 'nonlocal', 'def f():\n    y = 1\n    def g():\n        nonlocal y\n        y = 2\n', 'ok'),
     ('语句', '类型别名 type', 'type X = int\n', 'no'),

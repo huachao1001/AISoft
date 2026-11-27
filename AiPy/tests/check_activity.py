@@ -1081,6 +1081,76 @@ CASES = [
         '    print(m)\n',
         '5\n3\n',
     ),
+    (
+        'match 语句',
+        'def name(cmd):\n'
+        '    match cmd:\n'
+        '        case "start":\n'
+        '            return "starting"\n'
+        '        case "stop":\n'
+        '            return "stopping"\n'
+        '        case _:\n'
+        '            return "unknown"\n'
+        'print(name("start"))\n'
+        'print(name("stop"))\n'
+        'print(name("jump"))\n'
+        'def size(n):\n'
+        '    match n:\n'
+        '        case 1 | 2 | 3:\n'
+        '            return "small"\n'
+        '        case -1:\n'
+        '            return "minus"\n'
+        '        case _:\n'
+        '            return "many"\n'
+        'print(size(2))\n'
+        'print(size(-1))\n'
+        'print(size(9))\n',
+        'starting\nstopping\nunknown\nsmall\nminus\nmany\n',
+    ),
+    (
+        'match 守卫与捕获',
+        'def check(v):\n'
+        '    match v:\n'
+        '        case 1 if v > 10:\n'
+        '            return "big one"\n'
+        '        case 1:\n'
+        '            return "one"\n'
+        '        case other:\n'
+        '            return "other:" + str(other)\n'
+        'print(check(1))\n'
+        'print(check(5))\n'
+        'def band(v):\n'
+        '    match v:\n'
+        '        case 1 if v > 100:\n'
+        '            return "huge one"\n'
+        '        case n if n > 50:\n'
+        '            return "big"\n'
+        '        case other:\n'
+        '            return "small:" + str(other)\n'
+        'print(band(1))\n'
+        'print(band(500))\n'
+        'print(band(7))\n'
+        'def grab(v):\n'
+        '    match v:\n'
+        '        case 7 as seven:\n'
+        '            return seven * 2\n'
+        '        case _:\n'
+        '            return 0\n'
+        'print(grab(7))\n'
+        'print(grab(3))\n',
+        'one\nother:5\nsmall:1\nbig\nsmall:7\n14\n0\n',
+    ),
+    (
+        'Ellipsis 字面量',
+        'x = ...\n'
+        'print(x)\n'
+        'print(x is Ellipsis)\n'
+        'print(... is None)\n'
+        'print(type(...))\n'
+        'print(len((..., ...)))\n'
+        'print(repr(...))\n',
+        'Ellipsis\nTrue\nFalse\n<class \'ellipsis\'>\n2\nEllipsis\n',
+    ),
     # ── id / hash ──
     (
         'id 对同一对象稳定',

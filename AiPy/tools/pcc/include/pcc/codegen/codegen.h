@@ -173,6 +173,7 @@ class CodeGen {
   int constIndexOfFloat(double value);
   int constIndexOfStr(const std::string& value);
   int constIndexOfBytes(const std::string& value);
+  int constIndexOfEllipsis();
   int globalSlot(const std::string& name);
   int functionIndex(const std::string& name) const;
   // 不做「被装饰就跳过」过滤的原始查表：装饰器应用处要拿到真正的函数号。
@@ -254,6 +255,7 @@ class CodeGen {
   bool ifChain(const Node& node);
   bool assignTarget(const Node& target, const Node& node);
   bool augmented(const Node& node);
+  bool matchCodegen(const Node& node);
   bool forLoop(const Node& node);
   bool importStatement(const Node& node);
   bool raiseStatement(const Node& node);

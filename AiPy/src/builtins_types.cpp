@@ -59,6 +59,10 @@ bool isInstanceOfType(const Value& value, const Value& wanted,
   const std::string wantedName =
       isBuiltinClass(wanted) ? builtinClassName(wanted) : classNameOf(wanted);
 
+  // 每个值都是 object 的实例（CPython：isinstance(x, object) 恒为 True）。
+  // 不特判的话会掉到下面的「按类型名比」，得到 `int` != `object`。
+  if (wantedName == "object") return true;
+
   // 1. 脚本类实例：沿类层次往上找，多继承也能命中。
   if (isInstance(value)) {
     const Value cls = instanceClass(value);

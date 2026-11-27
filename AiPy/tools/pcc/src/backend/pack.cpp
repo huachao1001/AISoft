@@ -127,6 +127,10 @@ std::vector<std::uint8_t> packProgram(const Program& program) {
         // 编译期不会产出 None 常量（None 走 NONE 指令），但格式留了位置。
         out.u8(static_cast<std::uint16_t>(ConstType::kNone));
         break;
+      case ConstKind::Ellipsis:
+        // 单例、无载荷。
+        out.u8(static_cast<std::uint16_t>(ConstType::kEllipsis));
+        break;
     }
   }
 

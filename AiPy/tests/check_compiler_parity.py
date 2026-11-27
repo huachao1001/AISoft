@@ -128,6 +128,9 @@ MESSAGE_PAIRS = [
     ('不支持一元运算 {0}', 'unsupported unary operator: {0}'),
     ('不支持字面量 {0}', 'unsupported literal: {0}'),
     ('不支持语句 {0}', 'unsupported statement: {0}'),
+    ('match 里不支持类模式、序列模式和映射模式；请改用 if/elif',
+     "class, sequence and mapping patterns are not supported in 'match'; "
+     'use if/elif'),
     ('不支持表达式 {0}', 'unsupported expression: {0}'),
     ('函数里给模块级变量 {0} 赋值，但没有写 global 声明。'
      'CPython 会把它当成新的局部变量；要改模块级变量请先写 `global {0}`',

@@ -314,6 +314,7 @@ Value::Value(const Value& other) : type_(other.type_) {
     case Type::kNone:
     case Type::kBool:
     case Type::kInt:
+    case Type::kEllipsis:
       int_ = other.int_;
       break;
   }
@@ -342,6 +343,7 @@ Value::Value(Value&& other) noexcept : type_(other.type_) {
     case Type::kNone:
     case Type::kBool:
     case Type::kInt:
+    case Type::kEllipsis:
       int_ = other.int_;
       break;
   }
@@ -383,6 +385,7 @@ Value& Value::operator=(const Value& other) {
     case Type::kNone:
     case Type::kBool:
     case Type::kInt:
+    case Type::kEllipsis:
       int_ = other.int_;
       break;
   }
@@ -415,6 +418,7 @@ Value& Value::operator=(Value&& other) noexcept {
     case Type::kNone:
     case Type::kBool:
     case Type::kInt:
+    case Type::kEllipsis:
       int_ = other.int_;
       break;
   }
@@ -483,6 +487,12 @@ Value Value::deleted(std::string name) {
   out.type_ = Type::kDeleted;
   out.heap_ = makeHeap();
   out.heap_->text = std::move(name);
+  return out;
+}
+
+Value Value::ellipsis() {
+  Value out;
+  out.type_ = Type::kEllipsis;
   return out;
 }
 
@@ -568,6 +578,8 @@ bool Value::toBool() const {
   switch (type_) {
     case Type::kNone:
       return false;
+    case Type::kEllipsis:
+      return true;
     case Type::kBool:
     case Type::kInt:
       return int_ != 0;
@@ -618,6 +630,7 @@ long long Value::toInt() const {
     case Type::kDict:
     case Type::kHost:
     case Type::kObject:
+    case Type::kEllipsis:
       return 0;
   }
   return 0;
@@ -644,6 +657,7 @@ double Value::toFloat() const {
     case Type::kDict:
     case Type::kHost:
     case Type::kObject:
+    case Type::kEllipsis:
       return 0.0;
   }
   return 0.0;
@@ -653,6 +667,8 @@ std::string Value::toString() const {
   switch (type_) {
     case Type::kNone:
       return "None";
+    case Type::kEllipsis:
+      return "Ellipsis";
     case Type::kBool:
       return int_ != 0 ? "True" : "False";
     case Type::kInt:
@@ -1116,6 +1132,7 @@ std::string typeName(const Value& value) {
       if (isBuiltinFunction(value)) return "builtin_function_or_method";
       return "object";
     case Value::Type::kDeleted: return "NoneType";
+    case Value::Type::kEllipsis: return "ellipsis";
   }
   return "object";
 }

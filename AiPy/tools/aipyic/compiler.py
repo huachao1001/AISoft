@@ -1306,6 +1306,10 @@ class Compiler:
                 self.apply_decorators(node)
             return
 
+        if isinstance(node, ast.Match):
+            self.match_statement(node)
+            return
+
         if isinstance(node, ast.ClassDef):
             return self.compile_class(node)
 
@@ -1759,6 +1763,116 @@ class Compiler:
         for fixup in exit_fixups:
             self.block.patch_u16(fixup, exit_at)
 
+    def match_statement(self, node):
+        """`match` 降级成 if/elif 链，与 C++ 版同一套生成。
+
+        支持：字面量模式、`_` 通配、裸名字捕获、`as name`、或模式
+        `X | Y`、`case P if G:` 守卫。类 / 序列 / 映射模式明确报错。
+        """
+        temp = self.block.slot_of('\0match_subject')
+        self.expr(node.subject)
+        self.block.emit('STORE_LOCAL', node)
+        self.block.emit_u16(temp)
+
+        end_fixups = []
+        next_fixups = []
+        case_count = len(node.cases)
+
+        for index, clause in enumerate(node.cases):
+            case_start = len(self.block.code)
+            for fixup in next_fixups:
+                self.block.patch_u16(fixup, case_start)
+            next_fixups = []
+
+            wildcard, bind_name = self.match_condition(
+                clause.pattern, temp, clause)
+
+            # 捕获模式没有匹配判据（总是命中），先绑定再判守卫——
+            # `case n if n > 50:` 的守卫要能看到已绑定的 n。
+            if wildcard and bind_name:
+                self.block.emit('LOAD_LOCAL', clause.pattern)
+                self.block.emit_u16(temp)
+                self.name_store(bind_name, clause.pattern)
+                bind_name = ''
+
+            if not wildcard:
+                # 行号取模式节点：`ast.match_case` 没有 lineno，用它会让行号
+                # 表退化成 L0，与 C++ 版对不上。
+                self.block.emit('JUMP_IF_FALSE', clause.pattern)
+                next_fixups.append(len(self.block.code))
+                self.block.emit_u16(0)
+
+                # `case P as name:`：模式命中后先绑定，再判守卫。
+                if bind_name:
+                    self.block.emit('LOAD_LOCAL', clause.pattern)
+                    self.block.emit_u16(temp)
+                    self.name_store(bind_name, clause.pattern)
+                    bind_name = ''
+
+            # 守卫对通配/捕获模式同样要判：`case n if n > 50:` 必须真的看 n。
+            if clause.guard is not None:
+                self.expr(clause.guard)
+                self.block.emit('JUMP_IF_FALSE', clause.guard)
+                next_fixups.append(len(self.block.code))
+                self.block.emit_u16(0)
+
+            for statement in clause.body:
+                self.statement(statement)
+
+            if not wildcard or index + 1 < case_count:
+                self.block.emit('JUMP', clause.pattern)
+                end_fixups.append(len(self.block.code))
+                self.block.emit_u16(0)
+
+        end_at = len(self.block.code)
+        for fixup in next_fixups:
+            self.block.patch_u16(fixup, end_at)
+        for fixup in end_fixups:
+            self.block.patch_u16(fixup, end_at)
+
+    def match_condition(self, pattern, temp, clause):
+        """生成模式判据，返回 (是否通配, 捕获名)。
+
+        `case _:` / `case name:` / `case X as name:` 都是「捕获形态」：
+        前者总命中，后两者命中后把主题绑给 name。
+        """
+        bind_name = ''
+        if isinstance(pattern, ast.MatchAs):
+            # `case _:` → MatchAs(pattern=None, name=None)
+            # `case n:` → MatchAs(pattern=None, name='n')
+            # `case P as n:` → MatchAs(pattern=P, name='n')
+            if pattern.pattern is None:
+                return True, pattern.name or ''
+            bind_name = pattern.name or ''
+            return self.match_condition(pattern.pattern, temp, clause)[0], \
+                bind_name
+
+        if isinstance(pattern, ast.MatchOr):
+            for sub in pattern.patterns:
+                if not isinstance(sub, ast.MatchValue):
+                    raise CompileError('match 里不支持类模式、序列模式和映射'
+                                       '模式；请改用 if/elif', self.filename, sub)
+            self.block.emit('LOAD_LOCAL', pattern)
+            self.block.emit_u16(temp)
+            for sub in pattern.patterns:
+                self.expr(sub.value)
+            self.block.emit('BUILD_TUPLE', pattern)
+            self.block.emit_u16(len(pattern.patterns))
+            self.block.emit('CMP', pattern)
+            self.block.emit_u8(6)   # IN
+            return False, ''
+
+        if isinstance(pattern, ast.MatchValue):
+            self.block.emit('LOAD_LOCAL', pattern)
+            self.block.emit_u16(temp)
+            self.expr(pattern.value)
+            self.block.emit('CMP', pattern)
+            self.block.emit_u8(0)   # EQ
+            return False, ''
+
+        raise CompileError('match 里不支持类模式、序列模式和映射模式；'
+                           '请改用 if/elif', self.filename, pattern)
+
     def assign_target(self, target, node):
         if isinstance(target, ast.Attribute):
             # `a.b = v`：SET_ATTR 要 [接收者, 值]。先接住值再压接收者。
@@ -1911,6 +2025,21 @@ class Compiler:
             return
 
         if isinstance(node, ast.Name):
+            # `Ellipsis` 是内建常量，等价于 `...`。CPython 里它是单例，读多
+            # 次得到同一个对象；这里编成无载荷常量，与 `...` 同一类型即可。
+            # 判据与 C++ 的 shadowed 一致：模块级看编译顺序，函数体看模块级
+            # 是否声明过——`Ellipsis = 5` 之后它就是个普通变量。
+            if node.id == 'Ellipsis':
+                if self.block is self.module:
+                    hidden = (self.is_local(node.id) or
+                              node.id in self.assigned_so_far)
+                else:
+                    hidden = (self.is_local(node.id) or
+                              node.id in self.globals)
+                if not hidden:
+                    self.block.emit('CONST', node)
+                    self.block.emit_u16(self.const_index(Ellipsis))
+                    return
             # 同名变量优先于类型名：`int = 5` 之后再读 `int` 必须是 5，
             # 不是 `<class 'int'>`——CPython 里赋值遮蔽内建。
             #
@@ -2577,6 +2706,10 @@ class Compiler:
             self.block.emit('CONST', node)
             self.block.emit_u16(self.const_index(value))
             return
+        if value is Ellipsis:
+            self.block.emit('CONST', node)
+            self.block.emit_u16(self.const_index(value))
+            return
         raise CompileError('不支持字面量 %r' % (value,), self.filename, node)
 
     # ── 算子映射 ──
@@ -2658,6 +2791,8 @@ class Compiler:
         }
 
     def json_const(self, value):
+        if value is Ellipsis:
+            return {'type': 'ellipsis'}
         if isinstance(value, bool):
             return {'type': 'bool', 'value': value}
         if isinstance(value, int):

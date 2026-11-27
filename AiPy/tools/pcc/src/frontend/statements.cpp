@@ -469,6 +469,10 @@ NodePtr Parser::raiseStatement() {
 }
 
 NodePtr Parser::matchStatement() {
+  // `match` 降级成 if/elif 链：case 的模式与守卫编成条件，body 编成分支。
+  // 支持的子集：字面量模式、`_` 通配、`X as name`、`X | Y` 或模式、
+  // `case P if G:` 守卫。类模式 / 序列模式 / 映射模式明确报错——它们要求
+  // 解构赋值，与「降级成 if 链」不是同一件事，静默按值比较会给出错误结果。
   auto node = make_node(Kind::Match, peek().line, peek().col);
   advance();
   NodePtr subject = expression();
@@ -479,15 +483,104 @@ NodePtr Parser::matchStatement() {
   if (!check(TokenType::Indent)) return fail(diag::blockExpected()), nullptr;
   advance();
   skipNewlines();
+  std::vector<NodePtr> cases;
   while (!check(TokenType::Dedent) && !check(TokenType::End) && !failed_) {
-    // case ...: 整段跳过
-    while (!checkOp(":") && !check(TokenType::End)) advance();
-    std::vector<NodePtr> ignored;
-    if (!parseBlock(&ignored)) return nullptr;
+    if (!checkName("case")) {
+      fail("expected 'case' inside a match block");
+      return nullptr;
+    }
+    const Token& caseToken = peek();
+    advance();
+    auto clause = make_node(Kind::Case, caseToken.line, caseToken.col);
+
+    // 模式：字面量 / `_` / 名字 / 点分名，可带 `as 名字` 与 `|`。
+    NodePtr pattern = matchPattern();
+    if (!pattern) return nullptr;
+    clause->children.push_back(std::move(pattern));
+    if (matchName("as")) {
+      if (!check(TokenType::Name)) {
+        fail("expected a name after 'as'");
+        return nullptr;
+      }
+      clause->text = advance().text;
+    }
+    // 守卫：`case P if G:` 等价于「匹配 P 且 G 为真」。
+    // 用 orExpr 而不是 expression：后者会把 `if` 当成条件表达式的开头，
+    // 守卫就再也没法读了。
+    if (matchName("if")) {
+      NodePtr guard = orExpr();
+      if (!guard) return nullptr;
+      clause->children.push_back(std::move(guard));
+      clause->flag = true;  // flag 表示「有守卫」
+    }
+    std::vector<NodePtr> body;
+    if (!parseBlock(&body)) return nullptr;
+    for (auto& item : body) clause->children.push_back(std::move(item));
+    clause->bodyCount = body.size();
+    cases.push_back(std::move(clause));
     skipNewlines();
   }
   if (check(TokenType::Dedent)) advance();
+  for (auto& item : cases) node->children.push_back(std::move(item));
+  node->bodyCount = cases.size();
   return node;
+}
+
+NodePtr Parser::matchPattern() {
+  NodePtr first = matchPatternAtom();
+  if (!first) return nullptr;
+  if (!checkOp("|")) return first;
+  // 或模式：`1 | 2 | 3` 编成一次 `in (1, 2, 3)` 的等价判断。
+  auto list = make_node(Kind::TupleLit, first->line, first->col);
+  list->children.push_back(std::move(first));
+  while (matchOp("|")) {
+    NodePtr item = matchPatternAtom();
+    if (!item) return nullptr;
+    list->children.push_back(std::move(item));
+  }
+  list->flag = true;  // 标记「这是或模式，按 in 语义判断」
+  return list;
+}
+
+NodePtr Parser::matchPatternAtom() {
+  const Token& token = peek();
+  // 类模式 / 序列模式 / 映射模式：解构语义，降级成 if 链做不到。
+  if (token.type == TokenType::Op &&
+      (token.text == "(" || token.text == "[" || token.text == "{")) {
+    fail("class, sequence and mapping patterns are not supported in 'match'; "
+         "use if/elif");
+    return nullptr;
+  }
+  // 模式原子只解析到 bitXor 这一层：再往上（bitOr）会把模式里的 `|`
+  // 当成按位或运算吃掉，`case 1 | 2:` 就变成 `1|2 == 3`。
+  // 也不走 expression：那会把 `if` 当成条件表达式开头。
+  NodePtr value = bitXor();
+  if (!value) return nullptr;
+  // 只认「值模式」：常量、名字、点分名、负常量。类模式 `int()`、序列
+  // 模式 `[a, b]`、映射模式 `{"k": v}` 都要解构，降级成 if 链做不到，
+  // 静默按值比较会给出错误结果。
+  if (!isValuePattern(*value)) {
+    fail("class, sequence and mapping patterns are not supported in "
+         "'match'; use if/elif");
+    return nullptr;
+  }
+  return value;
+}
+
+bool Parser::isValuePattern(const Node& node) {
+  switch (node.kind) {
+    case Kind::Constant:
+      return true;
+    case Kind::Name:
+    case Kind::Attribute:  // 点分名（`Color.RED`）
+      return true;
+    case Kind::UnaryOp:  // `-1`
+      return isValuePattern(*node.children[0]);
+    case Kind::TupleLit:  // 或模式内部用，本身不接受
+      return false;
+    default:
+      return false;
+  }
 }
 
 bool Parser::parseBlock(std::vector<NodePtr>* body) {

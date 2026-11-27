@@ -74,6 +74,9 @@ class Parser {
   NodePtr tryStatement();
   NodePtr raiseStatement();
   NodePtr matchStatement();
+  NodePtr matchPattern();
+  NodePtr matchPatternAtom();
+  static bool isValuePattern(const Node& node);
   NodePtr parseFunctionArgs();
   // lambda 的参数表没有括号，读到 `:` 为止；其余与 parseFunctionArgs 同构。
   NodePtr lambdaArgs();

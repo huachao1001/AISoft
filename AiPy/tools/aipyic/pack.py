@@ -89,6 +89,7 @@ CONST_INT = 2
 CONST_FLOAT = 3
 CONST_STR = 4
 CONST_BYTES = 5
+CONST_ELLIPSIS = 6
 
 
 class Writer:
@@ -172,6 +173,8 @@ def pack(program):
         elif kind == 'bytes':
             out.u8(CONST_BYTES)
             out.text(const['value'])
+        elif kind == 'ellipsis':
+            out.u8(CONST_ELLIPSIS)
         else:
             raise ValueError('未知常量类型 %r' % (kind,))
 

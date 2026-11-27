@@ -107,6 +107,9 @@ class Value {
     // 而 None 是合法的值，两者必须能区分。载荷是变量名（堆字符串），
     // 报错时要把它写进消息。
     kDeleted,
+    // `...`（Ellipsis）。是单例字面量，载荷为空。必须与 None 分开：
+    // `... is None` 是 False，且 `repr(...)` 是 `Ellipsis`。
+    kEllipsis,
   };
 
   // `= default` 会把 union 成员留成未初始化值。type_ 有默认值所以类型判断
@@ -139,6 +142,9 @@ class Value {
   bool isTuple() const { return type_ == Type::kTuple; }
   bool isSet() const { return type_ == Type::kSet; }
   bool isBytes() const { return type_ == Type::kBytes; }
+  bool isEllipsis() const { return type_ == Type::kEllipsis; }
+  // `...` 单例。
+  static Value ellipsis();
   // 序列：列表或元组。索引、切片、len、迭代、`+`/`*` 都按同一套处理，
   // 差别只在不支持原地修改（元组不可变）。
   bool isSequence() const { return type_ == Type::kList || type_ == Type::kTuple; }

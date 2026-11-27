@@ -183,6 +183,9 @@ bool CodeGen::statement(const Node& node) {
       // 「求值默认值 → 压捕获 → MAKE_FUNCTION → 存进名字」。
       return nestedDefStatement(node);
 
+    case Kind::Match:
+      return matchCodegen(node);
+
     case Kind::Delete:
       return deleteStatement(node);
 
@@ -407,6 +410,116 @@ bool CodeGen::augmented(const Node& node) {
   }
 
   return failAt(diag::unsupportedAugTarget(), target);
+}
+
+bool CodeGen::matchCodegen(const Node& node) {
+  // `match` 降级成 if/elif 链：
+  //   match X:              _m = X
+  //       case 1:           if _m == 1: ...
+  //       case _:           else: ...
+  //
+  // 主题只求值一次，存进隐藏局部槽——`match f():` 重复求值会让副作用跑多次。
+  const Node& subject = *node.children[0];
+  const int temp = slotOf("\x01match_subject");
+  if (!expr(subject)) return false;
+  emit("STORE_LOCAL", node);
+  emitU16(temp);
+
+  std::vector<int> endFixups;   // body 跑完 → match 之后
+  int nextCaseFixups[64];       // 「本 case 不匹配」→ 下一个 case 起点
+  int nextCaseCount = 0;
+
+  const std::size_t caseCount = node.bodyCount;
+  for (std::size_t i = 0; i < caseCount; ++i) {
+    const Node& clause = *node.children[1 + i];
+    const Node& pattern = *clause.children[0];
+
+    // 上一个 case 的「不匹配」落点就是这里。
+    const int caseStart = static_cast<int>(block_->code.size());
+    for (int k = 0; k < nextCaseCount; ++k) {
+      patchU16(static_cast<std::size_t>(nextCaseFixups[k]), caseStart);
+    }
+    nextCaseCount = 0;
+
+    // 模式是裸名字（非 `_`）时是「捕获模式」：总是命中并把主题绑给这个名字。
+    const bool capture =
+        pattern.kind == Kind::Name && pattern.text != "_";
+    std::string bindName = clause.text;
+    if (capture) bindName = pattern.text;
+    const bool wildcard =
+        (pattern.kind == Kind::Name && pattern.text == "_") || capture;
+    // 捕获模式没有任何匹配判据（总是命中），所以先绑定、再判守卫——CPython
+    // 里 `case n if n > 50:` 的守卫能看到已绑定的 n。
+    if (wildcard && !bindName.empty()) {
+      emit("LOAD_LOCAL", clause);
+      emitU16(temp);
+      nameStore(bindName, clause);
+      bindName.clear();
+    }
+
+    if (!wildcard) {
+      if (pattern.kind == Kind::TupleLit && pattern.flag) {
+        // 或模式 → `_m in (a, b, ...)`。先压主题（元素），再建元组
+        // （容器）：CMP 取栈底作 `a`、栈顶作 `b`，而 IN 的语义是
+        // contains(b, a)。
+        emit("LOAD_LOCAL", pattern);
+        emitU16(temp);
+        for (const auto& item : pattern.children) {
+          if (!expr(*item)) return false;
+        }
+        emit("BUILD_TUPLE", pattern);
+        emitU16(static_cast<int>(pattern.children.size()));
+        emit("CMP", pattern);
+        emitU8(6);   // CmpOp 编号：IN
+      } else {
+        emit("LOAD_LOCAL", pattern);
+        emitU16(temp);
+        if (!expr(pattern)) return false;
+        emit("CMP", pattern);
+        emitU8(0);   // CmpOp 编号：EQ
+      }
+      emit("JUMP_IF_FALSE", clause);
+      nextCaseFixups[nextCaseCount++] = static_cast<int>(block_->code.size());
+      emitU16(0);
+
+      // `case P as name:`：先确认模式命中，再绑定，然后才判守卫。
+      if (!bindName.empty()) {
+        emit("LOAD_LOCAL", clause);
+        emitU16(temp);
+        nameStore(bindName, clause);
+        bindName.clear();
+      }
+    }
+
+    // 守卫对通配/捕获模式同样要判：`case n if n > 50:` 必须真的看 n。
+    if (clause.flag) {
+      const Node& guard = *clause.children[1];
+      if (!expr(guard)) return false;
+      emit("JUMP_IF_FALSE", guard);
+      nextCaseFixups[nextCaseCount++] = static_cast<int>(block_->code.size());
+      emitU16(0);
+    }
+
+    const std::size_t firstBody = 1 + (clause.flag ? 1 : 0);
+    for (std::size_t k = 0; k < clause.bodyCount; ++k) {
+      if (!statement(*clause.children[firstBody + k])) return false;
+    }
+
+    if (!wildcard || i + 1 < caseCount) {
+      emit("JUMP", clause);
+      endFixups.push_back(static_cast<int>(block_->code.size()));
+      emitU16(0);
+    }
+  }
+
+  const int endAt = static_cast<int>(block_->code.size());
+  for (int k = 0; k < nextCaseCount; ++k) {
+    patchU16(static_cast<std::size_t>(nextCaseFixups[k]), endAt);
+  }
+  for (int fixup : endFixups) {
+    patchU16(static_cast<std::size_t>(fixup), endAt);
+  }
+  return true;
 }
 
 bool CodeGen::forLoop(const Node& node) {

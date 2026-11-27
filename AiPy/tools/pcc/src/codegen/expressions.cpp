@@ -72,6 +72,12 @@ bool CodeGen::nameRead(const std::string& name, const Node& node) {
   const bool shadowed =
       isLocal(name) || (block_ == &module_ ? assignedSoFar_.count(name) != 0
                                           : globalsSet_.count(name) != 0);
+  // `Ellipsis` 是内建常量，等价于 `...`（CPython 里是单例）。
+  if (name == "Ellipsis" && !shadowed) {
+    emit("CONST", node);
+    emitU16(constIndexOfEllipsis());
+    return true;
+  }
   if (!shadowed && aipy::isBuiltinTypeName(name)) {
     emit("LOAD_TYPE", node);
     emitU16(constIndexOfStr(name));
@@ -901,7 +907,9 @@ bool CodeGen::constant(const Node& node) {
     case ConstKind::None:
       // intValue == -1 是 Ellipsis 的标记（None 用 0）。
       if (node.intValue == -1) {
-        return failAt(diag::unsupportedLiteral("Ellipsis"), node);
+        emit("CONST", node);
+        emitU16(constIndexOfEllipsis());
+        return true;
       }
       emit("NONE", node);
       return true;
@@ -937,6 +945,12 @@ bool CodeGen::constant(const Node& node) {
     case ConstKind::Bytes: {
       emit("CONST", node);
       emitU16(constIndexOfBytes(node.text));
+      return true;
+    }
+
+    case ConstKind::Ellipsis: {
+      emit("CONST", node);
+      emitU16(constIndexOfEllipsis());
       return true;
     }
   }

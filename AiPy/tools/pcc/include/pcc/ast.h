@@ -57,6 +57,7 @@ enum class Kind {
   Try,
   ExceptHandler,  // try 的一个 except 子句
   Match,
+  Case,           // match 的一个 case 子句
   AsyncFunctionDef,
   AsyncFor,
   AsyncWith,
@@ -111,6 +112,8 @@ enum class ConstKind : std::uint8_t {
   // 字节串常量。与 Str 分开：加载时构造的是 Value::bytes 而不是 Value(string)，
   // 否则 b"abc" == "abc" 会成立（CPython 里是 False）。
   Bytes = 5,
+  // `...`：常量池里放一个「无载荷」的标记，加载时构造 Value::ellipsis()。
+  Ellipsis = 6,
 };
 
 struct Node;
