@@ -2052,6 +2052,66 @@ void sortList(const Value& list) {
                    [](const Value& a, const Value& b) { return compareValues(a, b) < 0; });
 }
 
+// 就地排序，键由调用方（VM）预先算好。为什么不接收脚本函数：值层拿不到
+// Program，调不了脚本函数。`keys` 为空表示「按下标自身比较」。
+void sortListByKeys(const Value& list, const Value& keys, bool reverse) {
+  List* items = list.mutableList();
+  if (items == nullptr) return;
+  const List keyList = keys.isNone() ? List() : iterate(keys);
+  if (keyList.empty()) {
+    sortList(list);
+    if (reverse) std::reverse(items->begin(), items->end());
+    return;
+  }
+  // 按下标排序再重排，保证稳定排序的语义与 CPython 一致。
+  std::vector<std::size_t> order(items->size());
+  for (std::size_t i = 0; i < order.size(); ++i) order[i] = i;
+  std::stable_sort(order.begin(), order.end(),
+                   [&keyList](std::size_t a, std::size_t b) {
+                     return compareValues(keyList[a], keyList[b]) < 0;
+                   });
+  List sorted;
+  sorted.reserve(items->size());
+  for (std::size_t index : order) sorted.push_back((*items)[index]);
+  if (reverse) std::reverse(sorted.begin(), sorted.end());
+  *items = std::move(sorted);
+}
+
+Value listIndexOf(const Value& list, const Value& needle) {
+  const List items = iterate(list);
+  for (std::size_t i = 0; i < items.size(); ++i) {
+    if (eq(items[i], needle).toBool()) return Value(static_cast<long long>(i));
+  }
+  // CPython 的文案带上被查找的值本身：`5 is not in list`。
+  raiseException("ValueError", reprOf(needle) + " is not in list");
+  return Value();
+}
+
+void listRemove(const Value& list, const Value& needle) {
+  List* items = list.mutableList();
+  if (items == nullptr) return;
+  for (std::size_t i = 0; i < items->size(); ++i) {
+    if (eq((*items)[i], needle).toBool()) {
+      items->erase(items->begin() + static_cast<std::ptrdiff_t>(i));
+      return;
+    }
+  }
+  raiseException("ValueError", "list.remove(x): x not in list");
+}
+
+Value listCopy(const Value& list) {
+  return Value::list(iterate(list));
+}
+
+Value listCount(const Value& list, const Value& needle) {
+  const List items = iterate(list);
+  long long count = 0;
+  for (const Value& item : items) {
+    if (eq(item, needle).toBool()) ++count;
+  }
+  return Value(count);
+}
+
 void reverseList(const Value& list) {
   if (List* items = list.mutableList()) std::reverse(items->begin(), items->end());
 }
@@ -2271,6 +2331,39 @@ void dictUpdate(const Value& target, const Value& other) {
   for (size_t i = 0; i < keys.size(); ++i) dictSet(target, keys[i], values[i]);
 }
 
+// dict.setdefault(k, default)：键存在就返回旧值，否则写入并返回 default。
+Value dictSetDefault(const Value& dict, const Value& key, const Value& fallback) {
+  const long long index = dict.dictIndex(key);
+  if (index >= 0) return dict.dictValues()[static_cast<size_t>(index)];
+  dictSet(dict, key, fallback);
+  return fallback;
+}
+
+// dict.copy()：浅拷贝，键值顺序保持插入序。
+Value dictCopyOf(const Value& dict) {
+  return Value::dict(dict.dictKeys(), dict.dictValues());
+}
+
+// dict.clear()
+void dictClear(const Value& dict) {
+  if (DictData* data = dict.mutableDict()) {
+    data->keys.clear();
+    data->values.clear();
+  }
+}
+
+// dict.fromkeys(keys, value=None)：classmethod 形态，但本语言里
+// `dict.fromkeys(...)` 走属性调用，接收者是 dict 类型值而非实例。
+Value dictFromKeys(const Value& keys, const Value& value) {
+  List keyList;
+  List valueList;
+  for (const Value& key : iterate(keys)) {
+    keyList.push_back(key);
+    valueList.push_back(value.isNone() ? Value() : value);
+  }
+  return Value::dict(keyList, valueList);
+}
+
 Value dictFrom(const Value& keys, const Value& values) {
   List keyList;
   List valueList;
@@ -2453,9 +2546,165 @@ Value textOfChar(const Value& codepoint) {
   return Value(utf8Encode(static_cast<std::uint32_t>(codepoint.toInt())));
 }
 
-// str.format() 的最小实现：只支持 {} 与 {0} {1} 这类按位置替换。
-// 不做格式规格（{:.2f}）——那要一整套格式迷你语言，而脚本里
-// 「先 round 再 str」已经够用，硬塞半个实现反而会让人以为支持全了。
+// ── str.format 的占位符替换 ──
+//
+// 支持 `{}`、`{0}`、以及常用格式说明符：`:.2f`、`:.3s`、`:d`、`:x`、
+// `:>5`、`:<5`、`:^5`、`:05d`、`:+.2f`。够覆盖「拼日志、拼报表」这类
+// 脚本场景；不认识的说明符**原样保留** `{...}`，静默丢掉会让输出少一截，
+// 更难看出哪里错了。
+namespace {
+
+struct FormatSpec {
+  char fill = ' ';
+  char align = 0;    // '<' 左、'>' 右、'^' 居中；0 表示按类型默认
+  long long width = 0;
+  bool zeroPad = false;
+  bool plusSign = false;
+  char type = 0;     // 'f' 'd' 's' 'x' 'X' 'e' 'g' 或 0
+  int precision = -1;
+};
+
+bool parseFormatSpec(const std::string& text, FormatSpec* out) {
+  std::size_t i = 0;
+  // 填充符 + 对齐符：两个字符连写时前面那个才是填充符。
+  if (i + 1 < text.size() &&
+      (text[i + 1] == '<' || text[i + 1] == '>' || text[i + 1] == '^')) {
+    out->fill = text[i];
+    out->align = text[i + 1];
+    i += 2;
+  } else if (i < text.size() &&
+             (text[i] == '<' || text[i] == '>' || text[i] == '^')) {
+    out->align = text[i];
+    ++i;
+  }
+  if (i < text.size() && (text[i] == '+' || text[i] == ' ')) {
+    out->plusSign = text[i] == '+';
+    ++i;
+  }
+  const std::size_t widthStart = i;
+  while (i < text.size() && text[i] >= '0' && text[i] <= '9') ++i;
+  if (i > widthStart) {
+    out->width = std::strtoll(text.substr(widthStart, i - widthStart).c_str(),
+                              nullptr, 10);
+    if (text[widthStart] == '0') {
+      out->zeroPad = true;
+      if (out->align == 0) out->align = '>';
+    }
+  }
+  if (i < text.size() && text[i] == '.') {
+    ++i;
+    const std::size_t precisionStart = i;
+    while (i < text.size() && text[i] >= '0' && text[i] <= '9') ++i;
+    if (i > precisionStart) {
+      out->precision = static_cast<int>(
+          std::strtol(text.substr(precisionStart, i - precisionStart).c_str(),
+                      nullptr, 10));
+    }
+  }
+  if (i < text.size()) {
+    out->type = text[i];
+    ++i;
+  }
+  // 还有剩余就是不认识的说明符，交给调用方原样保留。
+  return i == text.size();
+}
+
+std::string applyFormatSpec(const Value& value, const FormatSpec& spec) {
+  std::string body;
+  switch (spec.type) {
+    case 'f': case 'F': {
+      char buffer[512];
+      const int digits = spec.precision < 0 ? 6 : spec.precision;
+      std::snprintf(buffer, sizeof(buffer), spec.plusSign ? "%+.*f" : "%.*f",
+                    digits, value.toFloat());
+      body = buffer;
+      if (spec.type == 'F') {
+        for (char& c : body) {
+          if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 32);
+        }
+      }
+      break;
+    }
+    case 'e': case 'E': {
+      char buffer[512];
+      const int digits = spec.precision < 0 ? 6 : spec.precision;
+      std::snprintf(buffer, sizeof(buffer), "%.*e", digits, value.toFloat());
+      body = buffer;
+      if (spec.type == 'E') {
+        for (char& c : body) {
+          if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 32);
+        }
+      }
+      break;
+    }
+    case 'g': case 'G': {
+      char buffer[512];
+      const int digits = spec.precision < 0 ? 6 : spec.precision;
+      std::snprintf(buffer, sizeof(buffer), "%.*g", digits, value.toFloat());
+      body = buffer;
+      break;
+    }
+    case 'd': {
+      if (spec.plusSign && value.toInt() >= 0) body = "+";
+      body += std::to_string(value.toInt());
+      break;
+    }
+    case 'x': case 'X': {
+      body = intToBase(value, 16).toString();
+      // intToBase 带 0x 前缀；格式化里不该有它。
+      if (body.size() > 2 && body[0] == '0' &&
+          (body[1] == 'x' || body[1] == 'X')) {
+        body = body.substr(2);
+      }
+      if (spec.type == 'X') {
+        for (char& c : body) {
+          if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 32);
+        }
+      }
+      break;
+    }
+    case 's': {
+      body = value.toString();
+      // `:.3s` 按字符截断，不是按字节。
+      if (spec.precision >= 0) {
+        const std::size_t limit = static_cast<std::size_t>(spec.precision);
+        if (utf8Length(body) > limit) {
+          body = body.substr(0, utf8OffsetOfChar(body, limit));
+        }
+      }
+      break;
+    }
+    default:
+      body = value.toString();
+      if (spec.precision >= 0 && value.type() == Value::Type::kFloat) {
+        char buffer[512];
+        std::snprintf(buffer, sizeof(buffer), "%.*f", spec.precision,
+                      value.toFloat());
+        body = buffer;
+      }
+      break;
+  }
+
+  const long long length = static_cast<long long>(utf8Length(body));
+  if (spec.width <= length) return body;
+  const char fill = spec.zeroPad ? '0' : spec.fill;
+  const std::size_t padding = static_cast<std::size_t>(spec.width - length);
+  // 补零要把符号挪到最前面：`f"{-1:05d}"` 是 `-0001` 而不是 `000-1`。
+  if (spec.zeroPad && !body.empty() && (body[0] == '-' || body[0] == '+')) {
+    return body.substr(0, 1) + std::string(padding, fill) + body.substr(1);
+  }
+  const char align = spec.align == 0 ? '<' : spec.align;
+  if (align == '>') return std::string(padding, fill) + body;
+  if (align == '^') {
+    const std::size_t leftCount = padding / 2;
+    return std::string(leftCount, fill) + body +
+           std::string(padding - leftCount, fill);
+  }
+  return body + std::string(padding, fill);
+}
+
+}  // namespace
+
 Value formatText(const Value& text, const Value& args) {
   const std::string& pattern = text.toString();
   const std::vector<Value> values = iterate(args);
@@ -2468,6 +2717,12 @@ Value formatText(const Value& text, const Value& args) {
       out += pattern.substr(index);
       break;
     }
+    if (open + 1 < pattern.size() && pattern[open + 1] == '{') {
+      // `{{` 是字面量左花括号。
+      out += pattern.substr(index, open - index) + "{";
+      index = open + 2;
+      continue;
+    }
     const size_t close = pattern.find('}', open + 1);
     if (close == std::string::npos) {
       // 没有配对的 }：原样保留剩下的部分，不要吞掉用户文本
@@ -2475,16 +2730,48 @@ Value formatText(const Value& text, const Value& args) {
       break;
     }
     out += pattern.substr(index, open - index);
-    const std::string spec = pattern.substr(open + 1, close - open - 1);
-    if (spec.empty()) {
-      if (next < values.size()) out += values[next++].toString();
+
+    const std::string field = pattern.substr(open + 1, close - open - 1);
+    const size_t colon = field.find(':');
+    const std::string head = colon == std::string::npos
+                                 ? field
+                                 : field.substr(0, colon);
+    const std::string specText =
+        colon == std::string::npos ? std::string() : field.substr(colon + 1);
+
+    const Value* chosen = nullptr;
+    if (head.empty()) {
+      if (next < values.size()) chosen = &values[next++];
     } else {
-      const auto explicitIndex = static_cast<size_t>(std::strtoull(spec.c_str(), nullptr, 10));
-      if (explicitIndex < values.size()) out += values[explicitIndex].toString();
+      const auto position =
+          static_cast<size_t>(std::strtoull(head.c_str(), nullptr, 10));
+      if (position < values.size()) chosen = &values[position];
+    }
+
+    FormatSpec spec;
+    if (chosen != nullptr && parseFormatSpec(specText, &spec)) {
+      out += applyFormatSpec(*chosen, spec);
+    } else if (chosen != nullptr) {
+      // 认不出的说明符：原样保留整段，别丢信息。
+      out += "{" + field + "}";
+    } else {
+      // 缺参数：CPython 抛 IndexError，这里给空串避免整个脚本挂掉。
+      out += "";
     }
     index = close + 1;
   }
-  return Value(std::move(out));
+  // `}}` 是字面量右花括号。
+  std::string collapsed;
+  collapsed.reserve(out.size());
+  for (size_t i = 0; i < out.size(); ++i) {
+    if (out[i] == '}' && i + 1 < out.size() && out[i + 1] == '}') {
+      collapsed.push_back('}');
+      ++i;
+      continue;
+    }
+    collapsed.push_back(out[i]);
+  }
+  return Value(std::move(collapsed));
 }
 
 Value minimum(const Value& a, const Value& b) { return lt(a, b).toBool() ? a : b; }

@@ -43,6 +43,7 @@ const char* const kOpNames[] = {
     "UNPACK",
     "CALL_BUILTIN_KW",
     "MAKE_BUILTIN_FUNCTION",
+    "CALL_METHOD_KW",
 };
 
 constexpr int kOpCount = static_cast<int>(sizeof(kOpNames) / sizeof(kOpNames[0]));
@@ -72,6 +73,8 @@ const char* const kBuiltins[] = {
     "filter",
     "id",
     "hash",
+    "help",
+    "dir",
 };
 
 constexpr int kBuiltinCount =

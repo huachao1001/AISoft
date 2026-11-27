@@ -76,6 +76,7 @@ const char* opName(Op op) {
     case Op::kUnpack: return "unpack";
     case Op::kCallBuiltinKw: return "call_builtin_kw";
     case Op::kMakeBuiltinFunction: return "make_builtin_function";
+    case Op::kCallMethodKw: return "call_method_kw";
   }
   return "?";
 }

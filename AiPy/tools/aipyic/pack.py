@@ -80,7 +80,7 @@ MAGIC = b'AIPYBC01'
 #    「有默认值的参数个数」，不再能由「尾部个数」推出。
 # 6：函数表新增 captureStart（闭包捕获值落在哪些局部槽）。
 # 7：函数表新增 isGenerator（函数体里有 yield，调用它得到生成器而非返回值）。
-VERSION = 10
+VERSION = 11
 
 # 常量类型标记，与 cpp 侧 ConstType 一致。
 CONST_NONE = 0

@@ -819,6 +819,136 @@ CASES = [
         '    print(exc)\n',
         "True\nboom\nt\n",
     ),
+    # ── 字符串 / 列表 / 字典方法 ──
+    (
+        '字符串补齐与判定',
+        'print("ab".ljust(5) + "|")\n'
+        'print("ab".rjust(5) + "|")\n'
+        'print("ab".center(6) + "|")\n'
+        'print("42".zfill(5))\n'
+        'print("-7".zfill(4))\n'
+        'print("hello world".title())\n'
+        'print("123".isdigit(), "12a".isdigit())\n'
+        'print("abc".isalpha(), "abc".isupper(), "ABC".isupper())\n',
+        'ab   |\n'
+        '   ab|\n'
+        '  ab  |\n'
+        '00042\n'
+        '-007\n'
+        'Hello World\n'
+        'True False\n'
+        'True False True\n',
+    ),
+    (
+        '字符串拆分与修剪',
+        'print("a\\nb\\r\\nc".splitlines())\n'
+        'print("a\\n".splitlines())\n'
+        'print("  x  ".lstrip() + "|")\n'
+        'print("  x  ".rstrip() + "|")\n',
+        "['a', 'b', 'c']\n['a']\nx  |\n  x|\n",
+    ),
+    (
+        '列表 index / remove / copy / count',
+        'a = [1, 2, 3, 2]\n'
+        'print(a.index(2))\n'
+        'print(a.count(2))\n'
+        'b = a.copy()\n'
+        'b.append(9)\n'
+        'print(a, b)\n'
+        'a.remove(2)\n'
+        'print(a)\n'
+        'try:\n'
+        '    a.remove(99)\n'
+        'except ValueError as err:\n'
+        '    print("remove:", err)\n'
+        'try:\n'
+        '    [1].index(5)\n'
+        'except ValueError as err:\n'
+        '    print("index:", err)\n',
+        '1\n2\n[1, 2, 3, 2] [1, 2, 3, 2, 9]\n[1, 3, 2]\n'
+        'remove: list.remove(x): x not in list\n'
+        'index: 5 is not in list\n',
+    ),
+    (
+        '列表 sort 的关键字',
+        'x = [3, 1, 2]\n'
+        'x.sort()\n'
+        'print(x)\n'
+        'x.sort(reverse=True)\n'
+        'print(x)\n'
+        'words = ["bb", "a", "ccc"]\n'
+        'words.sort(key=len)\n'
+        'print(words)\n',
+        "[1, 2, 3]\n[3, 2, 1]\n['a', 'bb', 'ccc']\n",
+    ),
+    (
+        '字典 setdefault / copy / clear',
+        'd = {"a": 1}\n'
+        'print(d.setdefault("a", 9))\n'
+        'print(d.setdefault("b", 2))\n'
+        'print(d)\n'
+        'e = d.copy()\n'
+        'e["c"] = 3\n'
+        'print(d, e)\n'
+        'd.clear()\n'
+        'print(d)\n',
+        "1\n2\n{'a': 1, 'b': 2}\n"
+        "{'a': 1, 'b': 2} {'a': 1, 'b': 2, 'c': 3}\n{}\n",
+    ),
+    (
+        'str.format 多参数与格式符',
+        'print("{} and {}".format(1, 2))\n'
+        'print("{0} {1} {0}".format("a", "b"))\n'
+        'print("{:.2f}".format(3.14159))\n'
+        'print("{:05d}".format(42))\n'
+        'print("{:.3s}".format("abcdef"))\n'
+        'print("{:>6}|".format("ab"))\n'
+        'print("{:<6}|".format("ab"))\n'
+        'print("{:^6}|".format("ab"))\n'
+        'print("{:+.2f}".format(1.5))\n'
+        'print("{:x}".format(255))\n'
+        'print("literal {{}} braces".format())\n',
+        '1 and 2\n'
+        'a b a\n'
+        '3.14\n'
+        '00042\n'
+        'abc\n'
+        '    ab|\n'
+        'ab    |\n'
+        '  ab  |\n'
+        '+1.50\n'
+        'ff\n'
+        'literal {} braces\n',
+    ),
+    (
+        'dict 的带参构造',
+        'print(dict())\n'
+        'print(dict([["a", 1], ["b", 2]]))\n'
+        'print(dict([("a", 1)]))\n'
+        'd = {"x": 9}\n'
+        'print(dict(d))\n'
+        'print(dict(a=1, b=2))\n',
+        "{}\n{'a': 1, 'b': 2}\n{'a': 1}\n{'x': 9}\n{'a': 1, 'b': 2}\n",
+    ),
+    (
+        'min / max 的 key 关键字',
+        'print(min([3, 1, 2]))\n'
+        'print(max([3, 1, 2]))\n'
+        'print(min(3, 1, 2))\n'
+        'print(min(["bb", "a", "ccc"], key=len))\n'
+        'print(max(["bb", "a", "ccc"], key=len))\n',
+        '1\n3\n1\na\nccc\n',
+    ),
+    (
+        'dir 列出可用方法',
+        'names = dir("")\n'
+        'print("upper" in names, "append" in names)\n'
+        'names = dir([1])\n'
+        'print("append" in names, "sort" in names, "nope" in names)\n'
+        'names = dir({})\n'
+        'print("get" in names, "setdefault" in names)\n',
+        'True False\nTrue True False\nTrue True\n',
+    ),
     # ── id / hash ──
     (
         'id 对同一对象稳定',

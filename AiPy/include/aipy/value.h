@@ -612,6 +612,22 @@ Value findIn(const Value& text, const Value& needle);
 Value countIn(const Value& text, const Value& needle);
 // 只支持 {} 与 {0}：完整的格式迷你语言不值得为脚本场景实现
 Value formatText(const Value& text, const Value& args);
+
+// ── 字符串方法（实现见 strings.cpp）──
+Value splitlines(const Value& text);
+Value lstrip(const Value& text);
+Value rstrip(const Value& text);
+Value title(const Value& text);
+Value zfill(const Value& text, const Value& width);
+Value ljust(const Value& text, const Value& width);
+Value rjust(const Value& text, const Value& width);
+Value center(const Value& text, const Value& width);
+Value isdigit(const Value& text);
+Value isalpha(const Value& text);
+Value isalnum(const Value& text);
+Value isSpaceText(const Value& text);
+Value islower(const Value& text);
+Value isupper(const Value& text);
 Value textOfChar(const Value& codepoint);
 
 // ── 其它内建 ──
@@ -622,6 +638,19 @@ Value maximum(const Value& a, const Value& b);
 //
 // 都在值层而不是内建里，因为它们是纯容器操作，与具体能力无关。
 // 与 `list.sort()` 共用同一套比较规则（见 sortList）。
+// 列表方法（实现见 value.cpp）。sort 的键由 VM 预算，值层调不了脚本函数。
+void sortListByKeys(const Value& list, const Value& keys, bool reverse);
+Value listIndexOf(const Value& list, const Value& needle);
+void listRemove(const Value& list, const Value& needle);
+Value listCopy(const Value& list);
+Value listCount(const Value& list, const Value& needle);
+
+// 字典方法。
+Value dictSetDefault(const Value& dict, const Value& key, const Value& fallback);
+Value dictCopyOf(const Value& dict);
+void dictClear(const Value& dict);
+Value dictFromKeys(const Value& keys, const Value& value);
+
 Value sortedCopy(const Value& items, const Value& key, bool reverse);
 Value reversedCopy(const Value& items);
 Value zipOf(const Value& left, const Value& right);

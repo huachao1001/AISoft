@@ -183,6 +183,11 @@ std::vector<std::string> disassemble(const Program& program) {
                       read16(code, pc));
         pc += 2;
         break;
+      case Op::kCallMethodKw:
+        std::snprintf(text, sizeof(text), "call_method_kw %u,%u,%u",
+                      read16(code, pc), code[pc + 2], code[pc + 3]);
+        pc += 4;
+        break;
       case Op::kMakeClassMethod:
         std::snprintf(text, sizeof(text), "make_class_method");
         break;

@@ -5,7 +5,7 @@
 
 这份清单不是凭记忆写的。每一条都由 `tests/probe_syntax.py` 实测：用
 `pcc.exe` 编成字节码、再用 `aipy_run.exe` 真的跑一遍，把结果记下来。
-共 315 条，当前 **277 条支持、37 条不支持**。
+共 338 条，当前 **309 条支持、28 条不支持**。
 
 ```bat
 :: 重跑一遍（改了编译器后必做）
@@ -154,7 +154,7 @@ traceback 对象）。`with [1, 2]:` 会报「list 不支持上下文管理器�
 | `x[::-1]` | 负步长（反向） |
 | `d["k"]` | 字典下标 |
 
-### 内建函数（40 个）
+### 内建函数（42 个）
 
 | 函数 | 说明 |
 |---|---|
@@ -311,24 +311,44 @@ class App(Activity):
 
 ### 字符串方法
 
-`splitlines` `title` `zfill` `encode` `lstrip` `rstrip` `center` `ljust`
-`rjust` `isdigit` `isalpha` 等——**只有上面列出的 11 个**。
+`upper` `lower` `strip` `lstrip` `rstrip` `replace` `split` `splitlines`
+`startswith` `endswith` `find` `count` `join` `format` `title` `zfill`
+`ljust` `rjust` `center` `isdigit` `isalpha` `isalnum` `isspace` `islower`
+`isupper`。
+
+`encode` 仍不支持（本语言没有 bytes 编解码器）。
+
+`format` 支持多个位置参数与常用格式说明符（`:.2f`、`:.3s`、`:d`、`:x`、
+`:>5`、`:<5`、`:^5`、`:05d`、`:+.2f`）；不认识的说明符原样保留。
 
 ### 列表方法
 
-`index` `remove` `copy` `count` `sort(key=...)` `sorted()`——只有 7 个。
-需要排序拷贝就 `x = list(x); x.sort()`。
+`append` `extend` `insert` `pop` `clear` `sort` `reverse` `index`
+`remove` `copy` `count`。
+
+`sort` 支持 `key=` 与 `reverse=`（走 `CALL_METHOD_KW`）。这两个关键字也
+是唯一被方法接受的；其它方法收到关键字会明确报 `TypeError`，不静默忽略。
 
 ### 字典方法
 
-`setdefault` `copy` `fromkeys` `clear`——只有 6 个。
+`get` `keys` `values` `items` `update` `pop` `setdefault` `copy`
+`clear`。
+
+`dict` 的构造支持四种形态：`dict()`、`dict(other)`、`dict(pairs)`、
+`dict(a=1, b=2)`。
 
 ### 内建函数
 
 `map` `filter` `sum` `id` `hash` 都支持：
 `map`/`filter` 接收脚本函数、lambda、内建函数值（`len`）或内建类型（`str`），
 第二个参数可以是容器或生成器；`sum` 可直接吃生成器，支持 `start`。
-`help` `dir` 仍不支持。
+`help` / `dir` 是最小实现：`dir(x)` 返回该值可用方法的排序列表，
+`help(x)` 打印类型与可用方法；`help()` 列出全部内建。它们不假装完整——
+本语言没有 `__doc__` 与描述符遍历，所以给的是「看某个值能调什么」这个
+真实用途。`dir()` 无参时返回空列表（没有真正的模块命名空间）。
+
+CPython 的 `dir(list)` 还会列出 `__add__` 这类 dunder 方法；本语言没有，
+这是有意差异。
 
 `reversed` / `enumerate` / `zip` / `map` / `filter` 返回**列表**（CPython 返回
 惰性迭代器），因为本语言没有迭代器对象；`print` 它们得到 `[...]` 而不是
@@ -423,5 +443,5 @@ python tests\probe_syntax.py build\final\aipy_run.exe
 
 输出末尾会列出「与预期不符」的条目。`tests/probe_syntax.py` 里每条用例都
 标了期望值（`ok` / `no`）；文档说支持的必须真的能跑，说不支持的必须真的
-报错。**这条检查没有进 CTest**——它跑 315 次编译+执行，约 15 秒，
+报错。**这条检查没有进 CTest**——它跑 338 次编译+执行，约 16 秒，
 放在每次构建里太重；提交前手动跑一次即可。

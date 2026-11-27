@@ -783,9 +783,6 @@ bool CodeGen::call(const Node& node) {
 
   // 扩展：模块.函数(...) / 方法调用。
   if (func.kind == Kind::Attribute) {
-    if (total != node.argsCount) {
-      return failAt(diag::keywordArguments(), node);
-    }
     const Node& receiver = *func.children[0];
 
     // 接收者是扩展模块名时走 CALL_EXT；否则是方法调用。
@@ -813,6 +810,9 @@ bool CodeGen::call(const Node& node) {
         }
       }
       if (isModule) {
+        if (total != node.argsCount) {
+          return failAt(diag::keywordArguments(), node);
+        }
         for (std::size_t i = 0; i < total; ++i) {
           if (!expr(*node.children[1 + i])) return false;
         }
@@ -826,6 +826,31 @@ bool CodeGen::call(const Node& node) {
 
     // 压栈顺序：接收者在下、参数在上。
     if (!expr(receiver)) return false;
+    // 带关键字的方法调用：`x.sort(key=f, reverse=True)`。只有 sort 真的
+    // 接受关键字，但编译器不做这个判断——哪些方法收关键字是运行期语义，
+    // 由 VM 明确报错，而不是编译期假装不支持。
+    std::size_t keywordCount = 0;
+    for (std::size_t i = 0; i < total; ++i) {
+      if (node.children[1 + i]->kind == Kind::Keyword) ++keywordCount;
+    }
+    if (keywordCount > 0) {
+      for (std::size_t i = 0; i < total; ++i) {
+        const Node& argument = *node.children[1 + i];
+        if (argument.kind != Kind::Keyword) {
+          if (!expr(argument)) return false;
+          continue;
+        }
+        // 关键字在栈上的形状是 [键, 值]，键当常量压。
+        emit("CONST", argument);
+        emitU16(constIndexOfStr(argument.text));
+        if (!expr(*argument.children[0])) return false;
+      }
+      emit("CALL_METHOD_KW", node);
+      emitU16(constIndexOfStr(func.text));
+      emitU8(static_cast<int>(total - keywordCount));
+      emitU8(static_cast<int>(keywordCount));
+      return true;
+    }
     for (std::size_t i = 0; i < total; ++i) {
       if (!expr(*node.children[1 + i])) return false;
     }

@@ -165,7 +165,7 @@ bool shapesOf(const std::string& name, std::vector<char>* shapes,
       "BUILD_LIST", "BUILD_DICT", "ITER_NEXT", "WITH_EXIT",
       "SETUP_EXC", "BUILD_TUPLE", "BUILD_SET", "CALL_DYN",
       "MAKE_SUPER", "GET_ATTR", "SET_ATTR", "LOAD_TYPE", "UNPACK",
-      "MAKE_BUILTIN_FUNCTION",
+      "MAKE_BUILTIN_FUNCTION", "CALL_METHOD_KW",
       nullptr};
   static const char* const kU8[] = {"BIN", "CMP", "UNARY", "INPLACE", "SLICE",
                                     "SET_SLICE", "CALL_VALUE", "INSTANTIATE",

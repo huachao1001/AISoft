@@ -593,6 +593,87 @@ static bool invokeBuiltin(const Program& program, std::vector<Value>& globals,
     return true;
   }
 
+  // min/max 带 key=：键要先求出来，值层调不了脚本函数。
+  // `min(xs, key=f)` 与 `min(a, b, key=f)` 两种形态都要支持。
+  if ((builtinName == "min" || builtinName == "max") && keywords.count > 0) {
+    Value key;
+    for (int i = 0; i < keywords.count; ++i) {
+      if (keywords.names[i] == "key") key = keywords.values[i];
+    }
+    if (argc == 0) {
+      *failure = builtinName + " expected at least 1 argument, got 0";
+      return false;
+    }
+    const bool ascending = builtinName == "min";
+    // 单参数是容器，多参数是候选值。
+    List candidates = argc == 1 ? iterate(args[0]) : List(args, args + argc);
+    if (candidates.empty()) {
+      *failure = builtinName + "() arg is an empty sequence";
+      return false;
+    }
+    Value best = candidates[0];
+    Value bestKey;
+    if (!key.isNone()) {
+      std::string errorType;
+      std::string error;
+      if (!callCallable(program, globals, key, {best}, &bestKey, &errorType,
+                        &error)) {
+        raiseException(errorType.empty() ? "RuntimeError" : errorType, error);
+        return false;
+      }
+    }
+    for (std::size_t i = 1; i < candidates.size(); ++i) {
+      Value candidateKey;
+      if (!key.isNone()) {
+        std::string errorType;
+        std::string error;
+        if (!callCallable(program, globals, key, {candidates[i]}, &candidateKey,
+                          &errorType, &error)) {
+          raiseException(errorType.empty() ? "RuntimeError" : errorType, error);
+          return false;
+        }
+      }
+      const bool better =
+          key.isNone()
+              ? (ascending ? lt(candidates[i], best).toBool()
+                           : gt(candidates[i], best).toBool())
+              : (ascending ? lt(candidateKey, bestKey).toBool()
+                           : gt(candidateKey, bestKey).toBool());
+      if (better) {
+        best = candidates[i];
+        bestKey = candidateKey;
+      }
+    }
+    *out = best;
+    return true;
+  }
+
+  // dict(a=1, b=2)：关键字就是键值对，键是字符串。位置实参仍按
+  // dict(pairs) 的解释，关键字覆盖同名键（与 CPython 一致）。
+  if (builtinName == "dict" && keywords.count > 0) {
+    Value base;
+    if (argc > 0) {
+      if (argc != 1) {
+        *failure = "dict expected at most 1 positional argument, got " +
+                   std::to_string(argc);
+        return false;
+      }
+      if (args[0].isDict()) {
+        base = Value::dict(args[0].dictKeys(), args[0].dictValues());
+      } else {
+        base = dictFromPairs(args[0]);
+        if (hasPendingException()) return false;
+      }
+    } else {
+      base = Value::dict({}, {});
+    }
+    for (int i = 0; i < keywords.count; ++i) {
+      setItem(base, Value(keywords.names[i]), keywords.values[i]);
+    }
+    *out = base;
+    return true;
+  }
+
   // sum(iterable, start=0)：生成器已在上面抽干成列表，这里只管累加。
   if (builtinName == "sum") {
     Value start;
@@ -1684,6 +1765,84 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         const Value value = callMethod(target, name, args, argc, &error);
         if (!error.empty()) return fail(error);
         stack[sp++] = value;
+        break;
+      }
+
+      case Op::kCallMethodKw: {
+        // 栈是 [接收者, 位置实参..., 键1, 值1, ...]。
+        const std::uint16_t nameIndex = read16(code, frame.pc);
+        const std::uint8_t positional = code[frame.pc + 2];
+        const std::uint8_t keywordCount = code[frame.pc + 3];
+        frame.pc += 4;
+        if (nameIndex >= program.consts.size()) {
+          return fail("方法名越界（编译器 bug）");
+        }
+        if (positional > 8 || keywordCount > 8) {
+          return fail("方法调用最多 8 个参数");
+        }
+        Value keywordValues[8];
+        std::string keywordNames[8];
+        for (int i = keywordCount - 1; i >= 0; --i) {
+          keywordValues[i] = stack[--sp];
+          keywordNames[i] = stack[--sp].asString();
+        }
+        Value args[8];
+        for (int i = positional - 1; i >= 0; --i) args[i] = stack[--sp];
+        const Value target = stack[--sp];
+        const std::string name = program.consts[nameIndex].asString();
+
+        // 只有 list.sort 接受关键字。其它方法一律报错而不是静默忽略：
+        // `x.append(v=1)` 被忽略会变成「追加了 None」，比报错难查得多。
+        if (name != "sort" || !target.isList()) {
+          std::string rejected;
+          for (int i = 0; i < keywordCount; ++i) {
+            if (!rejected.empty()) rejected += ", ";
+            rejected += "'" + keywordNames[i] + "'";
+          }
+          raiseException("TypeError",
+                         typeName(target) + "." + name +
+                             "() takes no keyword arguments (" + rejected + ")");
+          break;
+        }
+
+        Value key;
+        bool reverse = false;
+        for (int i = 0; i < keywordCount; ++i) {
+          if (keywordNames[i] == "key") {
+            key = keywordValues[i];
+          } else if (keywordNames[i] == "reverse") {
+            reverse = keywordValues[i].toBool();
+          } else {
+            raiseException("TypeError", "sort() got an unexpected keyword "
+                                        "argument '" + keywordNames[i] + "'");
+            break;
+          }
+        }
+        if (hasPendingException()) break;
+
+        // 键先一次性求好再排序：与 CPython 一样，key 带副作用时只调一次。
+        if (!key.isNone()) {
+          const List items = iterate(target);
+          List keys;
+          keys.reserve(items.size());
+          for (const Value& item : items) {
+            Value produced;
+            std::string errorType;
+            std::string error;
+            if (!callCallable(program, globals, key, {item}, &produced,
+                              &errorType, &error)) {
+              raiseException(errorType.empty() ? "RuntimeError" : errorType,
+                             error);
+              break;
+            }
+            keys.push_back(produced);
+          }
+          if (hasPendingException()) break;
+          sortListByKeys(target, Value::list(std::move(keys)), reverse);
+        } else {
+          sortListByKeys(target, Value(), reverse);
+        }
+        stack[sp++] = Value();
         break;
       }
 

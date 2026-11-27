@@ -66,7 +66,7 @@ OPCODES = [
     'CALL_VALUE_DYN', 'MAKE_CLASS', 'GET_ATTR', 'SET_ATTR', 'INSTANTIATE',
     'MAKE_SUPER', 'YIELD', 'AWAIT',
     'MAKE_STATIC_METHOD', 'MAKE_CLASS_METHOD', 'LOAD_TYPE', 'UNPACK',
-    'CALL_BUILTIN_KW', 'MAKE_BUILTIN_FUNCTION',
+    'CALL_BUILTIN_KW', 'MAKE_BUILTIN_FUNCTION', 'CALL_METHOD_KW',
 ]
 
 # 二元算子编号，与 vm.h 的 BinOp 一致。
@@ -102,6 +102,8 @@ BUILTINS = [
     'filter',
     'id',
     'hash',
+    'help',
+    'dir',
 ]
 
 OP = {name: index for index, name in enumerate(OPCODES)}
@@ -2192,8 +2194,6 @@ class Compiler:
 
         # 扩展：模块.函数(...)
         if isinstance(node.func, ast.Attribute):
-            if node.keywords:
-                raise CompileError('不支持关键字传参；按位置传', self.filename, node)
             # 接收者是扩展模块名时走 CALL_EXT；否则是方法调用。
             #
             # 模块名可以是点分的（`os.path.exists`）：取接收者的完整属性链，
@@ -2201,6 +2201,9 @@ class Compiler:
             # 之后 `os.path` 就可用，与 CPython 一致）。
             receiver_name = self.dotted_name(node.func.value)
             if receiver_name and self.is_module(receiver_name):
+                if node.keywords:
+                    raise CompileError('不支持关键字传参；按位置传',
+                                       self.filename, node)
                 # 限定名进产物；函数指针由加载器按名字从已链接的 pylib 里查。
                 # 产物里不出现任何地址——同一个脚本换一套 pylib 链接组合也照样跑。
                 for argument in node.args:
@@ -2213,6 +2216,20 @@ class Compiler:
             # 压栈顺序：接收者在下、参数在上。VM 从栈顶弹参数、
             # 最后弹接收者，所以接收者必须先压。
             self.expr(node.func.value)
+            if node.keywords:
+                # 带关键字的方法调用：`x.sort(key=f, reverse=True)`。
+                # 哪些方法收关键字是运行期语义，由 VM 明确报错。
+                for argument in node.args:
+                    self.expr(argument)
+                for keyword in node.keywords:
+                    self.block.emit('CONST', keyword)
+                    self.block.emit_u16(self.const_string(keyword.arg))
+                    self.expr(keyword.value)
+                self.block.emit('CALL_METHOD_KW', node)
+                self.block.emit_u16(self.const_string(node.func.attr))
+                self.block.emit_u8(len(node.args))
+                self.block.emit_u8(len(node.keywords))
+                return
             for argument in node.args:
                 self.expr(argument)
             self.block.emit('CALL_METHOD', node)

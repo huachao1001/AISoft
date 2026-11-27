@@ -42,7 +42,28 @@ Value callMethod(const Value& target, const std::string& name,
     if (name == "count" && need(1)) return countIn(target, args[0]);
     // `join` 在 Python 里是分隔符调用的：sep.join(items)
     if (name == "join" && need(1)) return join(target, args[0]);
-    if (name == "format" && need(1)) return formatText(target, args[0]);
+    if (name == "format") {
+      // CPython 的 `str.format(*args)`：任意个位置实参。
+      Value::List collected;
+      collected.reserve(static_cast<std::size_t>(argc));
+      for (int i = 0; i < argc; ++i) collected.push_back(args[i]);
+      return formatText(target, Value::list(std::move(collected)));
+    }
+    // ── 下面这批与 CPython 的 str 方法同形，实现见 strings.cpp ──
+    if (name == "splitlines" && need(0)) return splitlines(target);
+    if (name == "lstrip" && need(0)) return lstrip(target);
+    if (name == "rstrip" && need(0)) return rstrip(target);
+    if (name == "title" && need(0)) return title(target);
+    if (name == "zfill" && need(1)) return zfill(target, args[0]);
+    if (name == "ljust" && need(1)) return ljust(target, args[0]);
+    if (name == "rjust" && need(1)) return rjust(target, args[0]);
+    if (name == "center" && need(1)) return center(target, args[0]);
+    if (name == "isdigit" && need(0)) return isdigit(target);
+    if (name == "isalpha" && need(0)) return isalpha(target);
+    if (name == "isalnum" && need(0)) return isalnum(target);
+    if (name == "isspace" && need(0)) return isSpaceText(target);
+    if (name == "islower" && need(0)) return islower(target);
+    if (name == "isupper" && need(0)) return isupper(target);
     *error = "字符串没有方法 " + name;
     return Value();
   }
@@ -79,6 +100,14 @@ Value callMethod(const Value& target, const std::string& name,
       reverseList(target);
       return Value();
     }
+    // ── 与 CPython 的 list 方法同形 ──
+    if (name == "index" && need(1)) return listIndexOf(target, args[0]);
+    if (name == "remove" && need(1)) {
+      listRemove(target, args[0]);
+      return Value();
+    }
+    if (name == "copy" && need(0)) return listCopy(target);
+    if (name == "count" && need(1)) return listCount(target, args[0]);
     *error = "列表没有方法 " + name;
     return Value();
   }
@@ -102,6 +131,18 @@ Value callMethod(const Value& target, const std::string& name,
       if (argc == 1) return dictPop(target, args[0], Value());
       if (argc == 2) return dictPop(target, args[0], args[1]);
       *error = "pop 需要 1 或 2 个参数";
+      return Value();
+    }
+    // ── 与 CPython 的 dict 方法同形 ──
+    if (name == "setdefault") {
+      if (argc == 1) return dictSetDefault(target, args[0], Value());
+      if (argc == 2) return dictSetDefault(target, args[0], args[1]);
+      *error = "setdefault 需要 1 或 2 个参数";
+      return Value();
+    }
+    if (name == "copy" && need(0)) return dictCopyOf(target);
+    if (name == "clear" && need(0)) {
+      dictClear(target);
       return Value();
     }
     *error = "字典没有方法 " + name;

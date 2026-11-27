@@ -190,15 +190,24 @@ Value builtinList(const Value* args, int count, std::string* error) {
   return Value::list(iterate(args[0]));
 }
 
-// dict() 只支持无参形式。带参数的构造（`dict([["a", 1]])`）依赖可迭代的
-// 键值对，而语言子集里没有元组，写不出合法的输入——与其支持一个只有
-// 一种写法的形式，不如明确拒绝。
-Value builtinDict(const Value*, int count, std::string* error) {
-  if (count != 0) {
-    *error = "dict 只支持无参形式（用 d[k] = v 填内容）";
+// dict() 的三种形态与 CPython 一致：
+//   dict()                 空字典
+//   dict(other)            浅拷贝另一个字典
+//   dict(pairs)            [["a", 1], ("b", 2)] 这类键值对序列
+//   dict(a=1, b=2)         关键字形式（由 VM 侧的 CALL_BUILTIN_KW 处理）
+Value builtinDict(const Value* args, int count, std::string* error) {
+  if (count == 0) return Value::dict({}, {});
+  if (count != 1) {
+    *error = "dict expected at most 1 positional argument, got " +
+             std::to_string(count);
     return Value();
   }
-  return Value::dict({}, {});
+  // 字典直接拷贝，保持插入序。
+  if (args[0].isDict()) {
+    return Value::dict(args[0].dictKeys(), args[0].dictValues());
+  }
+  // 其余按「键值对序列」解析；失败时 dictFromPairs 会抛 ValueError。
+  return dictFromPairs(args[0]);
 }
 
 // range 物化成列表。
@@ -332,6 +341,9 @@ Value builtinDivmod(const Value* args, int count, std::string* error);
 // id / hash：纯值层能算（身份就是载荷地址、哈希用 eq 的同一套规则）。
 Value builtinId(const Value* args, int count, std::string* error);
 Value builtinHash(const Value* args, int count, std::string* error);
+// help / dir：打印可用内建、列出可用方法（实现见 builtins_help.cpp）。
+Value builtinHelp(const Value* args, int count, std::string* error);
+Value builtinDir(const Value* args, int count, std::string* error);
 Value builtinPow(const Value* args, int count, std::string* error);
 Value builtinTuple(const Value* args, int count, std::string* error);
 
@@ -392,6 +404,8 @@ const Entry kBuiltinTable[] = {
     {"filter", nullptr},
     {"id", builtinId},
     {"hash", builtinHash},
+    {"help", builtins::builtinHelp},
+    {"dir", builtins::builtinDir},
 };
 
 }  // namespace builtins

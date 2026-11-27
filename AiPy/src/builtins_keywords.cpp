@@ -65,8 +65,10 @@ bool builtinTakesKeywords(const std::string& builtin) {
   for (const KeywordEntry& entry : kKeywordTable) {
     if (builtin == entry.builtin) return true;
   }
-  // print 的 sep/end 在 VM 里按变长位置处理，也算「接受关键字」。
-  return builtin == "print" || builtin == "dict";
+  // print 的 sep/end 在 VM 里按变长位置处理；dict 的键名任意；
+  // min/max 的 key= 是仅关键字。这三类不能靠「名字→位置」表表达。
+  return builtin == "print" || builtin == "dict" || builtin == "min" ||
+         builtin == "max";
 }
 
 // 仅关键字参数（sorted 的 key/reverse）不属于位置表，但必须被接受。
@@ -75,6 +77,10 @@ bool builtinTakesKeywords(const std::string& builtin) {
 bool builtinAcceptsKeyword(const std::string& builtin,
                            const std::string& keyword) {
   if (builtin == "sorted") return keyword == "key" || keyword == "reverse";
+  // min/max 的 key= 是仅关键字参数。
+  if (builtin == "min" || builtin == "max") return keyword == "key";
+  // dict(**kwargs)：键名任意，不能按名单校验。
+  if (builtin == "dict") return true;
   return false;
 }
 

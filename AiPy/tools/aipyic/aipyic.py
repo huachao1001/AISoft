@@ -99,6 +99,7 @@ OPERANDS = {
     'UNPACK': ('u16',),
     'CALL_BUILTIN_KW': ('u16', 'u8', 'u8'),
     'MAKE_BUILTIN_FUNCTION': ('u16',),
+    'CALL_METHOD_KW': ('u16', 'u8', 'u8'),
     'BUILD_TUPLE': ('u16',),
     'BUILD_SET': ('u16',),
     'DEL_LOCAL': ('u16',),

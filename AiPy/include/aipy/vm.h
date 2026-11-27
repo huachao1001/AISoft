@@ -204,6 +204,14 @@ enum class Op : std::uint8_t {
   // 载荷是内置表下标；与 MAKE_FUNCTION 分开是因为那个字段在两种值里
   // 含义不同（脚本函数号 vs 内置表下标），混用会跳到错误的函数体。
   kMakeBuiltinFunction,
+
+  // 带关键字实参的方法调用：u16 方法名常量号, u8 位置数, u8 关键字数。
+  // 栈上是 [接收者, 位置实参..., 键1, 值1, ...]。
+  //
+  // 只有 `list.sort(key=, reverse=)` 真的用得上：它是少数「方法也要
+  // 关键字」的场合。其它方法收到关键字一律报 TypeError，与 CPython 一致
+  // ——不静默忽略，否则 `x.append(a=1)` 会变成「追加了 None」。
+  kCallMethodKw,
 };
 
 enum class BinOp : std::uint8_t {
