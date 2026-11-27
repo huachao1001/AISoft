@@ -5,7 +5,7 @@
 
 这份清单不是凭记忆写的。每一条都由 `tests/probe_syntax.py` 实测：用
 `pcc.exe` 编成字节码、再用 `aipy_run.exe` 真的跑一遍，把结果记下来。
-共 196 条，当前 **155 条支持、41 条不支持**。
+共 315 条，当前 **277 条支持、37 条不支持**。
 
 ```bat
 :: 重跑一遍（改了编译器后必做）
@@ -154,7 +154,7 @@ traceback 对象）。`with [1, 2]:` 会报「list 不支持上下文管理器�
 | `x[::-1]` | 负步长（反向） |
 | `d["k"]` | 字典下标 |
 
-### 内建函数（36 个）
+### 内建函数（40 个）
 
 | 函数 | 说明 |
 |---|---|
@@ -172,10 +172,12 @@ traceback 对象）。`with [1, 2]:` 会报「list 不支持上下文管理器�
 | `isinstance(x, T)` | 认继承链与异常层级；`T` 支持元组形式 `(A, B)` |
 | `sorted` `reversed` `zip` `enumerate` | 容器变换，都返回列表 |
 | `any` `all` | 真值聚合 |
+| `map` `filter` | 高阶变换，返回列表；可吃生成器，回调可为 lambda / 内建 / 类型 |
+| `id` `hash` | 身份与哈希；`hash` 与 `==` 一致，容器类型抛 `TypeError` |
 
 内建接受的关键字实参（其余内建收到关键字会明确报 `TypeError`，与 CPython 一致）：
 `print(sep=, end=)`、`sorted(key=, reverse=)`、`int(base=)`、`round(ndigits=)`、
-`str(object=)`、`enumerate(start=)`。
+`str(object=)`、`enumerate(start=)`、`sum(start=)`。
 
 ### 类
 
@@ -323,13 +325,23 @@ class App(Activity):
 
 ### 内建函数
 
-`map` `filter` `help` `dir` `id` `hash` `sum(生成器)` 全部不支持。
-`reversed` / `enumerate` / `zip` 返回**列表**（CPython 返回惰性迭代器），
-因为本语言没有迭代器对象；`print` 它们得到 `[...]` 而不是 `<... object at 0x...>`。
+`map` `filter` `sum` `id` `hash` 都支持：
+`map`/`filter` 接收脚本函数、lambda、内建函数值（`len`）或内建类型（`str`），
+第二个参数可以是容器或生成器；`sum` 可直接吃生成器，支持 `start`。
+`help` `dir` 仍不支持。
 
-内建类型名（`int` `str` `list` `dict` `ValueError` 等）在**值位置**是可用的：
-`type(x) is int`、`isinstance(x, str)`、`f(int)` 都成立。调用位置仍然是内建
-函数——`int("3")` 走 `CALL_BUILTIN`，两者由语法位置区分，不需要额外标记。
+`reversed` / `enumerate` / `zip` / `map` / `filter` 返回**列表**（CPython 返回
+惰性迭代器），因为本语言没有迭代器对象；`print` 它们得到 `[...]` 而不是
+`<... object at 0x...>`。
+
+内建**函数**本身也是一等值：`f = len`、`sorted(xs, key=len)`、
+`map(str, xs)` 都成立，`print(len)` 显示 `<built-in function len>`。
+内建类型名（`int` `str` `list` `dict` `ValueError` 等）在**值位置**同样可用，
+且因为类型名同时是构造器，它也能被调用：`map(str, [1, 2])` 与
+`str(1)` 走同一条实现。
+
+`id` 返回对象载荷地址（同一对象稳定，不同对象不同）；`hash` 与 `==` 保持
+一致（`hash(1) == hash(1.0)`），对 `list`/`dict`/`set` 抛 `TypeError`。
 
 `open` 与 `input` **支持**，但它们的实现来自 `fs.pylib`：库用
 `AIPY_PYLIB_BUILTIN` 把它们注册成裸名，所以脚本里写 `open(p)` / `input()`
@@ -411,5 +423,5 @@ python tests\probe_syntax.py build\final\aipy_run.exe
 
 输出末尾会列出「与预期不符」的条目。`tests/probe_syntax.py` 里每条用例都
 标了期望值（`ok` / `no`）；文档说支持的必须真的能跑，说不支持的必须真的
-报错。**这条检查没有进 CTest**——它跑 184 次编译+执行，约 10 秒，
+报错。**这条检查没有进 CTest**——它跑 315 次编译+执行，约 15 秒，
 放在每次构建里太重；提交前手动跑一次即可。

@@ -178,6 +178,11 @@ std::vector<std::string> disassemble(const Program& program) {
                       read16(code, pc), code[pc + 2], code[pc + 3]);
         pc += 4;
         break;
+      case Op::kMakeBuiltinFunction:
+        std::snprintf(text, sizeof(text), "make_builtin_function %u",
+                      read16(code, pc));
+        pc += 2;
+        break;
       case Op::kMakeClassMethod:
         std::snprintf(text, sizeof(text), "make_class_method");
         break;

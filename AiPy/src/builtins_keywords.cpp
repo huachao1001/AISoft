@@ -44,6 +44,9 @@ const KeywordEntry kKeywordTable[] = {
     {"enumerate", "start", 1},
     // str(object='')
     {"str", "object", 0},
+    // sum(iterable, start=0)。注意 sum 的实际执行在 VM 里（它要吃生成器），
+    // 这张表只决定「这个内建接受哪些关键字」。
+    {"sum", "start", 1},
 };
 
 }  // namespace

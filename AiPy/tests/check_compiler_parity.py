@@ -21,7 +21,6 @@
 """
 
 import io
-import json
 import os
 import subprocess
 import sys
@@ -320,18 +319,18 @@ def main(argv):
     print('  %d examples checked' % len(examples))
 
     # ── 2. 语法探针 ──
-    baseline_path = os.path.join(HERE, 'data', 'probe_baseline.json')
-    if not os.path.isfile(baseline_path):
-        print('\n== probes: skipped (tests/data/probe_baseline.json missing) ==')
-        print('   regenerate with: build/dump_probe_baseline.py')
-    else:
-        print('\n== probes ==')
-        with io.open(baseline_path, encoding='utf-8') as handle:
-            baseline = json.load(handle)
-        for index, case in enumerate(baseline):
-            compare(case['source'], 'probe%03d_%s' % (index, case['category']),
-                    exe, scratch, failures, False)
-        print('  %d probes checked' % len(baseline))
+    #
+    # 直接读 tests/probe_syntax.py，不经过 JSON 基线：基线曾经放在被
+    # .gitignore 忽略的 tests/data/ 下，新克隆的仓库会因为「文件不存在」
+    # 静默跳过全部探针——对拍看起来是绿的，实际上一条都没跑。
+    sys.path.insert(0, HERE)
+    import probe_syntax  # noqa: E402  用例定义就在源码树里
+    cases = probe_syntax.CASES
+    print('\n== probes ==')
+    for index, case in enumerate(cases):
+        compare(case[2], 'probe%03d_%s' % (index, case[0]), exe, scratch,
+                failures, False)
+    print('  %d probes checked' % len(cases))
 
     if failures:
         print('\n%d mismatches:' % len(failures), file=sys.stderr)

@@ -207,6 +207,11 @@ class Value {
   friend Value makeFunction(int index, List captures);
   friend int functionIndexOf(const Value& value);
   friend const List& functionCaptures(const Value& value);
+  // 内建函数值：载荷是内置表下标，不属于脚本函数。
+  friend Value makeBuiltinFunction(int builtinIndex, const std::string& name);
+  friend bool isBuiltinFunction(const Value& value);
+  friend int builtinFunctionIndex(const Value& value);
+  friend std::string builtinFunctionName(const Value& value);
   // 类对象与实例：同样是 kObject 的一种，表指针就是判据。
   friend Value makeClass(std::string name, List bases, List memberKeys,
                          List memberValues);
@@ -423,6 +428,19 @@ std::string builtinClassName(const Value& value);
 // 它们的名字全在模块级全局槽里，不需要闭包。
 Value makeFunction(int index, List captures = List());
 bool isFunction(const Value& value);
+
+// 内建函数值：`sorted(x, key=len)`、`f = len`。
+//
+// 与脚本函数值同构（kObject + 专用标记表），载荷是**内建下标**。判据是
+// 表指针，所以它不会被误当成脚本函数（functionIndexOf 仍返回 -1）——
+// 调用要经过内置表，不能当函数号用。
+// `name` 只用于显示：CPython 打出来是 `<built-in function len>`，
+// 而内置表下标对用户没有意义。
+Value makeBuiltinFunction(int builtinIndex, const std::string& name);
+bool isBuiltinFunction(const Value& value);
+int builtinFunctionIndex(const Value& value);
+// 内建函数的名字；不是内建函数值时返回空串。
+std::string builtinFunctionName(const Value& value);
 // 函数在 Program::functions 里的下标；不是函数值时返回 -1。
 int functionIndexOf(const Value& value);
 // 捕获的变量值；不是函数值时返回空列表。

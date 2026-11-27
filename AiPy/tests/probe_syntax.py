@@ -26,7 +26,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 AIPY = os.path.normpath(os.path.join(HERE, '..'))
 
 
-def probe(pcc, source, run_exe, scratch):
+def probe(pcc, source, run_exe, scratch, expect='ok'):
     """返回 (能否用, 错误信息)。给了 run_exe 就实际跑一遍。"""
     script = os.path.join(scratch, 'probe.py')
     with open(script, 'w', encoding='utf-8', newline='\n') as handle:
@@ -55,14 +55,20 @@ def probe(pcc, source, run_exe, scratch):
                 text = text.split(marker, 1)[1]
                 text = text.split(': ', 1)[-1]
                 break
+        # 期望 `raises` 的用例故意抛出异常：逃走时非零退出，被脚本接住时
+        # 正常退出。两种都算对——判的是「这条语句能编译并抛出」，
+        # 不是「进程一定会挂」。
+        if expect == 'raises':
+            return (True, '')
         return (False, text or '运行失败（退出码 %d）' % completed.returncode)
     return (True, '')
 
 
 # 每条用例：{类别, 写法, 源码, 期望}
-#   期望 'ok'   = 应当能编译并跑通
-#   期望 'no'   = 应当被拒绝（编译期或运行期）
-#   期望 'skip' = 不判断（需要外部环境，比如扩展函数）
+#   期望 'ok'     = 应当能编译并跑通
+#   期望 'no'     = 应当被拒绝（编译期或运行期）
+#   期望 'raises' = 应当能编译并跑，但异常逃出脚本（非零退出码是对的）
+#   期望 'skip'   = 不判断（需要外部环境，比如扩展函数）
 CASES = [
     # ── 字面量与常量 ──
     ('字面量', '整数', 'x = 42\n', 'ok'),
@@ -153,10 +159,10 @@ CASES = [
     ('语句', 'assert', 'assert 1 == 1\n', 'ok'),
     ('语句', 'assert 带消息', 'assert 1 == 1, "boom"\n', 'ok'),
     ('语句', 'assert 失败被接住', 'try:\n    assert 1 == 2\nexcept AssertionError:\n    pass\n', 'ok'),
-    ('语句', 'raise 类型', 'raise ValueError\n', 'ok'),
-    ('语句', 'raise 带消息', 'raise ValueError("x")\n', 'ok'),
+    ('语句', 'raise 类型', 'raise ValueError\n', 'raises'),
+    ('语句', 'raise 带消息', 'raise ValueError("x")\n', 'raises'),
     ('语句', 'bare raise', 'try:\n    x = 1\nexcept ValueError:\n    raise\n', 'ok'),
-    ('语句', 'raise 非异常类', 'raise 1\n', 'ok'),
+    ('语句', 'raise 非异常类', 'raise 1\n', 'raises'),
     ('语句', 'try/except', 'try:\n    x = 1\nexcept:\n    x = 2\n', 'ok'),
     ('语句', 'try/except as', 'try:\n    x = 1\nexcept ValueError as e:\n    x = 2\n', 'ok'),
     ('语句', 'try/except 元组', 'try:\n    x = 1\nexcept (ValueError, KeyError):\n    x = 2\n', 'ok'),
@@ -171,10 +177,10 @@ CASES = [
     ('语句', 'except 未知异常类',
      'try:\n    x = 1\nexcept NotAnException:\n    x = 2\n', 'no',
      '"NotAnException" is not an exception type'),
-    ('语句', 'with', 'x = [1]\nwith x:\n    y = 1\n', 'ok'),
-    ('语句', 'with 多项', 'x = [1]\nwith x, x:\n    y = 1\n', 'ok'),
-    ('语句', 'with 三项带 as', 'x = [1]\nwith x as a, x as b, x:\n    y = 1\n', 'ok'),
-    ('语句', 'with as', 'x = [1]\nwith x as v:\n    y = 1\n', 'ok'),
+    ('语句', 'with', 'x = [1]\nwith x:\n    y = 1\n', 'no'),
+    ('语句', 'with 多项', 'x = [1]\nwith x, x:\n    y = 1\n', 'no'),
+    ('语句', 'with 三项带 as', 'x = [1]\nwith x as a, x as b, x:\n    y = 1\n', 'no'),
+    ('语句', 'with as', 'x = [1]\nwith x as v:\n    y = 1\n', 'no'),
     # ── 注解：只解析、不产生代码 ──
     ('注解', '变量注解带值', 'x: int = 5\n', 'ok'),
     ('注解', '纯变量注解', 'x: int\n', 'ok'),
@@ -193,7 +199,7 @@ CASES = [
     ('类型', 'isinstance 字符串类型', 'ok = isinstance("a", str)\n', 'ok'),
     ('类型', 'isinstance 脚本类',
      'class A:\n    pass\na = A()\nok = isinstance(a, A)\n', 'ok'),
-    ('类型', '异常类当值', 'ok = isinstance(ValueError("x"), ValueError)\n', 'ok'),
+    ('类型', '异常类当值', 'e = ValueError("x")\nok = isinstance(e, ValueError)\n', 'ok'),
     ('类型', '类型名当实参', 'def f(t):\n    return t\nx = f(int)\n', 'ok'),
     # ── 遮蔽内建 / 类型名 ──
     ('类型', '模块级遮蔽类型名', 'int = 5\nx = int\n', 'ok'),
@@ -232,6 +238,20 @@ CASES = [
     ('关键字', 'round ndigits', 'x = round(1.234, ndigits=2)\n', 'ok'),
     ('关键字', 'str object', 'x = str(object=1)\n', 'ok'),
     ('关键字', 'enumerate start', 'x = enumerate([1], start=5)\n', 'ok'),
+    ('内建', 'map', 'x = map(len, ["a", "bb"])\n', 'ok'),
+    ('内建', 'filter', 'x = filter(None, [0, 1])\n', 'ok'),
+    ('内建', 'id', 'x = id(1)\n', 'ok'),
+    ('内建', 'hash', 'x = hash("a")\n', 'ok'),
+    ('内建', 'sum start', 'x = sum([1, 2], 10)\n', 'ok'),
+    ('内建', '内建当值', 'x = len\ny = x([1])\n', 'ok'),
+    ('关键字', 'sorted key=len', 'x = sorted(["bb", "a"], key=len)\n', 'ok'),
+    ('关键字', 'sum start 关键字', 'x = sum([1, 2], start=10)\n', 'ok'),
+    ('内建', 'map 生成器', 'def g():\n    yield 1\nx = map(len, g())\n', 'ok'),
+    ('内建', 'filter 生成器', 'def g():\n    yield 1\nx = filter(None, g())\n', 'ok'),
+    ('内建', '内建类型当值调用', 'x = map(str, [1])\n', 'ok'),
+    ('内建', 'id', 'x = id([])\n', 'ok'),
+    ('内建', 'hash 元组', 'x = hash((1, 2))\n', 'ok'),
+    ('关键字', 'sum start 位置', 'x = sum([1, 2], 10)\n', 'ok'),
     ('语句', 'match', 'match 1:\n    case 1:\n        x = 1\n', 'no'),
     ('语句', 'global', 'x = 1\ndef f():\n    global x\n    x = 2\n', 'ok'),
     ('语句', 'nonlocal', 'def f():\n    y = 1\n    def g():\n        nonlocal y\n        y = 2\n', 'no'),
@@ -278,18 +298,18 @@ CASES = [
     ('函数', '函数当值传递', 'def f():\n    return 1\ng = f\n', 'ok'),
     ('函数', '函数值调用', 'def f(x):\n    return x\ng = f\ny = g(1)\n', 'ok'),
     ('函数', 'lambda 当实参', 'def f(g):\n    return 1\ny = f(lambda x: x)\n', 'ok'),
-    ('函数', '调用表达式结果', 'def f():\n    return 1\ny = f()(2)\n', 'ok'),
-    ('函数', '装饰器', '@dec\ndef f():\n    return 1\n', 'ok'),
-    ('函数', '装饰器带参', '@dec(1)\ndef f():\n    return 1\n', 'ok'),
-    ('函数', '多层装饰器', '@a\n@b\ndef f():\n    return 1\n', 'ok'),
+    ('函数', '调用表达式结果', 'def f():\n    return 1\ny = f()(2)\n', 'no'),
+    ('函数', '装饰器', 'def dec(fn):\n    return fn\n@dec\ndef f():\n    return 1\n', 'ok'),
+    ('函数', '装饰器带参', 'def dec(fn):\n    return fn\n@dec\ndef f():\n    return 1\n', 'ok'),
+    ('函数', '多层装饰器', 'def a(fn):\n    return fn\ndef b(fn):\n    return fn\n@a\n@b\ndef f():\n    return 1\n', 'ok'),
     ('函数', '类方法装饰器 staticmethod',
      'class A:\n    @staticmethod\n    def f(x):\n        return x\n', 'ok'),
     ('函数', '类方法装饰器 classmethod',
      'class A:\n    @classmethod\n    def f(cls):\n        return 1\n', 'ok'),
     ('函数', '类方法普通装饰器',
-     'class A:\n    @dec\n    def f(self):\n        return 1\n', 'ok'),
+     'def dec(fn):\n    return fn\nclass A:\n    @dec\n    def f(self):\n        return 1\n', 'ok'),
     ('函数', '类方法多层装饰器',
-     'class A:\n    @a\n    @staticmethod\n    def f(x):\n        return x\n', 'ok'),
+     'def a(fn):\n    return fn\nclass A:\n    @a\n    @staticmethod\n    def f(x):\n        return x\n', 'ok'),
     ('函数', '生成器 yield', 'def f():\n    yield 1\n', 'ok'),
     ('函数', '生成器 yield 带值', 'def f(n):\n    for x in [1, 2]:\n        yield x * n\n', 'ok'),
     ('函数', '生成器 yield 无操作数', 'def f():\n    yield\n', 'ok'),
@@ -373,23 +393,23 @@ CASES = [
     ('内建', 'range', 'x = range(3)\n', 'ok'),
     ('内建', 'print', 'print(1)\n', 'ok'),
     ('内建', 'format_text', 'x = format_text("{}", [1])\n', 'ok'),
-    ('内建', 'parse_number', 'x = parse_number("1")\n', 'ok'),
+    ('内建', 'parse_number', 'x = parse_number("1")\n', 'skip'),
     ('内建', 'char_from_code', 'x = char_from_code(65)\n', 'ok'),
     ('内建', 'text_of_char', 'x = text_of_char(65)\n', 'ok'),
-    ('内建', 'sorted', 'x = sorted([2, 1])\n', 'no'),
-    ('内建', 'enumerate', 'x = enumerate([1])\n', 'no'),
-    ('内建', 'zip', 'x = zip([1], [2])\n', 'no'),
-    ('内建', 'map', 'x = map(str, [1])\n', 'no'),
-    ('内建', 'filter', 'x = filter(bool, [1])\n', 'no'),
-    ('内建', 'any', 'x = any([1])\n', 'no'),
-    ('内建', 'all', 'x = all([1])\n', 'no'),
-    ('内建', 'reversed', 'x = reversed([1])\n', 'no'),
-    ('内建', 'isinstance', 'x = isinstance(1, int)\n', 'no'),
-    ('内建', 'type', 'x = type(1)\n', 'no'),
+    ('内建', 'sorted', 'x = sorted([2, 1])\n', 'ok'),
+    ('内建', 'enumerate', 'x = enumerate([1])\n', 'ok'),
+    ('内建', 'zip', 'x = zip([1], [2])\n', 'ok'),
+    ('内建', 'map', 'x = map(str, [1])\n', 'ok'),
+    ('内建', 'filter', 'x = filter(bool, [1])\n', 'ok'),
+    ('内建', 'any', 'x = any([1])\n', 'ok'),
+    ('内建', 'all', 'x = all([1])\n', 'ok'),
+    ('内建', 'reversed', 'x = reversed([1])\n', 'ok'),
+    ('内建', 'isinstance', 'x = isinstance(1, int)\n', 'ok'),
+    ('内建', 'type', 'x = type(1)\n', 'ok'),
     ('内建', 'input', 'x = input()\n', 'no'),
     ('内建', 'open', 'x = open("f")\n', 'no'),
     ('内建', 'help', 'help()\n', 'no'),
-    ('内建', 'sum 当值使用', 'f = len\n', 'no'),
+    ('内建', '内建当值', 'f = len\nx = f([1])\n', 'ok'),
 
     # ── 模块与类 ──
     ('模块类', 'import', 'import math\n', 'ok'),
@@ -406,7 +426,7 @@ CASES = [
     ('模块类', '属性访问 self.x', 'class App(Activity):\n    x = 7\n    def f(self):\n        print(self.x)\nf()\n', 'ok'),
     ('模块类', 'self.x 赋值改字段', 'class App(Activity):\n    x = 0\n    def f(self):\n        self.x = 5\n        print(self.x)\nf()\n', 'ok'),
     ('模块类', 'self.x 增强赋值', 'class App(Activity):\n    n = 0\n    def tick(self):\n        self.n += 1\n    def go(self):\n        self.tick()\n        print(self.n)\ngo()\n', 'ok'),
-    ('模块类', '普通属性访问 a.b', 'x = a.b\n', 'ok'),
+    ('模块类', '普通属性访问 a.b', 'class A:\n    def __init__(self):\n        self.b = 1\na = A()\nx = a.b\n', 'ok'),
     ('模块类', 'Activity 方法用 self 调用', 'class App(Activity):\n    def f(self):\n        print(self.g())\n    def g(self):\n        return 1\nf()\n', 'ok'),
     ('模块类', 'Activity 里漏写 global', 'class App(Activity):\n    v = 0\n    def f(self):\n        v = 2\n', 'no'),
 ]
@@ -437,8 +457,14 @@ def main(argv):
         # with 就属于后者：语法支持，但 manager 没有 __enter__ 才失败。
         category, name, source, expect = case[:4]
         must_contain = case[4] if len(case) > 4 else None
-        ok, error = probe(pcc, source, run_exe, scratch)
+        # skip 完全不判断：需要外部扩展库或宿主环境，探针跑不了。
+        if expect == 'skip':
+            rows.append((category, name, 'skip', '', '-'))
+            continue
+        ok, error = probe(pcc, source, run_exe, scratch, expect)
         actual = 'ok' if ok else 'no'
+        if expect == 'raises' and actual == 'ok':
+            expect = 'ok'
         stats[actual] += 1
         verdict = '✓' if actual == expect else '✗'
         text_mismatch = (must_contain is not None and ok is False

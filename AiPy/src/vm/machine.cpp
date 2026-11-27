@@ -19,6 +19,7 @@
 #include "vm/internal.h"
 
 #include "aipy/builtins.h"
+#include "aipy/exceptions.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -313,6 +314,29 @@ static bool advanceGenerator(const Program& program, std::vector<Value>& globals
                              std::string* errorType, std::string* error,
                              bool* failed, Value* finalValue = nullptr);
 
+// 同步调用一个函数值（map/filter 的回调、sorted(key=)）。定义在后面：它要
+// 用 execute。返回 false 时 `errorType`/`error` 说明抛了什么。
+static bool callCallable(const Program& program, std::vector<Value>& globals,
+                         const Value& callable,
+                         const std::vector<Value>& args, Value* out,
+                         std::string* errorType, std::string* error);
+
+// 关键字实参：`names[i]` 对应 `values[i]`。仅关键字参数（sorted 的
+// key/reverse）就靠它传，不能靠加长 args——那会让 argc 与实际位置实参
+// 个数混淆，内建自己无法区分。
+struct KeywordArgs {
+  const std::string* names = nullptr;
+  const Value* values = nullptr;
+  int count = 0;
+};
+
+// 调一个内建。CALL_BUILTIN / CALL_BUILTIN_KW / callCallable 共用它，
+// 避免「抽干生成器 / next 特例」那几段慢慢分叉。
+static bool invokeBuiltin(const Program& program, std::vector<Value>& globals,
+                          std::uint16_t index, Value* args, int argc,
+                          const KeywordArgs& keywords, Value* out,
+                          std::string* failure);
+
 // 协议方法调用（`__enter__` / `__exit__`）。脚本实例要真的跑脚本函数，
 // 所以建帧 + execute；pylib 对象走方法表转发。with 的三条路径（进入、
 // 正常退出、异常退出）共用它，否则必然分叉成「这条路径能进、那条不能」。
@@ -474,15 +498,6 @@ static void pushFrame(const Function& fn, std::vector<Value> locals,
 // 分隔符与结尾由 print 自己补，所以这里只在非空时把参数个数撑到它们的位置。
 //
 // 返回 false 表示异常已抛出（raiseException），调用方不要再压返回值。
-// 关键字实参：`names[i]` 对应 `values[i]`。仅关键字参数（sorted 的
-// key/reverse）就靠它传，不能靠加长 args——那会让 argc 与实际位置实参
-// 个数混淆，内建自己无法区分。
-struct KeywordArgs {
-  const std::string* names = nullptr;
-  const Value* values = nullptr;
-  int count = 0;
-};
-
 static bool invokeBuiltin(const Program& program, std::vector<Value>& globals,
                           std::uint16_t index, Value* args, int argc,
                           const KeywordArgs& keywords, Value* out,
@@ -539,6 +554,62 @@ static bool invokeBuiltin(const Program& program, std::vector<Value>& globals,
 
   const std::string& builtinName = program.builtinNames[index];
 
+  // map(func, iterable) / filter(func, iterable)：要真的调脚本函数。
+  // 放在「生成器抽干」之后，所以两种内建都能吃生成器参数。
+  if (builtinName == "map" || builtinName == "filter") {
+    if (argc != 2) {
+      *failure = builtinName + " expected 2 arguments, got " +
+                 std::to_string(argc);
+      return false;
+    }
+    // filter(None, xs)：按真值过滤，与 CPython 一致。
+    const bool byTruth = builtinName == "filter" && args[0].isNone();
+    if (!byTruth && functionIndexOf(args[0]) < 0 &&
+        !isBuiltinFunction(args[0]) && !isBuiltinClass(args[0])) {
+      *failure = "'" + typeName(args[0]) + "' object is not callable";
+      return false;
+    }
+    List collected;
+    for (const Value& item : iterate(args[1])) {
+      Value verdict;
+      if (byTruth) {
+        verdict = item;
+      } else {
+        std::string errorType;
+        std::string error;
+        if (!callCallable(program, globals, args[0], {item}, &verdict,
+                          &errorType, &error)) {
+          raiseException(errorType.empty() ? "RuntimeError" : errorType, error);
+          return false;
+        }
+      }
+      if (builtinName == "map") {
+        collected.push_back(verdict);
+      } else if (verdict.toBool()) {
+        collected.push_back(item);
+      }
+    }
+    *out = Value::list(std::move(collected));
+    return true;
+  }
+
+  // sum(iterable, start=0)：生成器已在上面抽干成列表，这里只管累加。
+  if (builtinName == "sum") {
+    Value start;
+    for (int i = 0; i < keywords.count; ++i) {
+      if (keywords.names[i] == "start") start = keywords.values[i];
+    }
+    if (argc < 1) {
+      *failure = "sum expected at least 1 argument, got 0";
+      return false;
+    }
+    if (argc > 1) start = args[1];
+    Value total = start.isNone() ? Value(0LL) : start;
+    for (const Value& item : iterate(args[0])) total = add(total, item);
+    *out = total;
+    return true;
+  }
+
   // print 的 sep/end。
   if (builtinName == "print") {
     Value sep;
@@ -569,7 +640,27 @@ static bool invokeBuiltin(const Program& program, std::vector<Value>& globals,
         reverse = keywords.values[i].toBool();
       }
     }
-    *out = sortedCopy(args[0], key, reverse);
+    // 有 key 时先对每个元素求一次键，再按键排序。只求一次是关键：key 带
+    // 副作用时（计数、日志）求两次的结果与 CPython 不同。
+    if (!key.isNone()) {
+      const List items = iterate(args[0]);
+      List keys;
+      keys.reserve(items.size());
+      for (const Value& item : items) {
+        Value produced;
+        std::string errorType;
+        std::string error;
+        if (!callCallable(program, globals, key, {item}, &produced, &errorType,
+                          &error)) {
+          raiseException(errorType.empty() ? "RuntimeError" : errorType, error);
+          return false;
+        }
+        keys.push_back(produced);
+      }
+      *out = sortedCopy(args[0], Value::list(std::move(keys)), reverse);
+      return true;
+    }
+    *out = sortedCopy(args[0], Value(), reverse);
     return true;
   }
 
@@ -996,6 +1087,28 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         frame.pc += 1;
         const std::size_t base = sp - static_cast<std::size_t>(argc) - 1;
         const Value callable = stack[base];
+        // 内建函数值（`f = len` 之后 `f(x)`）与内建类型值（`f = int`）：
+        // 都同步跑完拿到返回值。它们不能走下面那条「建帧后继续执行循环」
+        // 的路径——内建没有字节码帧。
+        if (isBuiltinFunction(callable) || isBuiltinClass(callable)) {
+          std::vector<Value> callArgs;
+          callArgs.reserve(static_cast<std::size_t>(argc));
+          for (int i = 0; i < argc; ++i) {
+            callArgs.push_back(stack[base + 1 + static_cast<std::size_t>(i)]);
+          }
+          Value produced;
+          std::string errorType;
+          std::string error;
+          const bool ok = callCallable(program, globals, callable, callArgs,
+                                       &produced, &errorType, &error);
+          sp = base;
+          if (!ok) {
+            raiseException(errorType.empty() ? "RuntimeError" : errorType, error);
+            break;
+          }
+          stack[sp++] = produced;
+          break;
+        }
         // 已绑定实例的方法值：函数号在同一个字段里，self 单独存。
         const int index = functionIndexOf(callable);
         if (index < 0) {
@@ -1760,6 +1873,21 @@ static Result execute(const Program& program, std::vector<Value>& globals,
         break;
       }
 
+      case Op::kMakeBuiltinFunction: {
+        // u16 内建号。压一个可调用值（`key=len`、`f = len`）。
+        // 这个号是**本程序**内建表的下标（只收脚本用到的那些），不是全局
+        // 表下标——名字必须从 program.builtinNames 取，否则 `print(len)`
+        // 会显示成别的位置上的内建。
+        const std::uint16_t builtinIndex = read16(code, frame.pc);
+        frame.pc += 2;
+        if (builtinIndex >= program.builtins.size()) {
+          return fail("内建号越界（编译器 bug）");
+        }
+        stack[sp++] = makeBuiltinFunction(builtinIndex,
+                                          program.builtinNames[builtinIndex]);
+        break;
+      }
+
       case Op::kUnpack: {
         // u16 元素个数。弹一个序列，把前 N 个元素压回栈（第一个在最上，
         // 这样紧跟其后的 STORE 会依次存倒数第一个名字…… 见编译器侧的
@@ -2142,6 +2270,171 @@ static bool advanceGenerator(const Program& program, std::vector<Value>& globals
   if (finalValue != nullptr) *finalValue = result.value;
   setGeneratorState(generator, 0, List{}, List{}, true, true);
   return false;
+}
+
+// 同步调用一个函数值（`map`/`filter` 的回调、`sorted(key=)` 都要它）。
+//
+// 与 kCallValue 的差别：那条是「建帧后继续跑同一个执行循环」，这里必须
+// 跑完拿返回值——内建需要一个具体的结果，不能挂起。所以独立建帧 + execute。
+static bool callCallable(const Program& program, std::vector<Value>& globals,
+                         const Value& callable,
+                         const std::vector<Value>& args, Value* out,
+                         std::string* errorType, std::string* error) {
+  errorType->clear();
+  error->clear();
+
+  // 内建函数值（`key=len`）：走内置表，不能当脚本函数号用。
+  if (isBuiltinFunction(callable)) {
+    const int builtin = builtinFunctionIndex(callable);
+    if (builtin < 0 || builtin >= static_cast<int>(program.builtins.size())) {
+      *errorType = "RuntimeError";
+      *error = "内建号越界（编译器 bug）";
+      return false;
+    }
+    if (args.size() > 8) {
+      *errorType = "TypeError";
+      *error = "内建最多 8 个参数";
+      return false;
+    }
+    Value buffer[9];
+    for (std::size_t i = 0; i < args.size(); ++i) buffer[i] = args[i];
+    std::string failure;
+    Value produced;
+    if (!invokeBuiltin(program, globals, static_cast<std::uint16_t>(builtin),
+                       buffer, static_cast<int>(args.size()), KeywordArgs(),
+                       &produced, &failure)) {
+      *errorType = failure.empty() ? std::string("RuntimeError")
+                                   : std::string("TypeError");
+      *error = failure;
+      return false;
+    }
+    *out = produced;
+    return true;
+  }
+
+  // 异常类（`ValueError("x")`、`MyError()`）：CPython 里异常类是可调用
+  // 对象，调用就构造一个异常实例。`raise` 语句走 RAISE_TYPE 不经过这里，
+  // 但 `e = ValueError("x")`、`f(ValueError("x"))` 必须有值可传。
+  if (isBuiltinClass(callable) &&
+      isExceptionClassName(builtinClassName(callable))) {
+    if (args.size() > 1) {
+      *errorType = "TypeError";
+      *error = builtinClassName(callable) + " expected at most 1 argument, got " +
+               std::to_string(args.size());
+      return false;
+    }
+    *out = makeException(builtinClassName(callable),
+                         args.empty() ? std::string() : args[0].toString());
+    return true;
+  }
+
+  // 内建类型名（`str`、`list`、`int`…）是可调用的构造器，同时又能当类型用。
+  // CPython 里它们本来就是一个对象：`str is type("")`。这里按名字找回同名
+  // 内建并转发，`map(str, xs)` 因此与 `str(x)` 走同一条实现。
+  if (isBuiltinClass(callable)) {
+    const std::string className = builtinClassName(callable);
+    // program.builtins 只收脚本引用过的内建，`str` 可能不在里面（脚本只把
+    // 它当类型用过），所以按名字在脚本表里找，找不到就直接用全局函数指针。
+    std::uint16_t local = 0;
+    bool found = false;
+    for (std::size_t i = 0; i < program.builtinNames.size(); ++i) {
+      if (program.builtinNames[i] == className) {
+        local = static_cast<std::uint16_t>(i);
+        found = true;
+        break;
+      }
+    }
+    if (!found && builtinIndexFromName(className) < 0) {
+      *errorType = "TypeError";
+      *error = "'" + className + "' object is not callable";
+      return false;
+    }
+    if (args.size() > 8) {
+      *errorType = "TypeError";
+      *error = "内建最多 8 个参数";
+      return false;
+    }
+    Value buffer[9];
+    for (std::size_t i = 0; i < args.size(); ++i) buffer[i] = args[i];
+    Value produced;
+    if (found) {
+      std::string failure;
+      if (!invokeBuiltin(program, globals, local, buffer,
+                         static_cast<int>(args.size()), KeywordArgs(),
+                         &produced, &failure)) {
+        *errorType = "TypeError";
+        *error = failure;
+        return false;
+      }
+    } else {
+      std::string failure;
+      produced = builtinAt(builtinIndexFromName(className))(
+          buffer, static_cast<int>(args.size()), &failure);
+      if (!failure.empty()) {
+        *errorType = "TypeError";
+        *error = failure;
+        return false;
+      }
+    }
+    *out = produced;
+    return true;
+  }
+
+  const int index = functionIndexOf(callable);
+  if (index < 0) {
+    *errorType = "TypeError";
+    *error = "'" + typeName(callable) + "' object is not callable";
+    return false;
+  }
+  if (index >= static_cast<int>(program.functions.size())) {
+    *errorType = "RuntimeError";
+    *error = "函数号越界（编译器 bug）";
+    return false;
+  }
+  const Function& fn = program.functions[static_cast<std::size_t>(index)];
+
+  std::vector<Value> positional;
+  positional.reserve(args.size() + 1);
+  if (isBoundMethod(callable)) positional.push_back(boundMethodSelf(callable));
+  for (const Value& arg : args) positional.push_back(arg);
+
+  std::vector<Value> locals(static_cast<std::size_t>(fn.localCount), Value());
+  const Value defaults =
+      fn.defaultSlot >= 0 && fn.defaultSlot < static_cast<int>(globals.size())
+          ? globals[static_cast<std::size_t>(fn.defaultSlot)]
+          : Value();
+  std::string bindError;
+  if (!bindArguments(fn, defaults, positional, List{}, List{}, &locals,
+                     &bindError)) {
+    *errorType = "TypeError";
+    *error = fn.name + "() " + bindError;
+    return false;
+  }
+  const List& captures = functionCaptures(callable);
+  if (!captures.empty() && fn.captureStart >= 0) {
+    for (std::size_t i = 0; i < captures.size(); ++i) {
+      const std::size_t slot = static_cast<std::size_t>(fn.captureStart) + i;
+      if (slot < locals.size()) locals[slot] = captures[i];
+    }
+  }
+  if (fn.isGenerator || fn.isCoroutine) {
+    *errorType = "TypeError";
+    *error = "the callback must be a plain function, not a generator";
+    return false;
+  }
+
+  std::vector<Frame> frames;
+  frames.reserve(4);
+  pushFrame(fn, std::move(locals), frames, 0);
+  const Result result = execute(program, globals, frames);
+  if (result.failed) {
+    *errorType = resultExceptionType(result);
+    if (errorType->empty()) *errorType = "RuntimeError";
+    *error = result.error;
+    return false;
+  }
+  *out = result.value;
+  return true;
 }
 
 // 协议方法调用（`__enter__` / `__exit__`）。

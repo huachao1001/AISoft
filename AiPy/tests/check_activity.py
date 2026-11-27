@@ -730,6 +730,122 @@ CASES = [
         'print(round(1.6))\n',
         '1.23\n2\n',
     ),
+    # ── 高阶函数与生成器消费 ──
+    (
+        'map 调脚本函数与 lambda',
+        'def sq(x):\n'
+        '    return x * x\n'
+        'print(list(map(sq, [1, 2, 3])))\n'
+        'print(list(map(lambda x: x + 10, [1, 2])))\n',
+        '[1, 4, 9]\n[11, 12]\n',
+    ),
+    (
+        'map 调实例方法',
+        'class A:\n'
+        '    def dbl(self, x):\n'
+        '        return x * 2\n'
+        'a = A()\n'
+        'print(list(map(a.dbl, [1, 2])))\n',
+        '[2, 4]\n',
+    ),
+    (
+        'map 的内建与类型回调',
+        'print(list(map(len, ["a", "bb", "ccc"])))\n'
+        'print(list(map(str, [1, 2])))\n',
+        "[1, 2, 3]\n['1', '2']\n",
+    ),
+    (
+        'filter 谓词与 None',
+        'def even(x):\n'
+        '    return x % 2 == 0\n'
+        'print(list(filter(even, [1, 2, 3, 4])))\n'
+        'print(list(filter(None, [0, 1, "", "a"])))\n',
+        "[2, 4]\n[1, 'a']\n",
+    ),
+    (
+        'map 吃生成器',
+        'def g():\n'
+        '    yield 1\n'
+        '    yield 2\n'
+        'print(list(map(lambda x: x * 10, g())))\n',
+        '[10, 20]\n',
+    ),
+    (
+        'sum 吃生成器与 start',
+        'def g():\n'
+        '    yield 1\n'
+        '    yield 2\n'
+        '    yield 3\n'
+        'print(sum(g()))\n'
+        'print(sum([1, 2], 10))\n'
+        'print(sum([1, 2], start=100))\n',
+        '6\n13\n103\n',
+    ),
+    (
+        'sorted 的 key',
+        'def last(s):\n'
+        '    return s[-1:]\n'
+        'print(sorted(["xa", "yb", "zc"], key=last))\n'
+        'print(sorted(["bb", "a", "ccc"], key=len))\n'
+        'print(sorted([3, 1, 2], key=lambda x: -x))\n',
+        "['xa', 'yb', 'zc']\n['a', 'bb', 'ccc']\n[3, 2, 1]\n",
+    ),
+    (
+        '内建函数是一等值',
+        'f = len\n'
+        'print(f("abc"))\n'
+        'print(len)\n'
+        'print(type(f))\n',
+        "3\n<built-in function len>\n<class 'builtin_function_or_method'>\n",
+    ),
+    (
+        '内建函数值的名字',
+        'f = len\n'
+        'print(len)\n'
+        'print(f)\n'
+        'print(str)\n',
+        "<built-in function len>\n"
+        "<built-in function len>\n"
+        "<class 'str'>\n",
+    ),
+    (
+        '异常类可调用',
+        'e = ValueError("boom")\n'
+        'print(isinstance(e, ValueError))\n'
+        'print(e)\n'
+        'try:\n'
+        '    raise TypeError("t")\n'
+        'except TypeError as exc:\n'
+        '    print(exc)\n',
+        "True\nboom\nt\n",
+    ),
+    # ── id / hash ──
+    (
+        'id 对同一对象稳定',
+        'a = [1]\n'
+        'b = a\n'
+        'print(id(a) == id(b))\n'
+        'print(id(a) == id([1]))\n',
+        'True\nFalse\n',
+    ),
+    (
+        'hash 与相等性一致',
+        'print(hash(1) == hash(1))\n'
+        'print(hash("a") == hash("a"))\n'
+        'print(hash(1) == hash(1.0))\n'
+        'd = {}\n'
+        'd[1] = "x"\n'
+        'print(d[1])\n',
+        'True\nTrue\nTrue\nx\n',
+    ),
+    (
+        'hash 拒绝不可哈希类型',
+        'try:\n'
+        '    hash([1])\n'
+        'except TypeError:\n'
+        '    print("unhashable")\n',
+        'unhashable\n',
+    ),
     # ── 期望被拒绝的 ──
     (
         '两个 Activity 被拒绝',

@@ -83,7 +83,11 @@ bool CodeGen::nameRead(const std::string& name, const Node& node) {
       nameTarget(name, node);
       return true;
     }
-    return failAt(diag::builtinAsValue(name), node);
+    // 内建函数现在是一等值（`sorted(x, key=len)`、`f = len`）。
+    // 编成 MAKE_BUILTIN_FUNCTION + 内置表下标，运行期得到可调用值。
+    emit("MAKE_BUILTIN_FUNCTION", node);
+    emitU16(builtinIndex(name));
+    return true;
   }
   // 脚本函数出现在值的位置（`g = f`、`f(func)` 的实参）就是取函数值。
   // 编译成一条 MAKE_FUNCTION：函数号进载荷，运行期得到一个 kObject。
@@ -745,6 +749,25 @@ bool CodeGen::call(const Node& node) {
   //
   // 代价是名字打错从编译期推迟到运行期。这个代价换来的是「新增裸名不用
   // 改编译器」，那正是「核心 VM 只认语法」这条约束的要求。
+  // ── 异常类名调用：`ValueError("x")` 构造一个异常实例 ──
+  //
+  // 不能落到下面的裸名扩展分支：那会把 ValueError 当成库注册的内建，
+  // 运行期报「扩展函数 ValueError 没有链接进来」。异常类是语言语义，
+  // 由 LOAD_TYPE + CALL_VALUE 走 VM 的「异常类可调用」路径。
+  if ((func.kind == Kind::Name || selfCall) &&
+      aipy::isExceptionClassName(calleeName) &&
+      !isLocal(calleeName) && globalsSet_.count(calleeName) == 0 &&
+      total == node.argsCount) {
+    emit("LOAD_TYPE", *node.children[0]);
+    emitU16(constIndexOfStr(calleeName));
+    for (std::size_t i = 0; i < total; ++i) {
+      if (!expr(*node.children[1 + i])) return false;
+    }
+    emit("CALL_VALUE", node);
+    emitU8(static_cast<int>(total));
+    return true;
+  }
+
   if (func.kind == Kind::Name || selfCall) {
     if (total != node.argsCount) {
       return failAt(diag::keywordArguments(), node);

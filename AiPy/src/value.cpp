@@ -25,6 +25,8 @@ const MethodTable kExceptionTable = {kNoMethods};
 const MethodTable kBuiltinClassTable = {kNoMethods};
 // 函数值的标记表。与异常同构：判据是「表指针是不是它」。
 const MethodTable kFunctionTable = {kNoMethods};
+// 内建函数值（`key=len` 里的 len）。载荷是内置表下标，不是脚本函数号。
+const MethodTable kBuiltinFunctionTable = {kNoMethods};
 // 类对象与实例的标记表。同样只是标记——实例的方法查找要沿基类上溯，
 // 是语言语义，由 VM 做，不走 MethodTable 的转发机制。
 const MethodTable kClassTable = {kNoMethods};
@@ -716,6 +718,10 @@ std::string Value::toString() const {
         if (isClass(cls)) return "<" + cls.heap_->className + " object>";
         return "<object>";
       }
+      // 内建函数值：CPython 的 repr 是 `<built-in function len>`。
+      if (heap_ != nullptr && heap_->object.table == &kBuiltinFunctionTable) {
+        return "<built-in function " + heap_->className + ">";
+      }
       return "<object>";
   }
   return std::string();
@@ -783,6 +789,37 @@ int functionIndexOf(const Value& value) {
 
 const List& functionCaptures(const Value& value) {
   return isFunction(value) ? value.heap_->captures : kEmptyList;
+}
+
+// ── 内建函数值 ──
+//
+// 与脚本函数值同构，但载荷是内置表下标。`functionIndexOf` 对它仍返回 -1：
+// 那个函数号是脚本函数表的索引，混用会让调用跳到错误的函数体上。
+
+Value makeBuiltinFunction(int builtinIndex, const std::string& name) {
+  Value out;
+  out.type_ = Value::Type::kObject;
+  out.heap_ = makeHeap();
+  out.heap_->object.table = &kBuiltinFunctionTable;
+  out.heap_->functionIndex = builtinIndex;
+  // 名字复用 className：两者都是「给人看的标识」，没必要再开一个字段。
+  out.heap_->className = name;
+  return out;
+}
+
+bool isBuiltinFunction(const Value& value) {
+  const ObjectData* data = value.asObject();
+  return data != nullptr && data->table == &kBuiltinFunctionTable;
+}
+
+int builtinFunctionIndex(const Value& value) {
+  if (!isBuiltinFunction(value)) return -1;
+  return value.heap_->functionIndex;
+}
+
+std::string builtinFunctionName(const Value& value) {
+  if (!isBuiltinFunction(value)) return std::string();
+  return value.heap_->className;
 }
 
 // ── 类对象与实例 ──
@@ -1073,7 +1110,11 @@ std::string typeName(const Value& value) {
     case Value::Type::kSet: return "set";
     case Value::Type::kDict: return "dict";
     case Value::Type::kHost: return "host";
-    case Value::Type::kObject: return isBuiltinClass(value) ? builtinClassName(value) : "object";
+    case Value::Type::kObject:
+      if (isBuiltinClass(value)) return builtinClassName(value);
+      // CPython 的 type(len) 是 builtin_function_or_method。
+      if (isBuiltinFunction(value)) return "builtin_function_or_method";
+      return "object";
     case Value::Type::kDeleted: return "NoneType";
   }
   return "object";

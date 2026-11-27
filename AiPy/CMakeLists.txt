@@ -50,6 +50,7 @@ add_library(aipy STATIC
   src/builtins_types.cpp
   src/builtins_containers.cpp
   src/builtins_keywords.cpp
+  src/builtins_identity.cpp
   src/bytecode.cpp
   # pylib 注册：靠节合并发现「已链接进来的扩展模块」。这里只有机制，
   # 没有任何具体能力（见 include/aipy/pylib.h 头部）。

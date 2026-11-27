@@ -329,6 +329,9 @@ Value builtinBin(const Value* args, int count, std::string* error);
 Value builtinOct(const Value* args, int count, std::string* error);
 Value builtinRepr(const Value* args, int count, std::string* error);
 Value builtinDivmod(const Value* args, int count, std::string* error);
+// id / hash：纯值层能算（身份就是载荷地址、哈希用 eq 的同一套规则）。
+Value builtinId(const Value* args, int count, std::string* error);
+Value builtinHash(const Value* args, int count, std::string* error);
 Value builtinPow(const Value* args, int count, std::string* error);
 Value builtinTuple(const Value* args, int count, std::string* error);
 
@@ -383,6 +386,12 @@ const Entry kBuiltinTable[] = {
     {"divmod", builtinDivmod},
     {"pow", builtinPow},
     {"tuple", builtinTuple},
+    // map / filter / sum 只是登记：它们要调脚本函数或推进生成器，
+    // 值层拿不到 Program。真正的实现在 VM 的 invokeBuiltin 里。
+    {"map", nullptr},
+    {"filter", nullptr},
+    {"id", builtinId},
+    {"hash", builtinHash},
 };
 
 }  // namespace builtins

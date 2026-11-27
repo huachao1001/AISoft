@@ -66,7 +66,7 @@ OPCODES = [
     'CALL_VALUE_DYN', 'MAKE_CLASS', 'GET_ATTR', 'SET_ATTR', 'INSTANTIATE',
     'MAKE_SUPER', 'YIELD', 'AWAIT',
     'MAKE_STATIC_METHOD', 'MAKE_CLASS_METHOD', 'LOAD_TYPE', 'UNPACK',
-    'CALL_BUILTIN_KW',
+    'CALL_BUILTIN_KW', 'MAKE_BUILTIN_FUNCTION',
 ]
 
 # 二元算子编号，与 vm.h 的 BinOp 一致。
@@ -98,6 +98,10 @@ BUILTINS = [
     'divmod',
     'pow',
     'tuple',
+    'map',
+    'filter',
+    'id',
+    'hash',
 ]
 
 OP = {name: index for index, name in enumerate(OPCODES)}
@@ -1655,10 +1659,10 @@ class Compiler:
                 if shadowed:
                     self.name_target(node.id, node)
                     return
-                # `len` 作为值出现时没有意义（没有一等函数），但 `len(x)` 是调用，
-                # 走 call 分支。这里只处理它被当成普通名字读的情况。
-                raise CompileError('内建函数 %s 不能当值使用' % node.id,
-                                   self.filename, node)
+                # 内建函数是一等值（`sorted(x, key=len)`、`f = len`）。
+                self.block.emit('MAKE_BUILTIN_FUNCTION', node)
+                self.block.emit_u16(self.builtin_index(node.id))
+                return
             # 脚本函数出现在值的位置（`g = f`、`f(func)` 的实参）就是取函数值。
             # 带装饰器的名字存的是装饰器返回值，读它就是读变量。
             if (node.id in self.function_by_name and
@@ -2148,6 +2152,24 @@ class Compiler:
             if is_variable:
                 self.name_target(node.func.id, node.func)
                 return self.call_value_args(node)
+
+        # 异常类名调用：`ValueError("x")` 构造异常实例。
+        # 与 C++ 版同序：放在裸名扩展分支之前，否则会被当成库函数。
+        if isinstance(node.func, ast.Name) and node.func.id in EXCEPTION_SET:
+            is_variable = (self.is_local(node.func.id) or
+                           node.func.id in self.globals)
+            if not is_variable:
+                if node.keywords:
+                    raise CompileError(
+                        'unsupported keyword arguments; pass them positionally',
+                        self.filename, node)
+                self.block.emit('LOAD_TYPE', node.func)
+                self.block.emit_u16(self.const_index(node.func.id))
+                for argument in node.args:
+                    self.expr(argument)
+                self.block.emit('CALL_VALUE', node)
+                self.block.emit_u8(len(node.args))
+                return
 
         # 裸名：可能是库注册的内建（`open`）
         #

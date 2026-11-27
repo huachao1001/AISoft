@@ -199,6 +199,11 @@ enum class Op : std::uint8_t {
   // CALL_BUILTIN 保持原样（只有位置实参），因为绝大多数内建调用没有关键字，
   // 多解一层键值对在每个 `len(x)` 上都是白花。
   kCallBuiltinKw,
+
+  // 取内建函数值：u16 内建号。压一个可调用值（`key=len`、`f = len`）。
+  // 载荷是内置表下标；与 MAKE_FUNCTION 分开是因为那个字段在两种值里
+  // 含义不同（脚本函数号 vs 内置表下标），混用会跳到错误的函数体。
+  kMakeBuiltinFunction,
 };
 
 enum class BinOp : std::uint8_t {
