@@ -354,8 +354,72 @@ add_library(aipy_pylib_json STATIC
 target_include_directories(aipy_pylib_json PUBLIC libs/json/include)
 target_link_libraries(aipy_pylib_json PRIVATE aipy)
 
+# ── sys：命令行与进程信息 ──
+#
+# `sys.argv()` / `sys.executable()` 读的是语言层记录的命令行（见 vm.h 的
+# setCommandLine）——库本身不碰平台 API，所以将来换平台不用改这个库。
+#
+# 为什么要这个库：关联文件被双击时，系统把那个文件路径作为第一个参数传给
+# 程序，脚本必须有办法拿到它。托盘程序也可能读命令行开关（`--silent`）。
+add_library(aipy_pylib_sys STATIC
+  libs/sys/src/module.cpp
+  libs/sys/src/fn_argv.cpp
+  libs/sys/src/fn_executable.cpp
+)
+target_link_libraries(aipy_pylib_sys PRIVATE aipy)
+
+# ── os.fileassoc：关联文件默认打开 ──
+#
+# 写 `HKCU\Software\Classes`（Per-User Registration），不需要管理员权限。
+# 双击匹配的文件就启动本 exe，路径靠 `sys.argv()` 取。
+#
+# 为什么挂在 `os.` 下：它操作的是操作系统的 shell 关联，不是语言能力，
+# 与 `os.path` 同属「操作系统接口」。脚本也就不必记一个额外顶层名字。
+#
+# 每个导出函数一个编译单元：只查「装没装上」的脚本不该把写注册表与图标
+# 设置的代码拖进产物。
+add_library(aipy_pylib_os_fileassoc STATIC
+  libs/os_fileassoc/src/module.cpp
+  libs/os_fileassoc/src/assoc_paths.cpp
+  libs/os_fileassoc/src/assoc_write.cpp
+  libs/os_fileassoc/src/assoc_query.cpp
+  libs/os_fileassoc/src/assoc_keys.cpp
+  libs/os_fileassoc/src/fn_register.cpp
+  libs/os_fileassoc/src/fn_unregister.cpp
+  libs/os_fileassoc/src/fn_icon.cpp
+  libs/os_fileassoc/src/fn_query.cpp
+  libs/os_fileassoc/src/fn_owned.cpp
+)
+target_include_directories(aipy_pylib_os_fileassoc
+                           PUBLIC libs/os_fileassoc/include)
+target_link_libraries(aipy_pylib_os_fileassoc PRIVATE aipy)
+
+# ── os.tray：托盘图标 + 右键菜单 ──
+#
+# 平台能力，只有 Windows 实现。注册、状态、消息循环分别独立：不调
+# `os.tray.run()` 的脚本（比如只在退出时弹个气泡）不该把窗口类与消息泵
+# 拖进产物。
+#
+# 为什么挂在 `os.` 下：托盘是操作系统外壳（通知区域）的能力，脚本写
+# `os.tray.icon(...)` 与 `os.path.exists(...)` 是同一类操作。
+add_library(aipy_pylib_os_tray STATIC
+  libs/os_tray/src/module.cpp
+  libs/os_tray/src/tray_state.cpp
+  libs/os_tray/src/tray_loop.cpp
+  libs/os_tray/src/fn_icon.cpp
+  libs/os_tray/src/fn_item.cpp
+  libs/os_tray/src/fn_separator.cpp
+  libs/os_tray/src/fn_on.cpp
+  libs/os_tray/src/fn_run.cpp
+  libs/os_tray/src/fn_quit.cpp
+  libs/os_tray/src/fn_notify.cpp
+)
+target_include_directories(aipy_pylib_os_tray PUBLIC libs/os_tray/include)
+target_link_libraries(aipy_pylib_os_tray PRIVATE aipy)
+
 foreach(lib aipy_pylib_fs aipy_pylib_os aipy_pylib_os_path
-            aipy_pylib_time aipy_pylib_json)
+            aipy_pylib_time aipy_pylib_json aipy_pylib_sys
+            aipy_pylib_os_fileassoc aipy_pylib_os_tray)
   if(MSVC)
     # 与 aipy 同一条理由：分发出的 pylib 必须关 /GL，否则用户机器上
     # 只有 link.exe、没有 c2.dll，链接会失败。
@@ -367,6 +431,11 @@ set_target_properties(aipy_pylib_os PROPERTIES OUTPUT_NAME "os_pylib")
 set_target_properties(aipy_pylib_os_path PROPERTIES OUTPUT_NAME "os_path_pylib")
 set_target_properties(aipy_pylib_time PROPERTIES OUTPUT_NAME "time_pylib")
 set_target_properties(aipy_pylib_json PROPERTIES OUTPUT_NAME "json_pylib")
+set_target_properties(aipy_pylib_sys PROPERTIES OUTPUT_NAME "sys_pylib")
+set_target_properties(aipy_pylib_os_fileassoc
+                      PROPERTIES OUTPUT_NAME "os_fileassoc_pylib")
+set_target_properties(aipy_pylib_os_tray
+                      PROPERTIES OUTPUT_NAME "os_tray_pylib")
 
 # ── 把 examples/ 下的每个脚本都打成 exe ──
 #
@@ -399,6 +468,9 @@ if(AIPY_PYTHON)
               aipy_pylib_os_path
               aipy_pylib_time
               aipy_pylib_json
+              aipy_pylib_sys
+              aipy_pylib_os_fileassoc
+              aipy_pylib_os_tray
       COMMENT "打包示例 ${stem}.exe"
       VERBATIM)
     list(APPEND AIPY_EXAMPLE_EXES ${example_exe})
@@ -479,11 +551,15 @@ endif()
 # 里产出 `.pylib`（aipy_pylib 测试要用它），但绝不能进 dist——那等于告诉
 # 用户「这个库可以用」。
 set(AIPY_PYLIB_TARGETS
-  text threading fs os os_path time json)
+  text threading fs os os_path time json sys os_fileassoc os_tray)
 set(AIPY_PYLIB_NAMES
-  text threading fs os os.path time json)
+  text threading fs os os.path time json sys os.fileassoc os.tray)
 set(AIPY_PYLIB_PUBLISH
-  OFF ON ON ON ON ON ON)
+  OFF ON ON ON ON ON ON ON ON ON)
+# 第四行平行列表：库要求的可执行子系统，空表示不关心（控制台）。
+# `tray` 是窗口消息循环，它的产物不该在背后多一个黑窗口。
+set(AIPY_PYLIB_SUBSYSTEMS
+  "" "" "" "" "" "" "" "" "" gui)
 
 set(AIPY_PYLIB_ARCHIVES)
 set(AIPY_DIST_PYLIB_ARCHIVES)
@@ -493,10 +569,15 @@ foreach(index RANGE ${last_target})
   list(GET AIPY_PYLIB_TARGETS ${index} target_name)
   list(GET AIPY_PYLIB_NAMES ${index} module_name)
   list(GET AIPY_PYLIB_PUBLISH ${index} publish)
+  list(GET AIPY_PYLIB_SUBSYSTEMS ${index} subsystem)
   set(archive ${CMAKE_BINARY_DIR}/${module_name}.pylib)
   list(APPEND AIPY_PYLIB_ARCHIVES ${archive})
   if(publish)
     list(APPEND AIPY_DIST_PYLIB_ARCHIVES ${archive})
+  endif()
+  set(subsystem_flag "")
+  if(subsystem)
+    set(subsystem_flag --subsystem ${subsystem})
   endif()
   add_custom_command(
     OUTPUT ${archive}
@@ -506,6 +587,7 @@ foreach(index RANGE ${last_target})
             --library $<TARGET_FILE:aipy_pylib_${target_name}>
             --symbol-prefix ${target_name}
             --platform ${AIPY_PYLIB_PLATFORM}
+            ${subsystem_flag}
             --output ${archive}
     DEPENDS $<TARGET_FILE:aipy_pylib_${target_name}>
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/pcc/pack_pylib.py
@@ -729,6 +811,18 @@ if(AIPY_BUILD_TESTS)
                      $<TARGET_FILE:pcc>
                      ${CMAKE_BINARY_DIR}
                      $<TARGET_FILE_DIR:aipy_pylib_fs>)
+
+    # Windows 外壳能力：托盘与文件关联。
+    #
+    # 这两个库没有 CPython 对应物可以逐行对拍，所以验的是「按需链接」+
+    # 「失败路径的返回值约定」+「注册表写进去能干净撤销」。最后一条是这里
+    # 唯一带副作用的，测试自己撤销，且只用 HKCU（不需要管理员权限）。
+    add_test(NAME aipy_os_shell
+             COMMAND ${AIPY_PYTHON}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_os_shell.py
+                     $<TARGET_FILE:pcc>
+                     ${CMAKE_BINARY_DIR}
+                     $<TARGET_FILE_DIR:aipy_pylib_os_tray>)
   endif()
 
   # 语义对拍：同一份脚本，CPython 跑一遍、VM 跑一遍，逐变量比较。

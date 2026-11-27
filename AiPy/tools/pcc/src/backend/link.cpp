@@ -254,10 +254,6 @@ bool relink(const std::string& buildDir, const std::string& libraryDir,
   std::vector<std::string> command = {
       linkExe, "/nologo", "/machine:x64",
       "/INCREMENTAL:NO", toolchain->outputFlag(output)};
-  // 子系统由 toolchain 给：它是平台细节（MSVC 是 `/subsystem:` 加 `/ENTRY:`）。
-  for (const std::string& flag : toolchain->subsystemFlags(subsystem)) {
-    command.push_back(flag);
-  }
 
   // 绝对化：link.exe 的工作目录是我们给的，相对路径会找不到。
   for (const std::string& object : objects) {
@@ -372,6 +368,11 @@ bool relink(const std::string& buildDir, const std::string& libraryDir,
       }
     }
   }
+  // 判断子系统必须放在点分模块解析**之后**：这里 `group.module` 才是
+  // `os.tray`，而前面的 `modules` 只有顶层名 `os`——查 `os.pylib` 永远
+  // 看不到 `os.tray` 的声明（实测踩过：托盘产物仍然带控制台窗口）。
+  bool libraryWantsGui = false;
+
   const std::vector<ModuleFunctions> grouped =
       groupExtensions(resolved, knownModules);
   for (const ModuleFunctions& group : grouped) {
@@ -382,6 +383,7 @@ bool relink(const std::string& buildDir, const std::string& libraryDir,
     }
     Pylib pylib;
     if (!pylib.open(archive, error)) return false;
+    if (pylib.manifest().subsystem == "gui") libraryWantsGui = true;
     // 库本身必须出现在命令行上，否则被点名的符号无从解析。
     const std::string libraryPath = joinPath(
         scratchDir, group.module + "_pylib" + toolchain->librarySuffix());
@@ -429,6 +431,23 @@ bool relink(const std::string& buildDir, const std::string& libraryDir,
       command.push_back(toolchain->quoteInclude(bareSymbol));
       result->symbols.push_back(bareSymbol);
     }
+  }
+
+  // ── 子系统：脚本声明与库声明取并集 ──
+  //
+  // 两个来源都能要求图形子系统：
+  //   * 脚本有 `class X(Activity)`  → 它本来就是界面程序
+  //   * 用到的库 manifest 写着 subsystem=gui → 比如 `os.tray` 的消息循环
+  //
+  // 任一要求就是要求：没有一个库能把另一个库的窗口需求去掉，而「这是个
+  // 界面程序」也不可能被某个库降级成控制台。
+  //
+  // 位置必须在扩展库循环之后：`libraryWantsGui` 是那里累积出来的。
+  const Subsystem effective =
+      (subsystem == Subsystem::Gui || libraryWantsGui) ? Subsystem::Gui
+                                                       : Subsystem::Console;
+  for (const std::string& flag : toolchain->subsystemFlags(effective)) {
+    command.push_back(flag);
   }
 
   std::vector<std::string> environment;

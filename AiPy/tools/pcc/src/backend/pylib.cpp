@@ -39,6 +39,7 @@ bool parseManifest(const std::string& text, PylibManifest* manifest,
 
   manifest->nativeLibrary = root.getString("nativeLibrary");
   manifest->bytecode = root.getString("bytecode");
+  manifest->subsystem = root.getString("subsystem");
   manifest->functions = jsonStringArray(root, "functions");
   manifest->bareNames = jsonStringArray(root, "bare_names");
 

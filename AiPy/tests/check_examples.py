@@ -93,7 +93,7 @@ def check_only_aipy(pcc, aipy_run, script, out_dir, required):
 
 
 def check_bundle(pcc, script, out_dir, build_dir=None, lib_dir=None,
-                 stdin_data=''):
+                 stdin_data='', args=None, run_it=True):
     """打包成 exe：产物直接运行必须与脚本文本输出完全一致。
 
     ── 这一步在验什么 ──
@@ -108,6 +108,9 @@ def check_bundle(pcc, script, out_dir, build_dir=None, lib_dir=None,
 
     `build_dir` / `lib_dir` 告诉打包器去哪找构建配方与 `.pylib`。所有打包
     都走重链接（见 pcc 的 bundleMain），所以这两个参数是必需的。
+
+    `args` 是传给产物的命令行参数，`run_it=False` 只打包不运行（图形子系统的
+    托盘程序会阻塞在消息循环里，自动化没法让它自己退出）。
     """
     os.makedirs(out_dir, exist_ok=True)
     stem = os.path.splitext(os.path.basename(script))[0]
@@ -129,11 +132,25 @@ def check_bundle(pcc, script, out_dir, build_dir=None, lib_dir=None,
     # 测试进程自己的控制台，在这就跑挂了（等键盘 = 永久挂住）。
     # 这两个参数一起出现：text=True 时 stdin 要是 str，所以 stdin_data
     # 是文本；编码由 subprocess 负责（它用 utf-8，与脚本源文件一致）。
-    ran = subprocess.run([app], input=stdin_data, capture_output=True,
-                         text=True, encoding='utf-8', cwd=out_dir)
+    if not run_it:
+        return _Packed(app)
+
+    ran = subprocess.run([app] + list(args or []), input=stdin_data,
+                         capture_output=True, text=True, encoding='utf-8',
+                         cwd=out_dir)
     if ran.returncode != 0:
         return ['%s.exe 执行失败：%s' % (stem, ran.stderr.strip())]
     return ran
+
+
+class _Packed:
+    """只打包、没实跑时的结果。stdout 为空，调用方据此跳过输出比对。"""
+
+    def __init__(self, app):
+        self.app = app
+        self.stdout = ''
+        self.stderr = ''
+        self.returncode = 0
 
 
 def check_bundle_matches(pcc, script, out_dir, expected, build_dir, lib_dir):
@@ -307,6 +324,47 @@ def main(argv):
         else:
             print('ok   %-17s %d 条关键输出（打包产物 + stdin）'
                   % ('07_interactive.exe', len(interactive_required)))
+    shutil.rmtree(work, ignore_errors=True)
+
+    # ── 08 / 09：Windows 外壳能力，CPython 没有对应物 ──
+    #
+    # 这两份不比对 CPython（`os.tray` / `os.fileassoc` 都是 AiPy 扩展库），
+    # 只验打包产物能跑、关键输出对得上。与 05_threads 同理：交付形态才是
+    # 它想证明的东西。
+    #
+    # 08 是图形子系统产物，跑起来会阻塞在消息循环里等用户点菜单——
+    # 所以这里**不实跑它**，只验证打包成功且关键符号都链进去了。真跑一次
+    # 需要人点菜单，自动化里做不可靠；`check_os_shell.py` 用后台线程退出
+    # 消息循环，那条路已经覆盖了 run() 能正常起停。
+    tray_script = os.path.join(examples, '08_tray.py')
+    result = check_bundle(pcc, tray_script, out_dir,
+                          build_dir=build_dir, lib_dir=lib_dir,
+                          run_it=False)
+    if isinstance(result, list):
+        failures.extend(result)
+    else:
+        # 打包产物自己会阻塞在消息循环里，不实跑。
+        print('ok   %-17s 打包成功（图形子系统，不实跑）' % '08_tray.exe')
+
+    # 09 是控制台产物，可以实跑：`--status` 是只读命令，不写注册表。
+    assoc_script = os.path.join(examples, '09_fileassoc.py')
+    assoc_required = [
+        '.aipydoc 当前没有关联',
+    ]
+    work = tempfile.mkdtemp(prefix='aipy_09_')
+    result = check_bundle(pcc, assoc_script, work, args=['--status'],
+                          build_dir=build_dir, lib_dir=lib_dir)
+    if isinstance(result, list):
+        failures.extend(result)
+    else:
+        missing = [line for line in assoc_required if line not in result.stdout]
+        if missing:
+            failures.extend(['09_fileassoc.exe 缺少预期输出：'] +
+                            ['  未找到: %r' % line for line in missing])
+            print('  ✗ 09_fileassoc.exe 输出不符')
+        else:
+            print('ok   %-17s %d 条关键输出（打包产物 + --status）'
+                  % ('09_fileassoc.exe', len(assoc_required)))
     shutil.rmtree(work, ignore_errors=True)
 
     if failures:

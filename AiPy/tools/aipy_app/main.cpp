@@ -22,6 +22,7 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+#include <shellapi.h>
 #endif
 
 namespace {
@@ -160,6 +161,40 @@ int runProgram(const aipy::vm::Program& program, const char* name) {
   return 0;
 }
 
+// 把命令行交给脚本。`argv[0]` 必须是 exe 的真实映像路径（不是参数里那个），
+// 因为脚本会拿它去写文件关联、给托盘取图标。
+//
+// Windows 上 `argv` 是 ANSI（当前代码页）：`GetCommandLineW` 拿到的才是
+// 正确的 Unicode。中文路径在 `argv` 里会变成 `?`，所以优先用宽字符版本。
+void publishCommandLine(int argc, char** argv) {
+  std::vector<std::string> args;
+#if defined(_WIN32)
+  // GetCommandLineW + CommandLineToArgvW：这是唯一能正确解析带引号参数的
+  // 官方途径，也保住了非 ANSI 字符。
+  int wideCount = 0;
+  LPWSTR* wide = CommandLineToArgvW(GetCommandLineW(), &wideCount);
+  if (wide != nullptr) {
+    for (int i = 0; i < wideCount; ++i) {
+      const int needed = WideCharToMultiByte(CP_UTF8, 0, wide[i], -1, nullptr, 0,
+                                             nullptr, nullptr);
+      if (needed <= 0) {
+        args.push_back(std::string());
+        continue;
+      }
+      std::string narrow(static_cast<std::size_t>(needed - 1), '\0');
+      WideCharToMultiByte(CP_UTF8, 0, wide[i], -1, &narrow[0], needed, nullptr,
+                          nullptr);
+      args.push_back(narrow);
+    }
+    LocalFree(wide);
+  }
+#endif
+  if (args.empty()) {
+    for (int i = 0; i < argc; ++i) args.push_back(argv[i] != nullptr ? argv[i] : "");
+  }
+  aipy::vm::setCommandLine(std::move(args));
+}
+
 // 双击启动的控制台程序，跑完窗口会立刻消失——用户只看到一闪，什么也读不到。
 //
 // 只在**独占**控制台时等：从 cmd / PowerShell 里调用是共用控制台，等一次
@@ -209,7 +244,26 @@ int main(int argc, char** argv) {
     std::fflush(stdout);
   });
 
-  // 给了参数就按「裸 launcher」跑指定文件，方便开发期不重打包。
+  // ── 先看有没有内嵌字节码 ──
+  //
+  // 打包产物必须走这条，即使带着参数：双击关联的文件时系统传的是
+  // `app.exe 文件路径`，那个路径**不是**字节码。旧逻辑「有参数就当 .bc 读」
+  // 会让关联文件在打开时报「读不到」。
+  const std::vector<std::uint8_t> self = readSelf(argv[0]);
+  if (!self.empty()) {
+    const aipy::bytecode::Result attached =
+        aipy::bytecode::loadAttached(self.data(), self.size());
+    if (!attached.failed) {
+      publishCommandLine(argc, argv);
+      const int status = runProgram(attached.program, "app");
+      // 出错时也等：双击的程序报错后窗口立刻消失，等于什么也没说。
+      holdIfLaunchedByDoubleClick();
+      return status;
+    }
+    // 读不出来 → 这不是打包产物，退回裸 launcher 那条路。
+  }
+
+  // 裸 launcher：`aipy_app.exe some.bc`，方便开发期不重打包。
   if (argc >= 2) {
     const std::vector<std::uint8_t> data = readWhole(argv[1]);
     if (data.empty()) {
@@ -221,24 +275,12 @@ int main(int argc, char** argv) {
       report(std::string(argv[1]) + ": " + loaded.error);
       return 1;
     }
+    publishCommandLine(argc, argv);
     return runProgram(loaded.program, argv[1]);
   }
 
-  // 没参数：这是打包产物，跑自己尾部的字节码。
-  const std::vector<std::uint8_t> self = readSelf(argv[0]);
-  if (self.empty()) {
-    report("读不到自己的映像文件");
-    return 2;
-  }
-  const aipy::bytecode::Result loaded = aipy::bytecode::loadAttached(self.data(), self.size());
-  if (loaded.failed) {
-    report(loaded.error);
-    report("用法: aipy_app <script.bc>（或把它打包成 exe 后直接运行）");
-    holdIfLaunchedByDoubleClick();
-    return 2;
-  }
-  const int status = runProgram(loaded.program, "app");
-  // 出错时也等：双击的程序报错后窗口立刻消失，等于什么也没说。
+  report("读不到自己的映像文件");
+  report("用法: aipy_app <script.bc>（或把它打包成 exe 后直接运行）");
   holdIfLaunchedByDoubleClick();
-  return status;
+  return 2;
 }

@@ -285,6 +285,18 @@ void setCurrentProgramPointer(const Program* program) { g_currentProgram = progr
 // 公开入口：扩展函数用它在 VM 调用栈内拿到 Program。
 const Program* currentProgram() { return detail::currentProgramPointer(); }
 
+namespace {
+// 进程的命令行。静态而不是 thread_local：tray 的回调在另一路调用栈里重新
+// 进 VM，那时脚本仍应看到同一份 argv。
+std::vector<std::string> g_commandLine;
+}  // namespace
+
+void setCommandLine(std::vector<std::string> args) {
+  g_commandLine = std::move(args);
+}
+
+const std::vector<std::string>& commandLine() { return g_commandLine; }
+
 using detail::applyBin;
 using detail::applyCmp;
 using detail::applyUnary;
@@ -384,7 +396,8 @@ Result Machine::run(const Program& program) {
 }
 
 Result Machine::callFunction(const Program& program, const std::string& name,
-                             const std::vector<Value>& args) {  Result result;
+                             const std::vector<Value>& args) {
+  Result result;
   result.failed = true;
 
   // 按名字找函数。脚本函数不是值（Value 没有函数类型，`g = f` 会被
@@ -429,8 +442,7 @@ Result Machine::callFunction(const Program& program, const std::string& name,
 }
 
 // 「按值建帧」：把可调用值 + 已就绪的位置实参建成一帧。kCallMethod 的
-// 脚本实例分支要用（它已按 MRO 找好函数并绑好 self）。
-//
+// 脚本实例分支要用（它已按 MRO 找好函数并绑好 self）。//
 // 返回 true 表示压了帧（正常调用）；返回 false 且 `produced` 非空表示这是个
 // 协程/生成器函数——调用它不执行函数体，只产出对象。`error` 非空才是失败。
 static bool pushValueFrame(const Program& program, const Value& callable,
@@ -2645,6 +2657,39 @@ static bool callCallable(const Program& program, std::vector<Value>& globals,
   }
   *out = result.value;
   return true;
+}
+
+// 公开的「按值调用」：给「注册回调、稍后被调用」这类库用（tray 的菜单项）。
+//
+// 与 callCallable 的差别只有包装：那个返回 bool + 两个出参，是执行循环内部
+// 的形状；这里返回 Result，与 run/callFunction 一致，库层不用记第二种错误
+// 约定。
+Result Machine::callValue(const Program& program, const Value& callable,
+                          const std::vector<Value>& args) {
+  Result result;
+  result.failed = true;
+
+  // 全局槽是进程级共享的，扩展函数可能在模块级代码跑之前就被调用
+  // （tray.run() 的第一次消息处理之前已经跑过模块级，但 callValue 也可能
+  // 在别的宿主里被更早调到）。越界读槽会拿到空值，那不是崩溃但会静默出错。
+  if (static_cast<int>(globals_.size()) < program.globalCount) {
+    globals_.resize(static_cast<size_t>(program.globalCount));
+  }
+
+  std::string errorType;
+  std::string error;
+  Value produced;
+  if (!callCallable(program, globals_, callable, args, &produced, &errorType,
+                    &error)) {
+    result.error = error;
+    if (!errorType.empty()) {
+      result.exception = makeException(errorType, error);
+    }
+    return result;
+  }
+  result.failed = false;
+  result.value = produced;
+  return result;
 }
 
 // 协议方法调用（`__enter__` / `__exit__`）。

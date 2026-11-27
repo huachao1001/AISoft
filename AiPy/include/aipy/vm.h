@@ -377,6 +377,18 @@ class Machine {
   Result callFunction(const Program& program, const std::string& name,
                       const std::vector<Value>& args);
 
+  // 调用一个**函数值**（`Value` 里的 kObject 函数、绑定方法、内建函数、
+  // lambda 闭包）。
+  //
+  // 与 callFunction 的分工：那个按名字找、给 threading 用；这个收脚本自己
+  // 传进来的值，给「注册一个回调、稍后调用」这类库用（tray 的菜单项）。
+  // 两者都建独立帧，都不碰调用方的栈。
+  //
+  // 失败时 `exception` 是未捕获的异常、`error` 是消息，与 run/callFunction
+  // 同一套结构。
+  Result callValue(const Program& program, const Value& callable,
+                   const std::vector<Value>& args);
+
   // 全局槽。热加载用：新程序跑之前把旧值灌回去，计数器和表单状态不会丢。
   //
   // **进程级共享**（静态）：线程里 `global X` 写的必须是主线程看得见的槽，
@@ -398,6 +410,17 @@ class Machine {
 // 按线程存：两个线程各自跑不同的程序时互不影响，也不会读到对方正在拆的
 // Program。返回 nullptr 表示「不在 VM 调用中」。
 const Program* currentProgram();
+
+// 宿主的命令行参数，argv[0] 是 exe 自己的路径。脚本通过 `sys.argv()` 读它。
+//
+// 为什么放在语言层而不是某个 pylib 里：这是「进程怎么被启动的」这条事实，
+// 与文件、时间一样是平台无关的输入，任何宿主（launcher / 测试）都可能设置，
+// 而读它的 pylib 不该反过来依赖设置它的那个人。
+//
+// 为什么是进程级静态：一个进程只有一条命令行，而 `tray` 的回调是在消息循环
+// 里重新进 VM 跑的，那时脚本仍应看到同一份 argv。
+void setCommandLine(std::vector<std::string> args);
+const std::vector<std::string>& commandLine();
 
 // 反汇编：给测试与排错用。每行形如 `12: load_global 3`。
 std::vector<std::string> disassemble(const Program& program);

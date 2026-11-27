@@ -190,6 +190,9 @@ def main(argv):
                         help='module prefix used in symbol names; defaults to '
                              '--module. Needed for dotted modules like os.path, '
                              'whose symbols use os_path')
+    parser.add_argument('--subsystem', default='',
+                        help='"gui" when the library needs a windowed '
+                             'executable (no console window)')
     parser.add_argument('--no-functions', action='store_true',
                         help='skip the symbol scan. core.pylib has no script '
                              'functions, so scanning it would only cost time')
@@ -245,6 +248,14 @@ def main(argv):
         # 不写这个字段，好让旧读取端不受影响。
         'bare_names': bare_names,
     }
+    # 需要在图形子系统（没有控制台窗口）下运行才写这个字段。
+    #
+    # 为什么由库声明而不是脚本声明：`tray.run()` 的实现是窗口消息循环，
+    # 没有窗口就没有托盘；而窗口消息循环在控制台子系统下也能跑，只是会
+    # 在背后多一个黑窗口。那是不是错误，取决于**库**在做什么，不是脚本
+    # 作者该关心的事。脚本里 `import tray` 就是唯一的信号。
+    if options.subsystem:
+        manifest['subsystem'] = options.subsystem
     if len(libraries) > 1:
         # 平台 → 角色 → 归档内路径。读取端按角色取，不按文件名猜。
         manifest['platform_files'] = {

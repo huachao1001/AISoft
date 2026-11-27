@@ -105,9 +105,30 @@ PyUI 将来就是这样一个 `pylib`：它自带 `pyui_core`/`pyui_script`，�
 **它是 Python 语义，还是具体能力？** 语义留在 `src/`；能力进 `libs/`。
 线程、文件、时间、JSON、网络、界面全属于后者。
 
-现有四个：`threading`（线程）、`fs`（文件）、`time`（时间）、`json`（数据
-交换）。它们与用户自定义库用的是**同一套** `AIPY_PYLIB_MODULE` /
-`AIPY_PYLIB_FUNCTION`，没有私有注册代码——加第五个库只需要新目录 + 两条宏。
+现有九个：
+
+| 目录 | 模块名 | 能力 |
+|---|---|---|
+| `libs/threading` | `threading` | 线程 |
+| `libs/fs` | `fs` | 文件对象、`open` / `input`（裸名） |
+| `libs/os` | `os` | 目录与文件系统操作 |
+| `libs/os_path` | `os.path` | 路径查询 |
+| `libs/time` | `time` | 时间与格式化 |
+| `libs/json` | `json` | 数据交换 |
+| `libs/sys` | `sys` | `argv()` / `executable()` |
+| `libs/os_tray` | `os.tray` | 托盘图标、右键菜单、左键回调 |
+| `libs/os_fileassoc` | `os.fileassoc` | 扩展名关联、图标 |
+
+它们与用户自定义库用的是**同一套** `AIPY_PYLIB_MODULE` /
+`AIPY_PYLIB_FUNCTION`，没有私有注册代码——加一个新库只需要新目录 + 两条宏。
+
+**点分模块名**（`os.path` / `os.tray` / `os.fileassoc`）用 `_NAMED` 变体：
+符号前缀是下划线版本（`os_tray`），注册项里记带点的真名。规则只有一条——
+符号前缀 = 模块名把点换成下划线，打包器与链接器用同一条。
+
+**托盘与文件关联为什么挂在 `os.` 下**：它们操作的是操作系统外壳（通知区域、
+shell 关联），不是语言能力。脚本写 `os.tray.icon(...)` 与
+`os.path.exists(...)` 是同一类操作，不必记一个额外的顶层名字。
 
 `fs.open` 刻意对齐 CPython 的文件对象（`read/readline/readlines/write/
 writelines/seek/tell/flush/close` + `for line in f`），因为文件对象是脚本
@@ -352,6 +373,16 @@ the script calls text.upper but the library in text.pylib does not provide it
 链接器按扩展名判断它是不是库。所以 `.pylib` 是**跨平台**归档，同一个包里
 可以同时有 `lib/win-x64/text.lib` 与 `lib/linux-x64/text.a`。
 
+**库可以声明产物需要哪种可执行子系统**（manifest 的 `subsystem` 字段，
+目前只有 `"gui"`）。判据是「脚本要用窗口消息循环吗」——那取决于**库**在
+做什么（`os.tray.run()` 就是消息循环），不是脚本作者该记的开关，所以没有
+`pcc --gui`。
+
+判断要放在**点分模块解析之后**：`program.extensions` 里的顶层模块名是
+`os`，而真正的能力在 `os.tray` 里。早期版本在顶层名那一步查，查的是
+`os.pylib`，永远看不到 `os.tray` 的声明——症状是托盘产物照样带控制台窗口
+（实测踩过）。
+
 ### 库的身份：文件名就是模块名
 
 **归档文件名必须与 manifest 的 `module` 字段完全一致**，打开时校验，不符即报错：
@@ -422,6 +453,14 @@ Python 的内建与标准库里的名字，归属按 CPython 划：
 | `os.remove` | `os.pylib` | `os` |
 | `os.path.exists` | `os.path.pylib` | `os.path` |
 | `os.path.isfile` / `isdir` / `getsize` | `os.path.pylib` | `os.path` |
+| `sys.argv()` / `sys.executable()` | `sys.pylib` | `sys`（改成函数） |
+| `os.tray.*` | `os.tray.pylib` | 无（AiPy 扩展） |
+| `os.fileassoc.*` | `os.fileassoc.pylib` | 无（AiPy 扩展） |
+
+`sys.argv()` / `sys.executable()` 写成**函数**而不是常量：本语言没有模块级
+常量（`import sys` 只登记名字，不构造模块对象），所以「拿一次列表」只能走
+调用。`argv` 由宿主的语言层记录（`vm::setCommandLine`），库自己不碰平台
+API——换平台不用改这个库。
 
 **`fs` 只提供 `open` 与 `input`。** 原先堆在 `fs` 里的 `read_text` /
 `write_text` / `append_text` 已删除——标准 Python 没有这些（`pathlib` 才有），
@@ -530,7 +569,7 @@ cmake --build build
 cd build && ctest --output-on-failure
 ```
 
-十五条测试：
+十七条测试：
 
 | 测试 | 作用 |
 |---|---|
@@ -548,6 +587,7 @@ cd build && ctest --output-on-failure
 | `aipy_vm_semantics` | VM 结果与 CPython 逐变量一致 |
 | `aipy_layers` | 边界守护：无界面符号、`Host` 是不透明 `void*` |
 | `aipy_standard` | Design.md 第 4 节：系统库与用户库同一套宏、平台细节集中在 `tools/pcc` |
+| `aipy_os_shell` | `os.tray` / `os.fileassoc`：函数级按需、失败返回值约定、注册表写入能干净撤销 |
 | `aipy_dist` | `dist/` 发布契约：只有 `.pylib`、`core` 带齐三角色、只用它就能打包 |
 
 `aipy_standalone` 不只是演示：它断言了算术、字符串内建、容器引用语义、
