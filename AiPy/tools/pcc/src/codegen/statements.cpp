@@ -86,7 +86,8 @@ bool CodeGen::statement(const Node& node) {
       return ifChain(node);
 
     case Kind::While: {
-      if (node.orelseCount > 0) return failAt(diag::whileElse(), node);
+      // `while ... else`：条件变假之后执行 else；`break` 跳过 else。
+      // 所以 break 的目标要指向「else 之后」，而条件失败的目标指向 else 开头。
       const int loopStart = static_cast<int>(block_->code.size());
       if (!expr(*node.children[0])) return false;
       emit("JUMP_IF_FALSE", node);
@@ -100,8 +101,24 @@ bool CodeGen::statement(const Node& node) {
       loopStack_.pop_back();
       emit("JUMP", node);
       emitU16(loopStart);
+
+      // 条件失败落在这里：先跑 else，再跳过它（break 从上面直接跳到末尾）。
+      const int elseStart = static_cast<int>(block_->code.size());
+      patchU16(static_cast<std::size_t>(exitFixup), elseStart);
+      int skipFixup = -1;
+      if (node.orelseCount > 0) {
+        const std::size_t orelseStart = 1 + node.bodyCount;
+        for (std::size_t i = 0; i < node.orelseCount; ++i) {
+          if (!statement(*node.children[orelseStart + i])) return false;
+        }
+        emit("JUMP", node);
+        skipFixup = static_cast<int>(block_->code.size());
+        emitU16(0);
+      }
       const int exitAt = static_cast<int>(block_->code.size());
-      patchU16(static_cast<std::size_t>(exitFixup), exitAt);
+      if (skipFixup >= 0) {
+        patchU16(static_cast<std::size_t>(skipFixup), exitAt);
+      }
       for (int fixup : frame.breakFixups) {
         patchU16(static_cast<std::size_t>(fixup), exitAt);
       }
@@ -388,8 +405,6 @@ bool CodeGen::augmented(const Node& node) {
 }
 
 bool CodeGen::forLoop(const Node& node) {
-  if (node.orelseCount > 0) return failAt(diag::forElse(), node);
-
   const Node& target = *node.children[0];
   const bool tupleTarget =
       target.kind == Kind::TupleLit || target.kind == Kind::ListLit;
@@ -419,8 +434,24 @@ bool CodeGen::forLoop(const Node& node) {
 
   emit("JUMP", node);
   emitU16(loopTop);
+
+  // 迭代耗尽落在这里：先跑 else，再跳到末尾；break 直接跳到末尾。
+  const int elseStart = static_cast<int>(block_->code.size());
+  patchU16(static_cast<std::size_t>(exitFixup), elseStart);
+  int skipFixup = -1;
+  if (node.orelseCount > 0) {
+    const std::size_t orelseStart = 2 + node.bodyCount;
+    for (std::size_t i = 0; i < node.orelseCount; ++i) {
+      if (!statement(*node.children[orelseStart + i])) return false;
+    }
+    emit("JUMP", node);
+    skipFixup = static_cast<int>(block_->code.size());
+    emitU16(0);
+  }
   const int exitAt = static_cast<int>(block_->code.size());
-  patchU16(static_cast<std::size_t>(exitFixup), exitAt);
+  if (skipFixup >= 0) {
+    patchU16(static_cast<std::size_t>(skipFixup), exitAt);
+  }
   for (int fixup : frame.breakFixups) {
     patchU16(static_cast<std::size_t>(fixup), exitAt);
   }

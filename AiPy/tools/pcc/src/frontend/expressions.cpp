@@ -774,6 +774,7 @@ NodePtr Parser::fstring(const Token& token) {
       const std::size_t start = i + 1;
       std::size_t depth = 0;
       std::size_t end = start;
+      std::size_t specAt = std::string::npos;
       bool closed = false;
       for (; end < text.size(); ++end) {
         const char inside = text[end];
@@ -788,9 +789,9 @@ NodePtr Parser::fstring(const Token& token) {
           }
           --depth;
         } else if (inside == ':' && depth == 0) {
-          // 格式说明符 `{x:>5}`：先不支持，明确报错。
-          fail("format specifiers in f-strings are not supported");
-          return nullptr;
+          // 格式说明符 `{x:>5}`：记下分隔位置，配对的 `}` 仍要找到。
+          // depth 归零后遇到的第一个 `:` 才是说明符起点。
+          specAt = end;
         } else if (inside == '!' && depth == 0 &&
                    end + 1 < text.size() &&
                    (text[end + 1] == 'r' || text[end + 1] == 's' ||
@@ -804,7 +805,8 @@ NodePtr Parser::fstring(const Token& token) {
         return nullptr;
       }
 
-      const std::string source = text.substr(start, end - start);
+      const std::size_t exprEnd = specAt == std::string::npos ? end : specAt;
+      const std::string source = text.substr(start, exprEnd - start);
       if (source.empty()) {
         fail("empty placeholder in f-string");
         return nullptr;
@@ -823,6 +825,17 @@ NodePtr Parser::fstring(const Token& token) {
       if (!value) {
         failAtLine(inner.error().message, inner.error().line, inner.error().col);
         return nullptr;
+      }
+      if (specAt != std::string::npos) {
+        // `f"{x:>5}"` 交给 str.format 处理：说明符记在表达式的 text 上，
+        // 代码生成时编成 `("{:>5}").format(x)`。复用同一套实现，不在这里
+        // 再写一遍格式迷你语言。
+        // 说明符放 raw：text 是节点自己的标识（Name 的变量名、Attribute 的
+        // 属性名），覆盖它会让表达式读错名字。
+        value->raw = text.substr(specAt + 1, end - specAt - 1);
+        // 用 intValue 当哨兵而不是 flag：flag 已经被「复数 / bytes / **」等
+        // 多处复用，`f"{1.5:.2f}"` 里的 1.5 本身就会把 flag 置真。
+        value->intValue = 1;
       }
       joined->children.push_back(std::move(value));
       i = end + 1;

@@ -949,6 +949,52 @@ CASES = [
         'print("get" in names, "setdefault" in names)\n',
         'True False\nTrue True False\nTrue True\n',
     ),
+    (
+        'f-string 格式说明符',
+        'x = 3.14159\n'
+        'print(f"{x:.2f}")\n'
+        'print(f"{x:>8.2f}|")\n'
+        'n = 42\n'
+        'print(f"{n:05d}")\n'
+        'print(f"{n:x}")\n'
+        'print(f"{n:d} and {x:.1f}")\n',
+        '3.14\n    3.14|\n00042\n2a\n42 and 3.1\n',
+    ),
+    (
+        'while else',
+        'i = 0\n'
+        'while i < 2:\n'
+        '    print("w", i)\n'
+        '    i += 1\n'
+        'else:\n'
+        '    print("while else")\n'
+        'j = 0\n'
+        'while j < 2:\n'
+        '    if j == 1:\n'
+        '        break\n'
+        '    j += 1\n'
+        'else:\n'
+        '    print("never")\n',
+        'w 0\nw 1\nwhile else\n',
+    ),
+    (
+        'for else',
+        'for x in [1, 2]:\n'
+        '    print("f", x)\n'
+        'else:\n'
+        '    print("for else")\n'
+        'for x in [1, 2]:\n'
+        '    if x == 2:\n'
+        '        break\n'
+        '    print("g", x)\n'
+        'else:\n'
+        '    print("never")\n'
+        'for x in []:\n'
+        '    print("empty")\n'
+        'else:\n'
+        '    print("empty else")\n',
+        'f 1\nf 2\nfor else\ng 1\nempty else\n',
+    ),
     # ── id / hash ──
     (
         'id 对同一对象稳定',

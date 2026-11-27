@@ -314,7 +314,17 @@ bool CodeGen::expr(const Node& node) {
       }
       bool emitted = false;
       for (const NodePtr& part : node.children) {
-        if (part->kind == Kind::Constant) {
+        // flag 要先判：带格式说明符的段本身可能就是一个 Constant
+        // （`f"{1:>5}"`），先按 Constant 处理会把说明符整个丢掉。
+        if (part->intValue == 1 && !part->raw.empty()) {
+          // `f"{x:.2f}"`：`("{:.2f}").format(x)`，复用 str.format 的实现。
+          emit("CONST", *part);
+          emitU16(constIndexOfStr("{:" + part->raw + "}"));
+          if (!expr(*part)) return false;
+          emit("CALL_METHOD", *part);
+          emitU16(constIndexOfStr("format"));
+          emitU8(1);
+        } else if (part->kind == Kind::Constant) {
           emit("CONST", *part);
           emitU16(constIndexOfStr(part->text));
         } else {

@@ -1125,8 +1125,7 @@ class Compiler:
             return
 
         if isinstance(node, ast.While):
-            if node.orelse:
-                raise CompileError('不支持 while ... else', self.filename, node)
+            # `while ... else`：条件变假后执行 else，break 跳过 else。
             loop_start = len(self.block.code)
             self.expr(node.test)
             self.block.emit('JUMP_IF_FALSE', node)
@@ -1138,8 +1137,20 @@ class Compiler:
             _, breaks, _ = self.loop_stack.pop()
             self.block.emit('JUMP', node)
             self.block.emit_u16(loop_start)
+
+            # 条件失败落在这里：先跑 else，再跳到末尾。
+            else_start = len(self.block.code)
+            self.block.patch_u16(exit_fixup, else_start)
+            skip_fixup = None
+            if node.orelse:
+                for statement in node.orelse:
+                    self.statement(statement)
+                self.block.emit('JUMP', node)
+                skip_fixup = len(self.block.code)
+                self.block.emit_u16(0)
             exit_at = len(self.block.code)
-            self.block.patch_u16(exit_fixup, exit_at)
+            if skip_fixup is not None:
+                self.block.patch_u16(skip_fixup, exit_at)
             for fixup in breaks:
                 self.block.patch_u16(fixup, exit_at)
             return
@@ -1580,8 +1591,6 @@ class Compiler:
         raise CompileError('不支持这种 += 目标', self.filename, node.target)
 
     def for_loop(self, node):
-        if node.orelse:
-            raise CompileError('不支持 for ... else', self.filename, node)
         tuple_target = isinstance(node.target, (ast.Tuple, ast.List))
         if not isinstance(node.target, ast.Name) and not tuple_target:
             raise CompileError('for 的循环变量必须是单个名字', self.filename,
@@ -1606,13 +1615,39 @@ class Compiler:
 
         self.block.emit('JUMP', node)
         self.block.emit_u16(loop_top)
+
+        # 迭代耗尽落在这里：先跑 else，再跳到末尾；break 直接到末尾。
+        else_start = len(self.block.code)
+        self.block.patch_u16(exit_fixup, else_start)
+        skip_fixup = None
+        if node.orelse:
+            for statement in node.orelse:
+                self.statement(statement)
+            self.block.emit('JUMP', node)
+            skip_fixup = len(self.block.code)
+            self.block.emit_u16(0)
         exit_at = len(self.block.code)
-        self.block.patch_u16(exit_fixup, exit_at)
+        if skip_fixup is not None:
+            self.block.patch_u16(skip_fixup, exit_at)
         for fixup in breaks:
             # break 时 ITER_BREAK 已经弹掉了循环状态，直接跳到出口。
             # 但 break 生成的是 ITER_BREAK + JUMP，JUMP 跳过的是 exit，
             # 而 exit 处不需要再弹栈，所以直接指向 exit_at 即可。
             self.block.patch_u16(fixup, exit_at)
+
+    def format_spec_text(self, spec):
+        """把 ast 的格式说明符（JoinedStr）拼回纯文本。
+
+        CPython 把 `{x:.2f}` 的说明符也解析成 JoinedStr；这里只支持字面量
+        形式（没有嵌套的 `{...}`），够覆盖 `:.2f` `:>5` 这类写法。
+        """
+        parts = []
+        for item in getattr(spec, 'values', []):
+            if isinstance(item, ast.Constant):
+                parts.append(item.value)
+            else:
+                raise CompileError('不支持嵌套的格式说明符', self.filename, spec)
+        return ''.join(parts)
 
     def import_statement(self, node):
         # 依赖图是构建期的事（见 pyui_extc）；字节码只知道「这个模块被用了」。
@@ -1842,16 +1877,24 @@ class Compiler:
                     self.block.emit_u16(self.const_string(part.value))
                 else:
                     # ast.FormattedValue
-                    if part.format_spec is not None:
-                        raise CompileError('f-string 里的格式说明符暂不支持',
-                                           self.filename, node)
                     if part.conversion not in (-1, None):
                         raise CompileError('f-string 里的 !r / !s 转换暂不支持',
                                            self.filename, node)
-                    self.expr(part.value)
-                    self.block.emit('CALL_BUILTIN', node)
-                    self.block.emit_u16(self.builtin_index('str'))
-                    self.block.emit_u8(1)
+                    if part.format_spec is not None:
+                        # `f"{x:.2f}"` 编成 `("{:.2f}").format(x)`：
+                        # 与 str.format 共用同一套格式说明符实现。
+                        spec = self.format_spec_text(part.format_spec)
+                        self.block.emit('CONST', node)
+                        self.block.emit_u16(self.const_string('{:' + spec + '}'))
+                        self.expr(part.value)
+                        self.block.emit('CALL_METHOD', node)
+                        self.block.emit_u16(self.const_string('format'))
+                        self.block.emit_u8(1)
+                    else:
+                        self.expr(part.value)
+                        self.block.emit('CALL_BUILTIN', node)
+                        self.block.emit_u16(self.builtin_index('str'))
+                        self.block.emit_u8(1)
                 if emitted:
                     self.block.emit('BIN', node)
                     self.block.emit_u8(BINOP['ADD'])
