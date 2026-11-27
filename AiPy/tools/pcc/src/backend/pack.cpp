@@ -148,6 +148,8 @@ std::vector<std::uint8_t> packProgram(const Program& program) {
     out.u16(function.kwonlyStart < 0
                 ? 0xFFFF
                 : static_cast<std::uint32_t>(function.kwonlyStart));
+    // 位置-only 参数个数：按关键字传它们时要报 CPython 的专门文案。
+    out.u16(static_cast<std::uint32_t>(function.posonlyCount));
     out.u16(function.captureStart < 0
                 ? 0xFFFF
                 : static_cast<std::uint32_t>(function.captureStart));

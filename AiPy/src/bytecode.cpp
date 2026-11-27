@@ -169,6 +169,7 @@ Result load(const std::uint8_t* data, std::size_t size) {
     function.kwargSlot = kwargSlot == 0xFFFF ? -1 : kwargSlot;
     const std::uint16_t kwonlyStart = reader.u16();
     function.kwonlyStart = kwonlyStart == 0xFFFF ? -1 : kwonlyStart;
+    function.posonlyCount = static_cast<int>(reader.u16());
     const std::uint16_t captureStart = reader.u16();
     function.captureStart = captureStart == 0xFFFF ? -1 : captureStart;
     function.isGenerator = reader.u16() != 0;

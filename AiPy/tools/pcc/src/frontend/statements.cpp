@@ -636,6 +636,8 @@ NodePtr Parser::parseFunctionArgs() {
   while (!checkOp(")") && !check(TokenType::End)) {
     if (matchOp("/")) {
       args->hasPosonly = true;
+      // `/` 出现在这里，它前面的参数全是位置-only。
+      args->posonlyCount = static_cast<int>(args->params.size());
       if (args->posonlyLine == 0) {
         args->posonlyLine = peek().line;
         args->posonlyCol = peek().col;

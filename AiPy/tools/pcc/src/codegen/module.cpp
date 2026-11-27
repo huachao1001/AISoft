@@ -44,6 +44,7 @@ bool CodeGen::compile(const Node& module) {
     out.varargSlot = block.varargSlot;
     out.kwargSlot = block.kwargSlot;
     out.kwonlyStart = block.kwonlyStart;
+    out.posonlyCount = block.posonlyCount;
     out.captureStart = block.captureStart;
     out.isGenerator = block.isGenerator;
     out.isCoroutine = block.isCoroutine;
@@ -335,10 +336,9 @@ bool CodeGen::buildSignature(const Node& node, const std::string& name,
                              bool isMethod, Block* out,
                              std::uint64_t* mask, int* defaultTotal) {
   const Node& args = *node.children[0];
-  if (args.hasPosonly) {
-    return fail(diag::positionalOnlyParams(), args.posonlyLine,
-                args.posonlyCol + 1);
-  }
+  // 位置-only 参数（`def f(a, /)`）按普通位置参数登记。真正的语义差别是
+  // 「不能按关键字传入」，那一条在 VM 的 bindArguments 里按名字匹配不到
+  // 就会报 got an unexpected keyword argument，与 CPython 的报错同形。
 
   const std::size_t firstParam = isMethod ? 1 : 0;
 
@@ -353,6 +353,8 @@ bool CodeGen::buildSignature(const Node& node, const std::string& name,
   for (std::size_t i = firstParam; i < args.params.size(); ++i) {
     block.localNames.push_back(args.params[i]);
   }
+  // 位置-only 参数排在参数表最前（CPython 的 posonlyargs 也是这个顺序）。
+  block.posonlyCount = static_cast<int>(args.posonlyCount);
   block.paramCount = static_cast<int>(block.localNames.size());
   block.localCount = block.paramCount;
   if (!args.kwonlyParams.empty()) {

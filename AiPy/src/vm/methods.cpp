@@ -64,7 +64,25 @@ Value callMethod(const Value& target, const std::string& name,
     if (name == "isspace" && need(0)) return isSpaceText(target);
     if (name == "islower" && need(0)) return islower(target);
     if (name == "isupper" && need(0)) return isupper(target);
+    if (name == "encode") {
+      if (argc == 0) return encodeText(target, "utf-8");
+      if (argc == 1) return encodeText(target, args[0].toString());
+      *error = "encode 最多 1 个参数";
+      return Value();
+    }
     *error = "字符串没有方法 " + name;
+    return Value();
+  }
+
+  // ── bytes ──
+  if (target.isBytes()) {
+    if (name == "decode") {
+      if (argc == 0) return decodeBytes(target, "utf-8");
+      if (argc == 1) return decodeBytes(target, args[0].toString());
+      *error = "decode 最多 1 个参数";
+      return Value();
+    }
+    *error = "bytes 没有方法 " + name;
     return Value();
   }
 

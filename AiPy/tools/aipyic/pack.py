@@ -80,7 +80,7 @@ MAGIC = b'AIPYBC01'
 #    「有默认值的参数个数」，不再能由「尾部个数」推出。
 # 6：函数表新增 captureStart（闭包捕获值落在哪些局部槽）。
 # 7：函数表新增 isGenerator（函数体里有 yield，调用它得到生成器而非返回值）。
-VERSION = 11
+VERSION = 12
 
 # 常量类型标记，与 cpp 侧 ConstType 一致。
 CONST_NONE = 0
@@ -190,6 +190,7 @@ def pack(program):
         out.u16(0xFFFF if kwarg < 0 else kwarg)
         kwonly = function.get('kwonlyStart', -1)
         out.u16(0xFFFF if kwonly < 0 else kwonly)
+        out.u16(function.get('posonlyCount', 0))
         capture = function.get('captureStart', -1)
         out.u16(0xFFFF if capture < 0 else capture)
         out.u16(1 if function.get('isGenerator') else 0)

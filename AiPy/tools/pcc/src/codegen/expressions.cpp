@@ -474,6 +474,10 @@ bool CodeGen::callScript(const Node& node, int index) {
   bool needsDynamic = calleeBlock.varargSlot >= 0 ||
                       calleeBlock.kwargSlot >= 0 ||
                       calleeBlock.kwonlyStart >= 0;
+  // 有位置-only 参数时也必须走动态绑定：静态路径按名字把关键字拍到位置
+  // 上，会静默接受 `f(a=1)`（CPython 对此报错）。交给 VM 的
+  // bindArguments，它按 posonlyCount 明确拒绝。
+  if (calleeBlock.posonlyCount > 0) needsDynamic = true;
   for (std::size_t i = 0; i < node.children.size() - 1; ++i) {
     if (node.children[1 + i]->kind == Kind::Starred) needsDynamic = true;
   }

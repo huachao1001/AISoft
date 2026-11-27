@@ -190,6 +190,8 @@ struct Node {
   bool hasKwarg = false;
   bool hasKwonly = false;
   bool hasPosonly = false;
+  // `/` 之前的参数个数（也就是位置-only 参数个数）。
+  int posonlyCount = 0;
   int posonlyLine = 0;
   int posonlyCol = 0;
 };

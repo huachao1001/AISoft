@@ -995,6 +995,39 @@ CASES = [
         '    print("empty else")\n',
         'f 1\nf 2\nfor else\ng 1\nempty else\n',
     ),
+    (
+        'f-string 转换标志',
+        'x = "ab"\n'
+        'n = 3.14159\n'
+        'print(f"{x!r}")\n'
+        'print(f"{x!s}")\n'
+        'print(f"{x!r:>8}|")\n'
+        'print(f"{n:.2f}")\n'
+        'print(f"{[1, 2]!r}")\n',
+        "\'ab\'\nab\n    \'ab\'|\n3.14\n[1, 2]\n",
+    ),
+    (
+        'encode / decode',
+        's = "abc"\n'
+        'b = s.encode()\n'
+        'print(b)\n'
+        'print(b.decode())\n'
+        't = "\xe4\xb8\xad"\n'
+        'print(t.encode().decode() == t)\n'
+        'print(b"xyz".decode())\n',
+        "b\'abc\'\nabc\nTrue\nxyz\n",
+    ),
+    (
+        '位置-only 参数',
+        'def f(a, b, /, c):\n'
+        '    return a + b + c\n'
+        'print(f(1, 2, 3))\n'
+        'print(f(1, 2, c=3))\n'
+        'def g(x, /):\n'
+        '    return x * 2\n'
+        'print(g(5))\n',
+        '6\n6\n10\n',
+    ),
     # ── id / hash ──
     (
         'id 对同一对象稳定',

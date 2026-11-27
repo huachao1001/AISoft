@@ -53,6 +53,8 @@ struct CompiledBlock {
   int varargSlot = -1;
   int kwargSlot = -1;
   int kwonlyStart = -1;
+  // 位置-only 参数个数（`def f(a, b, /, c)` 里是 2）。
+  int posonlyCount = 0;
   // 具名参数的名字，按槽号排列（*args / **kwargs 不在其中）。
   std::vector<std::string> paramNames;
   // 闭包捕获值的起始局部槽；-1 表示不捕获。
@@ -119,6 +121,8 @@ class CodeGen {
     int varargSlot = -1;
     int kwargSlot = -1;
     int kwonlyStart = -1;
+    // 位置-only 参数个数（`def f(a, b, /, c)` 里是 2）。
+    int posonlyCount = 0;
     // 闭包捕获值的起始局部槽；-1 表示不捕获。
     int captureStart = -1;
     // 函数体里有 `yield`：调用它得到生成器，不是返回值。

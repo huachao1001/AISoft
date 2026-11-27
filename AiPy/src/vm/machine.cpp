@@ -195,6 +195,18 @@ bool bindArguments(const Function& fn, const Value& defaults,
       extraValues.push_back(keywordValues[i]);
       continue;
     }
+    // 位置-only 参数被按关键字传入：CPython 用专门的文案，因为它不是
+    // 「名字不存在」，而是「这个名字只能按位置传」。整串只包一对引号。
+    if (slot < fn.posonlyCount) {
+      std::string rejected;
+      for (int p = 0; p < fn.posonlyCount; ++p) {
+        if (!rejected.empty()) rejected += ", ";
+        rejected += fn.paramNames[static_cast<std::size_t>(p)];
+      }
+      *error = "got some positional-only arguments passed as keyword "
+               "arguments: '" + rejected + "'";
+      return false;
+    }
     if (bound[static_cast<std::size_t>(slot)]) {
       *error = "got multiple values for argument '" + name + "'";
       return false;

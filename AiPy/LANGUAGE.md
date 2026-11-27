@@ -5,7 +5,7 @@
 
 这份清单不是凭记忆写的。每一条都由 `tests/probe_syntax.py` 实测：用
 `pcc.exe` 编成字节码、再用 `aipy_run.exe` 真的跑一遍，把结果记下来。
-共 341 条，当前 **315 条支持、25 条不支持**。
+共 347 条，当前 **323 条支持、24 条不支持**。
 
 ```bat
 :: 重跑一遍（改了编译器后必做）
@@ -243,7 +243,7 @@ class App(Activity):
 |---|---|
 | 元组 `(1, 2)` | 支持（独立类型 `tuple`） |
 | 集合 `{1, 2}` | 支持（独立类型 `set`，按插入序去重） |
-| f-string `f"{x}"` | 支持，含格式说明符（`f"{x:.2f}"`、`f"{n:05d}"`）；**不支持** `!r`/`!s` 转换 |
+| f-string `f"{x}"` | 支持，含格式说明符（`f"{x:.2f}"`、`f"{n:05d}"`）与转换标志 `!r` / `!s` / `!a` |
 | `bytes` `b"abc"` | 支持 |
 | `...` | 不支持，明确报错 |
 
@@ -298,7 +298,7 @@ class App(Activity):
 | 关键字传参 `f(a=1)` | 支持 |
 | `*args` / `**kwargs` | 支持 |
 | 仅关键字参数 `def f(*, a)` | 支持 |
-| 位置-only 参数 `def f(a, /)` | 不支持，明确报错 |
+| 位置-only 参数 `def f(a, /)` | 支持；按关键字传会报 CPython 同款错误 |
 | 嵌套函数 `def` 内套 `def` | 不支持，移到模块顶层 |
 | `lambda` | 支持，可作一等值传参 |
 | 装饰器 `@dec` | 支持，可多层、可带参 |
@@ -316,7 +316,7 @@ class App(Activity):
 `ljust` `rjust` `center` `isdigit` `isalpha` `isalnum` `isspace` `islower`
 `isupper`。
 
-`encode` 仍不支持（本语言没有 bytes 编解码器）。
+`encode` / `decode` 支持 utf-8、latin-1、ascii 三种编码；其它编码报 `LookupError`（不静默降级成 utf-8）。
 
 `format` 支持多个位置参数与常用格式说明符（`:.2f`、`:.3s`、`:d`、`:x`、
 `:>5`、`:<5`、`:^5`、`:05d`、`:+.2f`）；不认识的说明符原样保留。
@@ -443,5 +443,5 @@ python tests\probe_syntax.py build\final\aipy_run.exe
 
 输出末尾会列出「与预期不符」的条目。`tests/probe_syntax.py` 里每条用例都
 标了期望值（`ok` / `no`）；文档说支持的必须真的能跑，说不支持的必须真的
-报错。**这条检查没有进 CTest**——它跑 341 次编译+执行，约 16 秒，
+报错。**这条检查没有进 CTest**——它跑 347 次编译+执行，约 16 秒，
 放在每次构建里太重；提交前手动跑一次即可。

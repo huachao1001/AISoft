@@ -261,6 +261,10 @@ struct Function {
   int kwargSlot = -1;
   // 从哪个参数下标开始是仅关键字参数（等于 paramCount 表示没有）。
   int kwonlyStart = -1;
+  // 位置-only 参数的个数（`def f(a, b, /, c)` 里是 2）。
+  // 按关键字传这些名字时要报 CPython 的专门文案，而不是通用的
+  // "unexpected keyword argument"——两者对脚本的含义不同。
+  int posonlyCount = 0;
   // 仅关键字参数里带默认值的个数（它们排在整个默认值列表的末尾）。
   int kwonlyDefaultCount = 0;
   // 参数名，按槽号排列（含仅关键字参数，不含 *args / **kwargs）。

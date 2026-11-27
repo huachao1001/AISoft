@@ -169,6 +169,8 @@ class Block:
         self.vararg_slot = -1
         self.kwarg_slot = -1
         self.kwonly_start = -1
+        # 位置-only 参数个数（`def f(a, b, /, c)` 里是 2）。
+        self.posonly_count = 0
         self.capture_start = -1
         # 函数体里有 yield：调用它得到生成器，不是返回值。
         self.is_generator = False
@@ -632,13 +634,12 @@ class Compiler:
             self.decorated_names.add(name)
 
         args = node.args
-        # 位置-only 参数（`def f(a, /)`）仍然拒绝：它在语法上分隔了「只按
-        # 位置传」的参数，接纳它只会让脚本看起来支持一个它并不区分的特性。
-        if args.posonlyargs:
-            raise CompileError('不支持位置-only 参数（/ 分隔符）',
-                               self.filename, args.posonlyargs[0])
-
-        params = [arg.arg for arg in args.args]
+        # 位置-only 参数（`def f(a, /)`）按普通位置参数登记；按关键字传它
+        # 时，VM 的 bindArguments 按名字匹配不到就报 got an unexpected
+        # keyword argument，与 CPython 同形。
+        params = [arg.arg for arg in args.posonlyargs]
+        params += [arg.arg for arg in args.args]
+        posonly_count = len(args.posonlyargs)
         kwonly = [arg.arg for arg in args.kwonlyargs]
         is_method = not keep_self and bool(args.args) and args.args[0].arg == 'self'
         first = 1 if is_method else 0
@@ -647,6 +648,8 @@ class Compiler:
         for index in range(first, len(params)):
             block.locals[params[index]] = index - first
         block.local_count = block.param_count
+        # 位置-only 参数排在参数表最前；减掉被方法剥掉的 self。
+        block.posonly_count = max(0, posonly_count - first)
         if kwonly:
             block.kwonly_start = block.param_count
             for offset, parameter in enumerate(kwonly):
@@ -1877,21 +1880,32 @@ class Compiler:
                     self.block.emit_u16(self.const_string(part.value))
                 else:
                     # ast.FormattedValue
-                    if part.conversion not in (-1, None):
-                        raise CompileError('f-string 里的 !r / !s 转换暂不支持',
-                                           self.filename, node)
+                    # `!r` / `!s` / `!a` 包成 repr(x) / str(x)，与 C++ 版同形。
+                    # 合成节点要带上原表达式的行号，否则行号表退化成 L0，
+                    # 与 C++ 版对不上。
+                    value_node = part.value
+                    if part.conversion in (114, 97):        # 'r', 'a'
+                        value_node = ast.Call(
+                            func=ast.Name(id='repr', ctx=ast.Load()),
+                            args=[part.value], keywords=[])
+                        ast.copy_location(value_node, part.value)
+                    elif part.conversion == 115:            # 's'
+                        value_node = ast.Call(
+                            func=ast.Name(id='str', ctx=ast.Load()),
+                            args=[part.value], keywords=[])
+                        ast.copy_location(value_node, part.value)
                     if part.format_spec is not None:
                         # `f"{x:.2f}"` 编成 `("{:.2f}").format(x)`：
                         # 与 str.format 共用同一套格式说明符实现。
                         spec = self.format_spec_text(part.format_spec)
                         self.block.emit('CONST', node)
                         self.block.emit_u16(self.const_string('{:' + spec + '}'))
-                        self.expr(part.value)
+                        self.expr(value_node)
                         self.block.emit('CALL_METHOD', node)
                         self.block.emit_u16(self.const_string('format'))
                         self.block.emit_u8(1)
                     else:
-                        self.expr(part.value)
+                        self.expr(value_node)
                         self.block.emit('CALL_BUILTIN', node)
                         self.block.emit_u16(self.builtin_index('str'))
                         self.block.emit_u8(1)
@@ -2129,6 +2143,10 @@ class Compiler:
             # 实参的个数与名字要到运行期才知道，改发 [位置列表, 关键字字典]。
             dynamic = (block.vararg_slot >= 0 or block.kwarg_slot >= 0 or
                        block.kwonly_start >= 0)
+            # 有位置-only 参数时必须走动态绑定：静态路径按名字把关键字
+            # 拍到位置上，会静默接受 `f(a=1)`（CPython 报错）。
+            if block.posonly_count > 0:
+                dynamic = True
             if not dynamic:
                 for argument in node.args:
                     if isinstance(argument, ast.Starred):
@@ -2363,6 +2381,7 @@ class Compiler:
                 'varargSlot': block.vararg_slot,
                 'kwargSlot': block.kwarg_slot,
                 'kwonlyStart': block.kwonly_start,
+                'posonlyCount': block.posonly_count,
                 'captureStart': block.capture_start,
                 'isGenerator': block.is_generator,
                 'isCoroutine': block.is_coroutine,

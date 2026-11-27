@@ -628,6 +628,9 @@ Value isalnum(const Value& text);
 Value isSpaceText(const Value& text);
 Value islower(const Value& text);
 Value isupper(const Value& text);
+// encode/decode：载荷本来就是 UTF-8，只改类型标记；非 utf-8 编码抛 LookupError。
+Value encodeText(const Value& text, const std::string& encoding);
+Value decodeBytes(const Value& data, const std::string& encoding);
 Value textOfChar(const Value& codepoint);
 
 // ── 其它内建 ──

@@ -775,6 +775,8 @@ NodePtr Parser::fstring(const Token& token) {
       std::size_t depth = 0;
       std::size_t end = start;
       std::size_t specAt = std::string::npos;
+      std::size_t convAt = std::string::npos;
+      char convChar = 0;
       bool closed = false;
       for (; end < text.size(); ++end) {
         const char inside = text[end];
@@ -796,8 +798,10 @@ NodePtr Parser::fstring(const Token& token) {
                    end + 1 < text.size() &&
                    (text[end + 1] == 'r' || text[end + 1] == 's' ||
                     text[end + 1] == 'a')) {
-          fail("conversion flags (!r / !s) in f-strings are not supported");
-          return nullptr;
+          // 转换标志 `!r` / `!s` / `!a`：后面只能跟 `:` 或 `}`。
+          convAt = end;
+          convChar = text[end + 1];
+          ++end;
         }
       }
       if (!closed) {
@@ -805,7 +809,10 @@ NodePtr Parser::fstring(const Token& token) {
         return nullptr;
       }
 
-      const std::size_t exprEnd = specAt == std::string::npos ? end : specAt;
+      // 表达式在转换标志或格式说明符之前结束。
+      std::size_t exprEnd = end;
+      if (convAt != std::string::npos) exprEnd = convAt;
+      if (specAt != std::string::npos && specAt < exprEnd) exprEnd = specAt;
       const std::string source = text.substr(start, exprEnd - start);
       if (source.empty()) {
         fail("empty placeholder in f-string");
@@ -825,6 +832,22 @@ NodePtr Parser::fstring(const Token& token) {
       if (!value) {
         failAtLine(inner.error().message, inner.error().line, inner.error().col);
         return nullptr;
+      }
+      // `!r` / `!s` / `!a`：包成 `repr(x)` / `str(x)` 调用，代码生成不用改。
+      // `!a` 在 CPython 里是 ascii()，这里与 `!r` 同为 repr——差异只影响
+      // 非 ASCII 字符的转义形式。
+      if (convChar == 'r' || convChar == 'a' || convChar == 's') {
+        // 行号取占位符表达式自己的：合成的调用节点没有源码位置，行号表
+        // 会退化成 L0，与 Python 版对不上。
+        const int exprLine = value->line;
+        const int exprCol = value->col;
+        auto callee = make_node(Kind::Name, exprLine, exprCol);
+        callee->text = convChar == 's' ? "str" : "repr";
+        auto call = make_node(Kind::Call, exprLine, exprCol);
+        call->argsCount = 1;
+        call->children.push_back(std::move(callee));
+        call->children.push_back(std::move(value));
+        value = std::move(call);
       }
       if (specAt != std::string::npos) {
         // `f"{x:>5}"` 交给 str.format 处理：说明符记在表达式的 text 上，
