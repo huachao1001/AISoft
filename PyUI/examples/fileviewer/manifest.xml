@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  文件查看器的应用清单。
+
+  这个示例的作用不是演示功能，而是验证边界：核心不含 IO，读写全部来自
+  fs 扩展。把脚本里的 import fs 删掉，产物里就不该再有 fs 的任何代码。
+
+  窗口字段写在清单里而不是脚本常量里 —— 两者写同一个字段会在构建期报错
+  （每个字段只有一个来源）。
+-->
+<manifest name="fileviewer">
+  <activity name="FileViewerActivity" main="true">
+    <window title="文件查看器" layout="fileviewer" width="520" height="360"
+            minWidth="380" minHeight="260"/>
+  </activity>
+</manifest>

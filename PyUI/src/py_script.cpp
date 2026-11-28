@@ -252,12 +252,15 @@ namespace {
 
 // 取控件；类型不对返回 nullptr。全部访问器都走它，于是「id 上挂错了控件类型」
 // 这件事只在这里判断一次，而不是每个函数各写一遍 dynamic_cast。
+//
+// 这里把 AiPy 的**不透明宿主指针**解释成 View*：AiPy 不知道 View 是什么，
+// 它只负责原样保存和带回来。解释语义是桥接层的事，也正是这一层存在的理由。
 template <typename T>
 T* asView(const Value& view) {
-  return dynamic_cast<T*>(view.asView());
+  return dynamic_cast<T*>(static_cast<View*>(view.asHost()));
 }
 
-View* asAny(const Value& view) { return view.asView(); }
+View* asAny(const Value& view) { return static_cast<View*>(view.asHost()); }
 
 }  // namespace
 
@@ -392,256 +395,27 @@ void focus(const Value& view) {
   if (View* target = asAny(view)) target->setFocus();
 }
 
-// ── 字符串方法 ──
+// 桥接层在启动时装 log sink：语言层默认写 stderr，但 GUI 程序没有
+// stderr 窗口，OutputDebugString 才能被调试器看到。
 //
-// 列表方法（append/extend/pop …）在 py_value.cpp 里：它们是容器语义，
-// 与「脚本 API」无关，生成代码对它们不做名字改写。
-
-Value upper(const Value& text) {
-  std::string out = text.toString();
-  for (char& c : out) {
-    if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 32);
-  }
-  return Value(std::move(out));
-}
-
-Value lower(const Value& text) {
-  std::string out = text.toString();
-  for (char& c : out) {
-    if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + 32);
-  }
-  return Value(std::move(out));
-}
-
-Value strip(const Value& text) {
-  const std::string& source = text.toString();
-  size_t begin = 0;
-  size_t end = source.size();
-  auto space = [](unsigned char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; };
-  while (begin < end && space(static_cast<unsigned char>(source[begin]))) ++begin;
-  while (end > begin && space(static_cast<unsigned char>(source[end - 1]))) --end;
-  return Value(source.substr(begin, end - begin));
-}
-
-Value replace(const Value& text, const Value& from, const Value& to) {
-  std::string out = text.toString();
-  const std::string needle = from.toString();
-  if (needle.empty()) return Value(std::move(out));
-  const std::string replacement = to.toString();
-  size_t position = 0;
-  while ((position = out.find(needle, position)) != std::string::npos) {
-    out.replace(position, needle.size(), replacement);
-    position += replacement.size();
-  }
-  return Value(std::move(out));
-}
-
-Value split(const Value& text, const Value& separator) {
-  const std::string source = text.toString();
-  const std::string needle = separator.toString();
-  Value::List parts;
-  if (needle.empty()) {
-    // 不传分隔符时按空白切：这是 Python 的 split() 无参语义，
-    // 也是「从一行词里取第一个」最常见的用法。
-    std::string current;
-    for (char c : source) {
-      if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
-        if (!current.empty()) {
-          parts.emplace_back(std::move(current));
-          current.clear();
-        }
-      } else {
-        current.push_back(c);
-      }
-    }
-    if (!current.empty()) parts.emplace_back(std::move(current));
-    return Value::list(std::move(parts));
-  }
-
-  size_t start = 0;
-  for (;;) {
-    const size_t hit = source.find(needle, start);
-    if (hit == std::string::npos) {
-      parts.emplace_back(source.substr(start));
-      break;
-    }
-    parts.emplace_back(source.substr(start, hit - start));
-    start = hit + needle.size();
-  }
-  return Value::list(std::move(parts));
-}
-
-Value join(const Value& separator, const Value& items) {
-  const std::string glue = separator.toString();
-  std::string out;
-  bool first = true;
-  for (const Value& item : iterate(items)) {
-    if (!first) out += glue;
-    // 非字符串元素按 str() 处理：`" ".join([1, 2])` 在 Python 里会抛错，
-    // 但脚本里更常见的意图是「拼成文本」，报错在这里没有收益。
-    out += item.toString();
-    first = false;
-  }
-  return Value(std::move(out));
-}
-
-Value startsWith(const Value& text, const Value& prefix) {
-  const std::string source = text.toString();
-  const std::string needle = prefix.toString();
-  return Value(source.size() >= needle.size() && source.compare(0, needle.size(), needle) == 0);
-}
-
-Value endsWith(const Value& text, const Value& suffix) {
-  const std::string source = text.toString();
-  const std::string needle = suffix.toString();
-  return Value(source.size() >= needle.size() &&
-               source.compare(source.size() - needle.size(), needle.size(), needle) == 0);
-}
-
-Value findIn(const Value& text, const Value& needle) {
-  const std::string& source = text.toString();
-  const std::string target = needle.toString();
-  const size_t hit = source.find(target);
-  if (hit == std::string::npos) return Value(-1LL);
-  // 返回**字符**下标而不是字节下标：脚本拿去切片时两者必须一致，
-  // 中文文本里混用会出现「找到的位置切出来是半个字」。
-  return Value(static_cast<long long>(utf8Length(std::string_view(source).substr(0, hit))));
-}
-
-Value countIn(const Value& text, const Value& needle) {
-  const std::string& source = text.toString();
-  const std::string target = needle.toString();
-  if (target.empty()) return Value(0LL);
-  long long count = 0;
-  size_t position = 0;
-  while ((position = source.find(target, position)) != std::string::npos) {
-    ++count;
-    position += target.size();
-  }
-  return Value(count);
-}
-
-Value textOfChar(const Value& codepoint) {
-  return Value(utf8Encode(static_cast<std::uint32_t>(codepoint.toInt())));
-}
-
-// str.format() 的最小实现：只支持 {} 与 {0} {1} 这类按位置替换。
-// 不做格式规格（{:.2f}）——那要一整套格式迷你语言，而脚本里
-// 「先 round 再 str」已经够用，硬塞半个实现反而会让人以为支持全了。
-Value formatText(const Value& text, const Value& args) {
-  const std::string& pattern = text.toString();
-  const std::vector<Value> values = iterate(args);
-  std::string out;
-  size_t index = 0;
-  size_t next = 0;
-  while (index < pattern.size()) {
-    const size_t open = pattern.find('{', index);
-    if (open == std::string::npos) {
-      out += pattern.substr(index);
-      break;
-    }
-    const size_t close = pattern.find('}', open + 1);
-    if (close == std::string::npos) {
-      // 没有配对的 }：原样保留剩下的部分，不要吞掉用户文本
-      out += pattern.substr(index);
-      break;
-    }
-    out += pattern.substr(index, open - index);
-    const std::string spec = pattern.substr(open + 1, close - open - 1);
-    if (spec.empty()) {
-      if (next < values.size()) out += values[next++].toString();
-    } else {
-      const auto explicitIndex = static_cast<size_t>(std::strtoull(spec.c_str(), nullptr, 10));
-      if (explicitIndex < values.size()) out += values[explicitIndex].toString();
-    }
-    index = close + 1;
-  }
-  return Value(std::move(out));
-}
-
-Value minimum(const Value& a, const Value& b) { return lt(a, b).toBool() ? a : b; }
-Value maximum(const Value& a, const Value& b) { return gt(a, b).toBool() ? a : b; }
-
-void log(const Value& value) {
-  // Windows 上 stderr 在 GUI 程序里没有窗口可写，OutputDebugString 才是
-  // 能被调试器看到的那条路。用 platform 的能力判断太绕，直接看宏。
-#ifdef PYUI_OS_WINDOWS
-  std::string text = value.toString();
-  text += "\n";
-  ::OutputDebugStringA(text.c_str());
-#else
-  std::fprintf(stderr, "[pyui] %s\n", value.toString().c_str());
-#endif
-}
-
-// ── 文件访问 ──
-//
-// 用 std::FILE 而不是 iostream：要的只是「按字节读进来 / 按字节写出去」，
-// 流对象带来的区域设置与格式化能力在这里全是负担。
-
+// 这里不再定义 log()——它属于语言层（AiPy 的 aipy 库）。桥接层只负责把
+// 平台实现装进那个钩子，符号归属与「谁负责语言语义」保持一致。
 namespace {
 
-// 路径分隔符跟随平台。脚本里拼路径必须走 joinPath，否则在另一个平台上
-// "\" 会被当成文件名的一部分。
-char separatorChar() { return platform().pathSeparator(); }
+bool installLogSink() {
+  setLogSink([](const std::string& text) {
+#ifdef PYUI_OS_WINDOWS
+    ::OutputDebugStringA((text + "\n").c_str());
+#else
+    std::fprintf(stderr, "[pyui] %s\n", text.c_str());
+#endif
+  });
+  return true;
+}
+
+const bool kLogSinkInstalled = installLogSink();
 
 }  // namespace
-
-Value readFile(const Value& path) {
-  const std::string name = path.toString();
-  if (name.empty()) return Value();
-
-  std::FILE* file = std::fopen(name.c_str(), "rb");
-  if (file == nullptr) return Value();
-
-  std::string content;
-  char buffer[4096];
-  size_t got = 0;
-  while ((got = std::fread(buffer, 1, sizeof(buffer), file)) > 0) content.append(buffer, got);
-  std::fclose(file);
-
-  // 去掉 UTF-8 BOM：Windows 记事本保存的文本带它，留在正文里会让
-  // 标题的第一个字显示成乱码方块。
-  if (content.size() >= 3 && static_cast<unsigned char>(content[0]) == 0xEF &&
-      static_cast<unsigned char>(content[1]) == 0xBB &&
-      static_cast<unsigned char>(content[2]) == 0xBF) {
-    content.erase(0, 3);
-  }
-  return Value(std::move(content));
-}
-
-Value writeFile(const Value& path, const Value& text) {
-  const std::string name = path.toString();
-  if (name.empty()) return Value("路径为空");
-
-  std::FILE* file = std::fopen(name.c_str(), "wb");
-  if (file == nullptr) return Value("无法写入 " + name);
-
-  const std::string content = text.toString();
-  const size_t written = std::fwrite(content.data(), 1, content.size(), file);
-  std::fclose(file);
-  // 短写说明磁盘满了或配额用尽。必须报出来：静默截断一个笔记文件，
-  // 用户会以为保存成功。
-  if (written != content.size()) return Value("只写出 " + std::to_string(written) + " / " +
-                                              std::to_string(content.size()) + " 字节");
-  return Value();
-}
-
-Value joinPath(const Value& left, const Value& right) {
-  std::string head = left.toString();
-  const std::string tail = right.toString();
-  if (head.empty()) return Value(tail);
-  if (tail.empty()) return Value(head);
-  const char sep = separatorChar();
-  if (head.back() != sep && head.back() != '/' && head.back() != '\\') head.push_back(sep);
-  return Value(std::move(head) + tail);
-}
-
-Value homeDirectory() {
-  const std::string home = platform().homeDirectory();
-  if (home.empty()) return Value();
-  return Value(home);
-}
 
 // ── 事件绑定 ──
 
@@ -741,25 +515,9 @@ std::vector<MenuItem> menuItemsFrom(const Value& items) {
 }
 
 // ── 类型辅助 ──
-
-Value parseNumber(const Value& text) {
-  const std::string& source = text.toString();
-  if (source.empty()) return Value();
-
-  // 只认「整串都是数字」：输入框里 "12abc" 应该报错而不是变成 12。
-  // strtod 会停在 a 处并返回 12，所以必须再检查剩余部分。
-  const char* begin = source.c_str();
-  char* end = nullptr;
-  const double value = std::strtod(begin, &end);
-  if (end == begin) return Value();
-  while (*end == ' ' || *end == '\t') ++end;
-  if (*end != '\0') return Value();
-  return Value(value);
-}
-
-Value charFromCode(const Value& codepoint) {
-  return Value(utf8Encode(static_cast<std::uint32_t>(codepoint.toInt())));
-}
+//
+// parseNumber / charFromCode 已迁到 py_value.cpp：它们是纯语言内建
+// （脚本里的 parse_number / char_from_code），与界面无关。
 
 std::string keyName(const Key& key) {
   switch (key) {

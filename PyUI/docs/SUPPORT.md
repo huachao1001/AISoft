@@ -57,8 +57,15 @@
 ### 内建函数
 
 `int` `float` `str` `bool` `len` `abs` `round` `min` `max` `sum` `list`
-`dict` `range` `print`，以及 pyui 提供的 `read_file` `write_file`
-`join_path` `home_directory` `format_text` `parse_number` `char_from_code`。
+`dict` `range` `print` `format_text` `parse_number` `char_from_code`。
+
+这些全部属于 AiPy 语言层（独立的同级项目 `../AiPy`，库名 `aipy`），
+不装界面库也能用。
+
+> **文件 IO 不在核心**：`read_file` / `write_file` / `join_path` /
+> `home_directory` 已从核心删除，改由 `fs` 扩展提供（`ext/fs/`）。
+> 这是「核心只有基础语义」这条定位的实际落地——不读文件的程序不该
+> 带着文件 API 的体积。
 
 ### 方法
 
@@ -77,6 +84,67 @@
 | 默认参数 `def f(a, b=2)` | **只支持字面量**，理由见 B 类 |
 | 仅位置参数 `def f(a, /, b)` | `/` 之后的部分同样按位置处理 |
 | 多返回值（返回列表） | `return a, b` 返回的是列表，`a, b = f()` 不支持（见 C 类） |
+
+### 扩展
+
+扩展是**唯一**的能力入口：核心只提供基础 Python 语义，文件、网络、图像
+这类能力都由扩展提供。这样「用了才链接」才成立——一个不读文件的程序不该
+把 `fopen` 和路径处理带进 exe。
+
+```python
+import fs                        # 模块名 = 清单里的 name
+text = fs.read_file(path)        # 函数名与参数个数在构建期对着清单校验
+
+from fs import write_file        # 也可以只导入某个函数
+write_file(path, "内容")
+```
+
+构建期要给 pyuic 一个扩展目录：
+
+```bat
+pyuic --ext-dir ext --used out\app.used.json --out out app.py
+```
+
+`<ext-dir>/<包名>/manifest.json` 描述一个包提供什么。字段：
+
+| 字段 | 必填 | 含义 |
+|---|---|---|
+| `name` | ✅ | Python 里 `import` 的名字 |
+| `header` | | 生成代码 `#include` 它；纯字节码扩展可以没有 |
+| `functions[]` | | `{python, cpp, arity}`，arity 是 `[最少, 最多]` |
+| `depends[]` | | 依赖的模块名。闭包展开，用户只 import 顶层 |
+| `native.lib{平台}` | | 每个平台的静态库，**包内相对路径**，Windows 是 `.lib`、macOS/Linux 是 `.a` |
+
+静态库路径相对清单所在目录，所以包解到哪里都能用，清单不用改。
+
+**记录与链接是两件事**：`pyuic` 有 AST 和行号，负责写 `used.json`（用了
+什么、在哪一行）；`pyui_extc` 是 C++ 工具，负责按清单算依赖闭包、产出
+`app.ext.json`（人看，含「直接 import 还是被 depends 带进来」）与
+`app.rsp`（`link.exe @app.rsp` 直接吃）。
+
+`pyui_extc` 用 C++ 写而不是 Python，是因为它要在**用户机器**上跑，而那里
+只装链接器 kit、没有 Python。`pyuic` 留在 Python 是因为它的前端必须是
+CPython 的 `ast`——那是「语法覆盖等于 CPython」这个承诺的地基，换不掉。
+
+### `.pylib` 是包，不是库后缀
+
+这两件事曾经共用一个称呼（`.par`），结果就是「`.par` 里的 `.pylib`」
+这种句子。现在分开：
+
+| 称呼 | 指什么 | 后缀 |
+|---|---|---|
+| `.pylib` | 可分发的**包**（zip） | `.pylib` |
+| 包内静态库 | 真实静态库，直接给链接器 | `.lib`（Windows）/ `.a`（其它） |
+
+包解开后就是真实文件，所以库用平台原生后缀，不必再伪装成别的名字。
+
+打包与查看：
+
+```bat
+python tools/pyuic/pylib.py pack ext\fs -o build\fs.pylib
+python tools/pyuic/pylib.py list build\fs.pylib
+python tools/pyuic/pylib.py verify build\fs.pylib
+```
 
 ---
 
@@ -148,6 +216,17 @@ UTF-8 的字节序恰好与 Unicode 码点序一致，所以字符串比较不�
 `set`、`frozenset`、`tuple` 都没有。元组字面量 `(1, 2)` 会被当成列表。
 所以 `a, b = f()` 也不支持（见 C 类）。
 
+连带的一个可见差异：`keys()` / `values()` / `items()` 返回**普通列表**，
+不是 CPython 的视图对象。
+
+```python
+# CPython: dict_keys(['a', 'b'])    AiPy: ['a', 'b']
+print({"a": 1, "b": 2}.keys())
+```
+
+要「两边输出一致」就显式收集（`for k in d: ...` 攒一个列表）。这个差异
+不影响遍历与 `in` 判断，只影响把视图直接当值用（print、比较类型名）。
+
 ### B7. 取模/整除的对齐
 
 ```python
@@ -171,7 +250,7 @@ C++ 的 `/` 向零截断、`%` 结果符号跟被除数；产物已按 Python �
 
 | 写法 | 报错文案（要点） |
 |---|---|
-| `import` | 没有模块系统；需要的能力用 pyui 的函数 |
+| `import` | 见下面的「扩展」一节：需要 `--ext-dir` 指向清单目录，否则报错 |
 | `class` | 没有对象模型；脚本状态用模块级变量 |
 | 嵌套函数 / `nonlocal` | 没有闭包；移到模块顶层 |
 | `lambda` | 没有一等函数 |

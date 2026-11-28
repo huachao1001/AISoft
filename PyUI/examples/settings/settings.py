@@ -4,7 +4,7 @@
 #   * 所有控件类型一起出现（TextView / Button / CheckBox / RadioButton /
 #     TextField / ProgressBar / Slider / 容器三类）
 #   * 运行期换主题（set_theme）——这是唯一一个会改到「整窗配色」的动作
-#   * 配置持久化（read_file / write_file 写到主目录）
+#   * 配置持久化（fs 扩展：fs.read_file / fs.write_file 写到主目录）
 #   * 派生状态：配置完整度由各控件当前值算出来，任何改动都立刻反映到进度条
 #
 # 界面在 assets/layouts/settings.xml。两者的接口只有 id。
@@ -13,6 +13,9 @@
 #
 # 与 Android 一致：状态是 Activity 的字段（self.xxx）。同一个对象的字段，
 # 所以「读配置 → 改配置 → 保存」天然是一条链，不需要 global。
+#
+# 文件读写走 fs 扩展——核心只提供基础 Python 语义，碰系统资源的能力都在扩展里。
+import fs
 
 
 class SettingsActivity(Activity):
@@ -26,10 +29,10 @@ class SettingsActivity(Activity):
     loading = False
 
     def settings_path(self):
-        home = home_directory()
+        home = fs.home_directory()
         if home is None:
             return "pyui-settings.txt"
-        return join_path(home, "pyui-settings.txt")
+        return fs.join_path(home, "pyui-settings.txt")
 
     # ── 状态 → 界面 ──
 
@@ -104,7 +107,7 @@ class SettingsActivity(Activity):
         return 1
 
     def load_settings(self):
-        content = read_file(self.settings_path())
+        content = fs.read_file(self.settings_path())
         if content is None:
             # 第一次运行：配置文件还不存在，这不是错误。
             return
@@ -119,7 +122,7 @@ class SettingsActivity(Activity):
                 "volume=" + str(round(self.volume)) + "\n" +
                 "autostart=" + self.bool_text(self.autostart) + "\n" +
                 "compact=" + self.bool_text(self.compact) + "\n")
-        error = write_file(self.settings_path(), body)
+        error = fs.write_file(self.settings_path(), body)
         if error is not None:
             self.show_status("保存失败：" + error)
             return

@@ -202,47 +202,9 @@ void setTextColor(const Value& view, const Value& color);
 // 焦点：脚本用它在启动时把光标放进输入框
 void focus(const Value& view);
 
-// ── 字符串方法 ──
-// 列表方法（append/extend/…)在 py_value.h 里，因为它们是容器语义，
-// 与「脚本 API」无关——生成代码对它们不做名字改写。
-Value upper(const Value& text);
-Value lower(const Value& text);
-Value strip(const Value& text);
-Value replace(const Value& text, const Value& from, const Value& to);
-Value split(const Value& text, const Value& separator);
-Value join(const Value& separator, const Value& items);
-Value startsWith(const Value& text, const Value& prefix);
-Value endsWith(const Value& text, const Value& suffix);
-Value findIn(const Value& text, const Value& needle);
-Value countIn(const Value& text, const Value& needle);
-Value formatText(const Value& text, const Value& args);
-// 数字 → 指定小数位；字符串方法 format 用不到，单独给 f-string 用
-Value textOfChar(const Value& codepoint);
-
-// ── 其它内建 ──
-Value minimum(const Value& a, const Value& b);
-Value maximum(const Value& a, const Value& b);
-// 调试输出：Windows 上是 OutputDebugString，其它平台是 stderr
-void log(const Value& value);
-
-// ── 文件访问 ──
-//
-// 脚本没有内嵌解释器，所以 open() 这类内建不可能存在；但「读一个文本文件、
-// 把它显示出来」是笔记类程序的全部价值所在。这一组只做最朴素的 UTF-8
-// 文本读写，够用且没有隐藏语义：
-//
-//   read_file(path)  → 字符串；读不到返回 None
-//   write_file(path, text) → None；失败返回错误描述字符串
-//
-// 为什么读失败返回 None 而写失败返回错误串：读失败的常见原因是「文件不存在」，
-// 脚本用一个 `is None` 就能兜住；写失败则可能是权限、磁盘满、路径非法，
-// 用户需要看到具体原因。
-Value readFile(const Value& path);
-Value writeFile(const Value& path, const Value& text);
-// 用平台分隔符拼路径；脚本里手写 "\" 在别的平台上会失效。
-Value joinPath(const Value& left, const Value& right);
-// 用户主目录；拿不到时返回 None
-Value homeDirectory();
+// ── 字符串内建 ──
+// 已迁到 py_value.h：它们是 Python 语言本身的方法，AiPy 不装 pyui 也要有。
+// 这里不再声明，生成代码仍然 include py_script.h，所以来源对使用者透明。
 
 // ── 事件绑定 ──
 //
@@ -272,12 +234,10 @@ Value makeMenuSeparator();
 // 把上面那种编码解回 MenuItem 数组；后端与 TrayHost 只认后者。
 std::vector<MenuItem> menuItemsFrom(const Value& items);
 
-// 用户输入框里的文本 → 数字，解析失败返回 None（脚本据此提示错误）
-Value parseNumber(const Value& text);
-
-// 码点 → 单字符字符串。脚本里的 on_char 拿到的是码点，要比较字符
-// 就得先转成字符串——这是唯一一处脚本需要「码点」这个概念的地方。
-Value charFromCode(const Value& codepoint);
+// `parseNumber` / `charFromCode` 不在这里声明：它们是**语言内建**
+// （脚本里的 parse_number / char_from_code），实现归 AiPy。
+// py_value.h 的 `using namespace aipy` 已经把名字带进 pyui::py，
+// 谁再在这里声明一份，就会是「有声明、无定义」的链接错误。
 
 // 键位 → 脚本里用的名字："0".."9"、"a".."z"、"Enter"、"Escape"、"+" 等。
 // 用字符串而不是枚举，是因为脚本语言里没有枚举，而 `if key == "Enter"` 是最

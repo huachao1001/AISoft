@@ -342,16 +342,47 @@ L3 的哈希基线放在 `tests/golden/<platform>/`，`PYUI_UPDATE_GOLDEN=1` 生
 
 ## 7. 体积与性能预算
 
-| 组成 | 目标 |
-|---|---|
-| 引擎（view/layout/widget） | 0.35–0.55 MB |
-| 共享光栅器 | 0.06–0.12 MB |
-| 平台后端（Win32 + GDI） | 0.30–0.50 MB |
-| 生成的布局代码 | 每节点 ≈ 335 B（100 节点 ≈ 33 KB） |
-| **C++ 侧合计** | **0.8–1.3 MB** |
+以下是**实测值**（MSVC 14.44 / x64 / Release / `/MT` / `/OPT:REF,ICF`），
+归因由 `tools/size_probe` 逐层链接得出，不是估算：
 
-对照 AiZip（C++ + GDI+）2.54 MB。引擎只占其中一部分，剩下的余量留给
-未来 Python 转译产物。
+| 层次 | 内容 | exe 体积 | 边际增量 |
+|---|---|---|---|
+| LEVEL=0 | 空 `wWinMain`（仅静态 CRT） | 98.0 KB | — |
+| LEVEL=1 | + 窗口、布局、脚本基类 | 385.5 KB | +287.5 KB |
+| LEVEL=2 | + Button / TextView | 387.0 KB | +1.5 KB |
+| LEVEL=3 | + Value 与脚本内建 | 387.0 KB | +0.0 KB |
+
+实测的真实示例（含完整控件与业务逻辑）：
+
+| 示例 | 体积 | 用到的扩展 |
+|---|---|---|
+| fileviewer | 416.5 KB | fs |
+| progress | 422.5 KB | — |
+| calculator | 437.0 KB | — |
+| notes | 458.5 KB | fs |
+| settings | 474.0 KB | fs |
+
+**归因结论**（三条都反直觉，但都是实测）：
+
+1. **静态 CRT 就是 98 KB 的固定地板**。任何 `/MT` 的 Windows 程序都躲不掉，
+   不属于 PyUI 的成本。
+2. **窗口 + 平台后端 + 布局系统占大头（≈288 KB）**。这层是自绘窗口、
+   GDI 后端、DPI、输入法、拖放、脏区管理的总和，没有一项能省。
+3. **控件几乎不花钱**。加 Button + TextView 只涨 1.5 KB，因为自绘控件只是
+   `onDraw` 里的几个 `Painter` 调用；真正贵的是它依赖的平台层，而平台层
+   无论如何都得在。
+
+因此 300–500 KB 的目标**已经达成**，不需要为体积放弃 `/MT`、RTTI、异常
+或自绘——这四样本来就不是主要开销。
+
+对照 AiZip（C++ + GDI+）2.54 MB。差距主要来自 AiZip 用 GDI+ 与更多
+标准库设施；PyUI 自己的软件光栅器只有几十 KB。
+
+> 复现方式：
+> ```
+> cmake -S . -B build/size -DPYUI_BUILD_SIZE_PROBE=ON -DPYUI_BUILD_EXAMPLES=OFF
+> cmake --build build/size --target size_probe_0 size_probe_1 size_probe_2 size_probe_3
+> ```
 
 性能目标：
 

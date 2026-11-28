@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# .par 包格式：本质是 zip，类比 Android 的 AAR。
+# .pylib 包格式：本质是 zip，类比 Android 的 AAR。
 #
 # ── 它解决什么 ──
 #
@@ -14,32 +14,31 @@
 #
 # ── 为什么它不是一个「运行期」格式 ──
 #
-# .par 只在**构建期**被打开：解出静态库交给链接器，解出字节码嵌进 exe。
+# .pylib 只在**构建期**被打开：解出静态库交给链接器，解出字节码嵌进 exe。
 # 产物里没有 zip 解析代码，也没有包查找逻辑——启动零成本。
 # 这一点必须写清楚，否则很容易「顺手」在运行期加一个解包器，把体积和
 # 启动时间都赔进去。
 #
 # ── 目录结构 ──
 #
-#   <name>.par
+#   <name>.pylib
 #   ├── manifest.json               # 模块名、版本、函数表
 #   ├── bytecode/<module>.pybc      # 可选：纯 Python 模块编译出的字节码
 #   ├── include/...                 # 可选：扩展的 C++ 头
-#   └── lib/<platform>/<name>.pylib # 可选：静态库
+#   └── lib/<platform>/<name>.lib   # 可选：静态库
 #
-# 静态库统一用 .pylib 后缀，不跟随各编译器的习惯（.lib / .a）。理由：
-# 包是跨平台分发的，消费方不该靠扩展名猜「这是哪个编译器产的」；而
-# 实测 MSVC 的 link.exe 按文件内容识别 COFF 归档，不看扩展名。
+# 包内静态库用标准后缀（MSVC 的 .lib、GCC 的 .a），因为包是 zip、
+# 解包就是对真实文件，没有「消费者要靠扩展名猜编译器」的问题。
 #
 # 一个模块可以只有字节码（纯 Python 扩展）、只有静态库（纯原生扩展）、
 # 或两者都有（Python 包装 + 原生实现）。
 #
 # ── 用法 ──
 #
-#   python tools/pyuic/par.py pack   <源目录> -o <输出.par>
-#   python tools/pyuic/par.py list   <某个.par>
-#   python tools/pyuic/par.py verify <某个.par>
-#   python tools/pyuic/par.py unpack <某个.par> -d <目录>
+#   python tools/pyuic/pylib.py pack   <源目录> -o <输出.pylib>
+#   python tools/pyuic/pylib.py list   <某个.pylib>
+#   python tools/pyuic/pylib.py verify <某个.pylib>
+#   python tools/pyuic/pylib.py unpack <某个.pylib> -d <目录>
 import argparse
 import hashlib
 import json
@@ -55,13 +54,21 @@ MANIFEST_NAME = 'manifest.json'
 # 目前只有 Windows 是已实现的后端（见 DESIGN.md 第 8 节）。
 KNOWN_PLATFORMS = ('win-x64', 'win-arm64', 'mac-arm64', 'linux-x64')
 
-# 包内静态库的统一后缀。故意不用 .lib：那是 MSVC 的私有约定，而 .par 是
-# 跨平台分发格式。link.exe 按内容识别归档（spike/test_lib_ext.bat 已验证），
-# 所以换后缀不影响链接。
-LIB_SUFFIX = '.pylib'
+# 包内静态库的后缀跟随平台惯例：MSVC 用 .lib，GCC/Clang 用 .a。
+#
+# 为什么不再统一改成别的后缀：包本身已经是 .pylib（一个 zip），解包得到的是
+# 真实文件；这一步之后就看不出「这是从包里解出来的」，没有理由让库文件伪装成
+# 另一种名字。而包名与库名用同一个 .pylib 后缀反而会让「哪个是包、哪个是库」
+# 永远需要靠上下文区分。
+LIB_SUFFIX = {
+    'win-x64': '.lib',
+    'win-arm64': '.lib',
+    'mac-arm64': '.a',
+    'linux-x64': '.a',
+}
 
 
-class ParError(Exception):
+class PylibError(Exception):
     """包本身有问题（不是使用者写错脚本）。"""
 
 
@@ -73,99 +80,97 @@ def _check_arity(value, where):
     if (not isinstance(value, list) or len(value) != 2
             or not all(isinstance(v, int) and v >= 0 for v in value)
             or value[0] > value[1]):
-        raise ParError('%s: "arity" 必须是 [最少, 最多] 两个非负整数，'
+        raise PylibError('%s: "arity" 必须是 [最少, 最多] 两个非负整数，'
                        '且前者不大于后者' % where)
     return (value[0], value[1])
 
 
 def validate_manifest(data, source='manifest.json'):
-    """校验清单结构。返回规范化后的 dict；任何问题都抛 ParError。
+    """校验清单结构。返回规范化后的 dict；任何问题都抛 PylibError。
 
     校验放在这里而不是各处调用点：清单是**跨团队契约**，错误信息必须
     指向具体字段。散落的 `.get()` 会让「少了 header」变成一个 None
     传进链接器，报错完全不相关。
     """
     if not isinstance(data, dict):
-        raise ParError('%s: 顶层必须是对象' % source)
+        raise PylibError('%s: 顶层必须是对象' % source)
 
     version = data.get('format')
     if version != FORMAT_VERSION:
-        raise ParError('%s: 不支持的 format=%r（本工具只认 %d）。'
+        raise PylibError('%s: 不支持的 format=%r（本工具只认 %d）。'
                        '包版本与新工具不匹配时，请用对应版本的工具打包'
                        % (source, version, FORMAT_VERSION))
 
     name = data.get('name')
     if not isinstance(name, str) or not name:
-        raise ParError('%s: 缺少 "name"' % source)
+        raise PylibError('%s: 缺少 "name"' % source)
 
     modules = data.get('modules')
     if not isinstance(modules, list) or not modules:
-        raise ParError('%s: "modules" 必须是非空数组' % source)
+        raise PylibError('%s: "modules" 必须是非空数组' % source)
 
     seen = set()
     normalized = []
     for index, module in enumerate(modules):
         where = '%s: modules[%d]' % (source, index)
         if not isinstance(module, dict):
-            raise ParError('%s: 必须是对象' % where)
+            raise PylibError('%s: 必须是对象' % where)
 
         module_name = module.get('name')
         if not isinstance(module_name, str) or not module_name:
-            raise ParError('%s: 缺少 "name"' % where)
+            raise PylibError('%s: 缺少 "name"' % where)
         if module_name in seen:
-            raise ParError('%s: 模块名 "%s" 重复' % (where, module_name))
+            raise PylibError('%s: 模块名 "%s" 重复' % (where, module_name))
         seen.add(module_name)
 
         bytecode = module.get('bytecode')
         if bytecode is not None and (not isinstance(bytecode, str) or not bytecode):
-            raise ParError('%s: "bytecode" 必须是包内路径' % where)
+            raise PylibError('%s: "bytecode" 必须是包内路径' % where)
 
         functions = {}
         entries = module.get('functions') or []
         if not isinstance(entries, list):
-            raise ParError('%s: "functions" 必须是数组' % where)
+            raise PylibError('%s: "functions" 必须是数组' % where)
         for position, entry in enumerate(entries):
             entry_where = '%s.functions[%d]' % (where, position)
             if not isinstance(entry, dict):
-                raise ParError('%s: 必须是对象' % entry_where)
+                raise PylibError('%s: 必须是对象' % entry_where)
             python_name = entry.get('python')
             cpp_name = entry.get('cpp')
             if not isinstance(python_name, str) or not python_name:
-                raise ParError('%s: 缺少 "python"' % entry_where)
+                raise PylibError('%s: 缺少 "python"' % entry_where)
             if not isinstance(cpp_name, str) or not cpp_name:
-                raise ParError('%s: 缺少 "cpp"' % entry_where)
+                raise PylibError('%s: 缺少 "cpp"' % entry_where)
             if python_name in functions:
-                raise ParError('%s: 函数 "%s" 重复' % (entry_where, python_name))
+                raise PylibError('%s: 函数 "%s" 重复' % (entry_where, python_name))
             functions[python_name] = (cpp_name, _check_arity(entry.get('arity'), entry_where))
 
         native = module.get('native') or {}
         if not isinstance(native, dict):
-            raise ParError('%s: "native" 必须是对象' % where)
+            raise PylibError('%s: "native" 必须是对象' % where)
 
         include = native.get('include') or []
         if not isinstance(include, list) or not all(isinstance(p, str) for p in include):
-            raise ParError('%s.native: "include" 必须是路径数组' % where)
+            raise PylibError('%s.native: "include" 必须是路径数组' % where)
 
         libs = native.get('lib') or {}
         if not isinstance(libs, dict):
-            raise ParError('%s.native: "lib" 必须是 {平台: 路径}' % where)
+            raise PylibError('%s.native: "lib" 必须是 {平台: 路径}' % where)
         for platform, path in libs.items():
             if platform not in KNOWN_PLATFORMS:
-                raise ParError('%s.native.lib: 未知平台 "%s"（可用：%s）'
+                raise PylibError('%s.native.lib: 未知平台 "%s"（可用：%s）'
                                % (where, platform, '、'.join(KNOWN_PLATFORMS)))
             if not isinstance(path, str) or not path:
-                raise ParError('%s.native.lib."%s": 必须是包内路径' % (where, platform))
-            # 统一用 .pylib 而不是 .lib：包内的静态库不该假装成某个编译器
-            # 自己的产物（MSVC 的 .lib / GCC 的 .a 各有约定）。实测 link.exe
-            # 按**文件内容**识别 COFF 归档，不看扩展名（spike/test_lib_ext.bat）。
-            if not path.lower().endswith(LIB_SUFFIX):
-                raise ParError('%s.native.lib."%s": 静态库必须以 %s 结尾（当前是 "%s"）。'
-                               '这是 .par 的统一约定：不同平台的库用同一个后缀，'
-                               '消费方不必按扩展名猜编译器'
-                               % (where, platform, LIB_SUFFIX, path))
+                raise PylibError('%s.native.lib."%s": 必须是包内路径' % (where, platform))
+            # 后缀按平台惯例：Windows 是 .lib，macOS/Linux 是 .a。
+            if not path.lower().endswith(LIB_SUFFIX[platform]):
+                raise PylibError('%s.native.lib."%s": 静态库必须以 %s 结尾（当前是 "%s"）。'
+                               '包内库用各平台的原生后缀：Windows 是 .lib，'
+                               'macOS/Linux 是 .a'
+                               % (where, platform, LIB_SUFFIX[platform], path))
 
         if bytecode is None and not functions and not libs:
-            raise ParError('%s: 模块 "%s" 既没有字节码、也没有函数或静态库，'
+            raise PylibError('%s: 模块 "%s" 既没有字节码、也没有函数或静态库，'
                            '这样的包解出来是空的' % (where, module_name))
 
         normalized.append({
@@ -192,7 +197,7 @@ def validate_manifest(data, source='manifest.json'):
 # ─────────────────────────────────────────────────────────────
 
 class Package:
-    """一个已打开（已校验）的 .par。
+    """一个已打开（已校验）的 .pylib。
 
     刻意不保留 open 的 zip 句柄：读完清单就关。构建期读它的都是短操作，
     长期持有句柄只会在 Windows 上阻止别人覆盖文件。
@@ -242,17 +247,17 @@ def read_manifest(path):
             try:
                 raw = archive.read(MANIFEST_NAME)
             except KeyError:
-                raise ParError('%s: 不是 pyui 扩展包（缺少 %s）'
+                raise PylibError('%s: 不是 pyui 扩展包（缺少 %s）'
                                % (path, MANIFEST_NAME))
     except zipfile.BadZipFile:
-        raise ParError('%s: 不是合法的 zip（.par 应是 zip 格式）' % path)
+        raise PylibError('%s: 不是合法的 zip（.pylib 应是 zip 格式）' % path)
     except OSError as error:
-        raise ParError('%s: 打不开：%s' % (path, error))
+        raise PylibError('%s: 打不开：%s' % (path, error))
 
     try:
         data = json.loads(raw.decode('utf-8-sig'))
     except (UnicodeDecodeError, ValueError) as error:
-        raise ParError('%s: %s 不是合法 JSON：%s' % (path, MANIFEST_NAME, error))
+        raise PylibError('%s: %s 不是合法 JSON：%s' % (path, MANIFEST_NAME, error))
     return validate_manifest(data, path)
 
 
@@ -260,7 +265,7 @@ def open_package(path):
     """完整校验：清单合法 + 清单里提到的每个文件都真的在包里。
 
     为什么要在这里就把「文件缺失」查出来：如果留到链接期，症状会是
-    「LNK1104 无法打开 fs.pylib」——使用者完全不会想到是包打少了文件。
+    「LNK1104 无法打开 fs.lib」——使用者完全不会想到是包打少了文件。
     """
     try:
         with zipfile.ZipFile(path, 'r') as archive:
@@ -268,18 +273,18 @@ def open_package(path):
             try:
                 raw = archive.read(MANIFEST_NAME)
             except KeyError:
-                raise ParError('%s: 不是 pyui 扩展包（缺少 %s）'
+                raise PylibError('%s: 不是 pyui 扩展包（缺少 %s）'
                                % (path, MANIFEST_NAME))
             checksum = archive.read(MANIFEST_NAME)
     except zipfile.BadZipFile:
-        raise ParError('%s: 不是合法的 zip（.par 应是 zip 格式）' % path)
+        raise PylibError('%s: 不是合法的 zip（.pylib 应是 zip 格式）' % path)
     except OSError as error:
-        raise ParError('%s: 打不开：%s' % (path, error))
+        raise PylibError('%s: 打不开：%s' % (path, error))
 
     try:
         data = json.loads(raw.decode('utf-8-sig'))
     except (UnicodeDecodeError, ValueError) as error:
-        raise ParError('%s: %s 不是合法 JSON：%s' % (path, MANIFEST_NAME, error))
+        raise PylibError('%s: %s 不是合法 JSON：%s' % (path, MANIFEST_NAME, error))
 
     manifest = validate_manifest(data, path)
 
@@ -291,7 +296,7 @@ def open_package(path):
             if lib not in names:
                 missing.append('%s 的 %s 静态库 %s' % (module['name'], platform, lib))
     if missing:
-        raise ParError('%s: 清单引用的文件不在包里：\n  %s'
+        raise PylibError('%s: 清单引用的文件不在包里：\n  %s'
                        % (path, '\n  '.join(missing)))
 
     return Package(path, manifest, checksum)
@@ -315,19 +320,19 @@ def _add_file(archive, name, data, compress=True):
 
 
 def pack(source_dir, output, compress=True):
-    """把源目录打成 .par。
+    """把源目录打成 .pylib。
 
     源目录必须有一个 manifest.json；清单里引用的相对路径相对于源目录。
     """
     manifest_path = os.path.join(source_dir, MANIFEST_NAME)
     if not os.path.isfile(manifest_path):
-        raise ParError('%s: 缺少 %s' % (source_dir, MANIFEST_NAME))
+        raise PylibError('%s: 缺少 %s' % (source_dir, MANIFEST_NAME))
 
     with open(manifest_path, 'r', encoding='utf-8-sig') as handle:
         try:
             data = json.load(handle)
         except ValueError as error:
-            raise ParError('%s: 不是合法 JSON：%s' % (manifest_path, error))
+            raise PylibError('%s: 不是合法 JSON：%s' % (manifest_path, error))
 
     manifest = validate_manifest(data, manifest_path)
 
@@ -351,7 +356,7 @@ def pack(source_dir, output, compress=True):
         for include_dir in module['include']:
             root = os.path.join(source_dir, include_dir)
             if not os.path.isdir(root):
-                raise ParError('%s: include 目录不存在：%s' % (module['name'], include_dir))
+                raise PylibError('%s: include 目录不存在：%s' % (module['name'], include_dir))
             for folder, _, files in os.walk(root):
                 for filename in sorted(files):
                     absolute = os.path.join(folder, filename)
@@ -372,7 +377,7 @@ def pack(source_dir, output, compress=True):
 def _read_relative(source_dir, relative):
     absolute = os.path.join(source_dir, relative.replace('/', os.sep))
     if not os.path.isfile(absolute):
-        raise ParError('清单引用的文件不存在：%s' % relative)
+        raise PylibError('清单引用的文件不存在：%s' % relative)
     with open(absolute, 'rb') as handle:
         return handle.read()
 
@@ -393,7 +398,7 @@ def unpack(path, target_dir):
             destination = os.path.normpath(os.path.join(target_dir, name))
             root = os.path.normpath(target_dir)
             if not destination.startswith(root + os.sep) and destination != root:
-                raise ParError('%s: 包内路径越界：%s' % (path, name))
+                raise PylibError('%s: 包内路径越界：%s' % (path, name))
             os.makedirs(os.path.dirname(destination), exist_ok=True)
             with archive.open(name) as source:
                 with open(destination, 'wb') as handle:
@@ -429,12 +434,12 @@ def _describe(package):
 
 
 def main(argv):
-    parser = argparse.ArgumentParser(prog='par', description='.par 扩展包工具')
+    parser = argparse.ArgumentParser(prog='pylib', description='.pylib 扩展包工具')
     sub = parser.add_subparsers(dest='command', required=True)
 
-    pack_cmd = sub.add_parser('pack', help='把源目录打成 .par')
+    pack_cmd = sub.add_parser('pack', help='把源目录打成 .pylib')
     pack_cmd.add_argument('source', help='含 manifest.json 的目录')
-    pack_cmd.add_argument('-o', '--output', required=True, help='输出 .par')
+    pack_cmd.add_argument('-o', '--output', required=True, help='输出 .pylib')
 
     list_cmd = sub.add_parser('list', help='显示包内容')
     list_cmd.add_argument('package')
@@ -465,8 +470,8 @@ def main(argv):
             package = unpack(args.package, args.directory)
             print('已解出 %s -> %s' % (package.name, args.directory))
             return 0
-    except ParError as error:
-        print('par: %s' % error, file=sys.stderr)
+    except PylibError as error:
+        print('pylib: %s' % error, file=sys.stderr)
         return 1
     return 2
 

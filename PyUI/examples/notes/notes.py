@@ -1,7 +1,7 @@
 # 笔记：Python + XML 的最小「真实软件」
 #
 # 演示的能力：
-#   * 文件读写（read_file / write_file）
+#   * 文件读写（fs 扩展：fs.read_file / fs.write_file）
 #   * 文件关联（.pynote 双击用本程序打开 → open_file）
 #   * 系统托盘（右键菜单退出，左键唤回窗口）
 #   * 关窗拦截（有未保存内容时先拦住）
@@ -14,6 +14,10 @@
 #
 # 与 Android 一致：一个入口界面是一个继承 Activity 的类，onCreate 里做绑定。
 # 状态写成 self.xxx：字段天然属于这个实例，方法里改它不用写 global。
+#
+# 文件读写走 fs 扩展：核心只提供基础 Python 语义，凡是碰系统资源的能力
+# （文件、网络、线程）都在扩展里，这样不读文件的程序不会把 fopen 带进 exe。
+import fs
 
 
 class NotesActivity(Activity):
@@ -60,10 +64,10 @@ class NotesActivity(Activity):
         self.refresh_status()
 
     def save_to(self, target):
-        # write_file 成功返回 None，失败返回错误描述
+        # fs.write_file 成功返回 None，失败返回错误描述
         header = text(find("title")).strip()
         body = text(find("body"))
-        error = write_file(target, header + "\n" + body)
+        error = fs.write_file(target, header + "\n" + body)
         if error is not None:
             set_text(find("status"), "保存失败：" + error)
             return False
@@ -73,10 +77,10 @@ class NotesActivity(Activity):
         return True
 
     def default_path(self):
-        home = home_directory()
+        home = fs.home_directory()
         if home is None:
             return "pyui-note.pynote"
-        return join_path(home, "pyui-note.pynote")
+        return fs.join_path(home, "pyui-note.pynote")
 
     def save(self):
         if self.path is None:
@@ -84,7 +88,7 @@ class NotesActivity(Activity):
         return self.save_to(self.path)
 
     def open_note(self, target):
-        content = read_file(target)
+        content = fs.read_file(target)
         if content is None:
             set_text(find("status"), "打不开：" + target)
             return

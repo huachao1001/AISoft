@@ -32,9 +32,15 @@
 # 每个脚本产出 <stem>.py.gen.cpp 与 <stem>.py.gen.h（工厂声明）。
 import argparse
 import ast
+import json
 import os
 import sys
 import xml.etree.ElementTree as ElementTree
+
+# 清单读取与 pyuic 同目录。用显式 sys.path 而不是相对 import：
+# 这个文件既是脚本（python pyuic.py）又是被 import 的模块（check_syntax.py）。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import extensions  # noqa: E402
 
 
 # ═══════════════════════════════════════════════════════════
@@ -136,15 +142,13 @@ FREE_FUNCTIONS = {
     'range': (None, 1, 3),   # 只允许出现在 for 里
     'print': ('log', 1, 1),
     'char_from_code': ('charFromCode', 1, 1),
-    'parse_number': ('parseNumber', 1, 1),
-    # 文件与路径。这几个原先只在 py_script.cpp 里实现，没进白名单，
-    # 于是 examples/settings 与 notes 写了 home_directory() 也编不过。
-    # 注意：它们属于「扩展能力」，VM 阶段会整体搬到扩展库里（见
-    # docs/ARCHITECTURE.md）；在 AOT 阶段先如实登记，避免示例与工具脱节。
-    'read_file': ('readFile', 1, 1),
-    'write_file': ('writeFile', 2, 2),
-    'home_directory': ('homeDirectory', 0, 0),
-    'join_path': ('joinPath', 2, 2),
+    # 脚本名沿用 PyUI 自己的 `parse_number`（这不是 CPython 的内建名），
+    # 实现直接复用 AiPy 的 parseFloat：两者语义相同——整串必须都是数字，
+    # 失败返回 None 而不是 12abc → 12。
+    'parse_number': ('parseFloat', 1, 1),
+    # 文件与路径不在这里：它们属于扩展能力，由 ext/fs 提供，
+    # 脚本里写 `import fs` 后走 extension_call。核心不含任何 IO——
+    # 一个不读文件的程序不该把 fopen 和路径处理带进 exe。
     # 控件
     'set_text': ('setText', 2, 2),
     'text': ('text', 1, 1),
@@ -616,6 +620,9 @@ class Generator:
         self.used_module_set = set()
         # 本脚本用到过的 (模块, python 函数名) → 查表结果
         self.extension_calls = {}
+        # 每个扩展函数的调用位置，写进 used.json 供报错与体积归因定位。
+        # 结构：模块名 → {python 函数名 → [(文件, 行, 列)]}
+        self.extension_sites = {}
         # 成员/自由函数之外的名字：`import fs` 之后 fs 本身也是个名字。
         # 它不能当变量用，否则 `fs = 1` 会让后面的 fs.read_file 变得没法解释。
         self.module_names = set()
@@ -635,6 +642,17 @@ class Generator:
         out.append('')
         out.append('#include "pyui/py_script.h"')
         out.append('#include "pyui/py_value.h"')
+        # 扩展的头：顺序按 used_modules（import 出现顺序），结果稳定可复现。
+        # 只有真正 import 过的模块才会被 include——「用了才带进来」从这里开始。
+        headers = []
+        for module_name in self.used_modules:
+            extension = self.extension_index.find(module_name)
+            if extension is None or not extension.header:
+                continue
+            if extension.header not in headers:
+                headers.append(extension.header)
+        for header in headers:
+            out.append('#include "%s"' % header)
         out.append('')
         out.append('#include <cstdint>')
         out.append('#include <string>')
@@ -1084,6 +1102,34 @@ class Generator:
             self.used_modules.append(module)
         self.module_names.add(module)
         return extension
+
+    def record_call(self, module, function, node):
+        """记下「哪个扩展函数在哪一行被调用了」。used.json 靠它产出。"""
+        sites = self.extension_sites.setdefault(module, {})
+        sites.setdefault(function, []).append(
+            (self.filename, getattr(node, 'lineno', 0),
+             getattr(node, 'col_offset', 0) + 1))
+
+    def extension_call(self, extension, module, function, node):
+        """生成一次扩展函数调用。
+
+        实参个数在构建期校验：清单里写了 arity，运行期就没有类型检查了，
+        这里放过一个多传或少传的参数，症状会是 C++ 编译期的一堆模板报错，
+        或者更糟——DLL 边界上的栈错位。
+        """
+        declared = extension.functions[function]
+        cpp_name, low, high = declared
+        count = len(node.args)
+        if count < low or (high is not None and count > high):
+            if low == high:
+                node_error('"%s.%s" 需要 %d 个参数，这里给了 %d 个'
+                           % (module, function, low, count), node)
+            node_error('"%s.%s" 需要 %d~%d 个参数，这里给了 %d 个'
+                       % (module, function, low, high, count), node)
+
+        self.record_call(module, function, node)
+        args = ', '.join(self.expr(a) for a in node.args)
+        return '%s(%s)' % (cpp_name, args)
 
     def collect_assign(self, node):
         # ast.Assign 用 targets（支持 a = b = 1），ast.AnnAssign 用 target
@@ -2001,6 +2047,12 @@ class Generator:
                                                     self.expr(node.args[1]))
             return 'py::%s(%s)' % (function, ', '.join(self.expr(a) for a in node.args))
 
+        # `from fs import read_file` 进来的裸名字
+        if name in self.imported_from:
+            module, function = self.imported_from[name]
+            extension = self.extension_index.find(module)
+            return self.extension_call(extension, module, function, node)
+
         node_error('未知的函数 "%s"' % name, node)
 
     def check_arity(self, name, node, low, high):
@@ -2050,6 +2102,18 @@ class Generator:
                 node_error('"%s" 需要 %d~%d 个参数，这里给了 %d 个'
                            % (method, minimum, total, len(node.args)), node)
             return '%s(%s)' % (method, ', '.join(self.expr(a) for a in node.args))
+
+        # `fs.read_file(x)`：扩展模块的属性调用。必须在 METHODS 之前判定，
+        # 否则模块名会被当成「某个值的字符串方法接收者」，报「不支持 .read_file」。
+        if isinstance(node.func.value, ast.Name):
+            receiver = node.func.value.id
+            if receiver in self.module_names:
+                extension = self.extension_index.find(receiver)
+                if method not in extension.functions:
+                    node_error('模块 "%s" 没有 %s。可用：%s'
+                               % (receiver, method,
+                                  '、'.join(sorted(extension.functions))), node.func)
+                return self.extension_call(extension, receiver, method, node)
 
         if method not in METHODS:
             node_error('不支持的方法 ".%s"' % method, node.func)
@@ -2159,12 +2223,24 @@ def main(argv):
                         help='不生成 <stem>.main.gen.cpp（想自己写入口时用）')
     parser.add_argument('--windows', action='store_true',
                         help='入口用 wWinMain（Windows 图形子系统，不带控制台）')
+    parser.add_argument('--ext-dir', action='append', default=[],
+                        help='扩展清单目录（可以有多个；每个子目录放 manifest.json）')
+    parser.add_argument('--used', help='输出「用到了哪些扩展」的 JSON（给 pyui_extc）')
     parser.add_argument('sources', nargs='+', help='脚本路径')
     args = parser.parse_args(argv)
+
+    # 扩展索引在这里装一次，全部脚本共用。装载失败（清单写错）不属于
+    # 某个脚本的错误，所以直接退出，不要混进下面的 errors 列表。
+    try:
+        extension_index = extensions.load_dirs(args.ext_dir) if args.ext_dir else None
+    except extensions.ExtensionError as error:
+        print('pyuic: %s' % error, file=sys.stderr)
+        return 1
 
     os.makedirs(args.out, exist_ok=True)
     header_lines = []
     errors = []
+    used_sites = {}
 
     for source in args.sources:
         stem = os.path.splitext(os.path.basename(source))[0]
@@ -2201,11 +2277,20 @@ def main(argv):
             errors.append((manifest_path, CompileError(error.message, 1, 1)))
             continue
 
+        generator = Generator(class_name, source, extensions=extension_index,
+                              manifest=manifest)
         try:
-            code = Generator(class_name, source, manifest=manifest).generate(tree)
+            code = generator.generate(tree)
         except CompileError as error:
             errors.append((source, error))
             continue
+
+        # 汇总「用到了哪些扩展函数、在哪些位置」。多个脚本共用一个 used.json，
+        # 所以这里按模块/函数合并，不覆盖。
+        for module_name, functions in generator.extension_sites.items():
+            target = used_sites.setdefault(module_name, {})
+            for function_name, sites in functions.items():
+                target.setdefault(function_name, []).extend(sites)
 
         write_if_changed(os.path.join(args.out, stem + '.py.gen.cpp'), code)
 
@@ -2253,6 +2338,32 @@ def main(argv):
             + '\n'.join(header_lines) +
             '\n\n}  // namespace py\n}  // namespace pyui\n')
         write_if_changed(args.header, content)
+
+    # used.json：pyuic 有 AST 和行号，所以「记录」由它负责；
+    # 「按清单决定链接什么」由 C++ 的 pyui_extc 负责。两边职责不重叠。
+    #
+    # 即使没有用到任何扩展也照样写：CMake 的 OUTPUT 列表必须稳定，
+    # 缺一个文件会让每次构建都重新 configure。
+    if args.used:
+        payload = {'modules': []}
+        # 顺序按 used_modules 的 import 顺序，便于人读和 diff
+        ordered = []
+        for module_name in (extension_index.module_names() if extension_index else []):
+            if module_name in used_sites:
+                ordered.append(module_name)
+        for module_name in ordered:
+            functions = used_sites[module_name]
+            payload['modules'].append({
+                'name': module_name,
+                'functions': sorted(functions),
+                'sites': [
+                    {'file': site[0], 'line': site[1], 'column': site[2]}
+                    for function_name in sorted(functions)
+                    for site in functions[function_name]
+                ],
+            })
+        content = json.dumps(payload, ensure_ascii=False, indent=2) + '\n'
+        write_if_changed(args.used, content)
 
     return 0
 

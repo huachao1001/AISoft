@@ -1,41 +1,25 @@
-// UTF-8 字符串工具
+// UTF-8 工具：转发到 AiPy。
 //
-// 为什么独立成头而不是塞进 painter.h：需要这些函数的层不止绘制层。
-// 脚本层的 len()/下标/切片要按字符算，VM 与扩展库只依赖 Value，
-// 不该为了「数一个中文字符」把整个绘制层链进来。
+// **实现不在 PyUI 里**。UTF-8 的字符边界扫描是语言层与图形层共同需要
+// 的能力，但它不属于任何一边；把它放在 AiPy（零界面依赖）里，两条
+// 依赖链才不会互相拖拽。
 //
-// 约定：所有函数都只做**边界扫描**，不校验合法性、不做正规化。
-// 遇到非法字节就前进 1 字节，保证调用方的循环一定终止。
+// 这个头只做一件事：把 aipy 的函数引入 pyui 命名空间，让界面层既有的
+// 调用点（widgets / view / text_field 共 50+ 处）保持原样。PyUI 不是
+// 「拥有」这些函数，只是「使用」它们——所以这里是转发，不是定义。
 #pragma once
 
-#include <cstdint>
-#include <string>
-#include <string_view>
+#include "aipy/utf8.h"
 
 namespace pyui {
 
-// text 的前 maxBytes 字节能完整覆盖多少个字符（不会切断字符）。
-size_t utf8PrefixLength(std::string_view text, size_t maxBytes);
-
-// 字符数（不是字节数）。中文 1 个字算 1。
-size_t utf8Length(std::string_view text);
-
-// 前 charCount 个字符占多少字节。
-size_t utf8PrefixByChars(std::string_view text, size_t charCount);
-
-// 第 charIndex 个字符的起始字节偏移；越界返回 text.size()。
-size_t utf8OffsetOfChar(std::string_view text, size_t charIndex);
-
-// 把任意字节偏移退到所在字符的起点。
-size_t utf8AlignDown(std::string_view text, size_t byteOffset);
-
-// byteOffset 所在字符之后的下一个字符起点。
-size_t utf8NextBoundary(std::string_view text, size_t byteOffset);
-
-// byteOffset 所在字符之前的上一个字符起点。
-size_t utf8PrevBoundary(std::string_view text, size_t byteOffset);
-
-// 码点 → UTF-8 字节串。
-std::string utf8Encode(std::uint32_t codepoint);
+using aipy::utf8AlignDown;
+using aipy::utf8Encode;
+using aipy::utf8Length;
+using aipy::utf8NextBoundary;
+using aipy::utf8OffsetOfChar;
+using aipy::utf8PrefixByChars;
+using aipy::utf8PrefixLength;
+using aipy::utf8PrevBoundary;
 
 }  // namespace pyui

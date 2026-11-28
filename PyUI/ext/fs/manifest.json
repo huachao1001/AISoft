@@ -1,0 +1,26 @@
+{
+  "format": 1,
+  "name": "pyui-ext-fs",
+  "version": "0.1.0",
+  "description": "文件读写与路径拼接。核心不含任何 IO 能力，全部由扩展提供。",
+  "modules": [
+    {
+      "name": "fs",
+      "doc": "文件读写与路径拼接",
+      "header": "pyui/ext/fs.h",
+      "functions": [
+        { "python": "read_file", "cpp": "pyui::ext::fs::readFile", "arity": [1, 1] },
+        { "python": "write_file", "cpp": "pyui::ext::fs::writeFile", "arity": [2, 2] },
+        { "python": "join_path", "cpp": "pyui::ext::fs::joinPath", "arity": [2, 2] },
+        { "python": "home_directory", "cpp": "pyui::ext::fs::homeDirectory", "arity": [0, 0] }
+      ],
+      "depends": [],
+      "native": {
+        "include": ["include"],
+        "lib": {
+          "win-x64": "lib/win-x64/fs.lib"
+        }
+      }
+    }
+  ]
+}

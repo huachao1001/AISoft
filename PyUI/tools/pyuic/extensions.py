@@ -1,68 +1,72 @@
 #!/usr/bin/env python3
-# 扩展机制：把 Python 里的 import 变成 C++ 的静态链接。
+# 扩展清单的读取：把 Python 里的 import 解析成 C++ 的调用与链接。
 #
-# ── 为什么要单独一个文件 ──
+# ── 与 pylib.py 的关系 ──
 #
-# 定位是「核心只提供最基础的 Python 语义，其余能力全部由扩展提供」。
-# 于是 import 不再是禁止项，而是**唯一的扩展入口**。这条边界必须只有一处
-# 定义，否则「哪些 import 合法、各自链哪个库」会散落到生成器和 CMake 两边，
-# 迟早对不上。
+# 清单格式只有一套，定义在 pylib.py 的 manifest.json（format=1）。这里只是它的
+# **读端**：pylib.py 负责打包与校验，extensions.py 负责在 pyuic 里查表。
+# 早先这里有一套独立的 extension.json（"library" 给 CMake 目标名），已经废除：
+# 用户机器上没有 CMake，目标名无法解析成文件，那个字段在第一个人用的时候就
+# 会暴露成「链接失败」。现在只认 native.lib{平台: 包内路径}。
 #
-# ── 为什么用清单文件而不是扫 C++ 头 ──
+# ── 为什么 pyuic 还要读清单 ──
 #
-# 从 C++ 头里反推「Python 该看到什么」需要解析 C++，那是另一个编译器。
-# 清单是显式的：扩展作者写清楚「这个模块叫什么、函数映射到哪个符号、
-# 需要几个参数」，pyuic 只做查表。代价是多一个文件，换来的是
-#   * 构建期就能报「这个函数不存在」并带行号；
-#   * 参数个数在编译期校验，而不是等到运行期默默传错；
-#   * 链接哪个库完全由清单决定，不需要猜。
-#
-# ── 清单格式（JSON）──
-#
-#   {
-#     "module":  "fs",                      # Python 里 import 的名字
-#     "header":  "pyui/ext/fs.h",           # 生成的代码 include 它
-#     "library": "pyui_ext_fs",             # CMake 目标名，用于链接
-#     "doc":     "文件读写与路径拼接",         # 报错时给人看
-#     "functions": [
-#       {"python": "read_file", "cpp": "pyui::ext::fs::readFile", "arity": [1, 1]}
-#     ]
-#   }
-#
-# arity 是 [最少, 最多]，与 pyuic 里 FREE_FUNCTIONS 的约定一致。
+# 代码生成需要「Python 函数名 → C++ 符号」的映射，这一条信息只能在清单里。
+# 链接清单（哪些 .pylib）由 C++ 的 pyui_extc 算，这里不碰——分工是：
+#   pyuic       有 AST 和行号，负责「记录用了什么」
+#   pyui_extc   纯数据加工，负责「按清单决定链接什么」
 import json
 import os
 
 
 class ExtensionError(Exception):
-    """清单本身写错了（不是脚本写错）。""" 
+    """清单本身写错了（不是脚本写错）。"""
 
 
 class Extension:
     """一个扩展模块。"""
 
-    def __init__(self, module, header, library, functions, manifest_path, doc=''):
+    def __init__(self, module, header, includes, functions, manifest_path, libs,
+                 depends, doc=''):
         self.module = module
+        # 生成的代码 include 它。空表示纯 Python 扩展（只有字节码）。
         self.header = header
-        self.library = library
-        # python 名 → (cpp 符号, 最少参数, 最多参数)
-        self.functions = functions
+        # 编译期需要的 include 目录（相对包根）
+        self.includes = includes
+        self.functions = functions  # python 名 → (cpp 符号, 最少, 最多)
         self.manifest_path = manifest_path
+        self.libs = libs            # 平台 → 包内相对路径
+        self.depends = depends
         self.doc = doc
 
     def describe(self):
         return '%s（%s）' % (self.module, self.doc) if self.doc else self.module
 
 
-def _require(mapping, key, path):
+def _text(mapping, key, where, required=True):
     value = mapping.get(key)
-    if not isinstance(value, str) or not value:
-        raise ExtensionError('%s: 缺少字符串字段 "%s"' % (path, key))
+    if value is None:
+        if required:
+            raise ExtensionError('%s: 缺少字符串字段 "%s"' % (where, key))
+        return ''
+    if not isinstance(value, str) or (required and not value):
+        raise ExtensionError('%s: "%s" 必须是非空字符串' % (where, key))
     return value
 
 
+def _arity(entry, where):
+    value = entry.get('arity')
+    if (not isinstance(value, list) or len(value) != 2
+            or not all(isinstance(v, int) and not isinstance(v, bool) for v in value)):
+        raise ExtensionError('%s: "arity" 必须是 [最少, 最多] 两个整数' % where)
+    low, high = value
+    if low < 0 or high < low:
+        raise ExtensionError('%s: "arity" 必须满足 0 <= 最少 <= 最多' % where)
+    return low, high
+
+
 def load_manifest(path):
-    """读一个 extension.json。任何结构错误都当场抛出，带文件名。"""
+    """读一个 manifest.json。任何结构错误都当场抛出，带文件名。"""
     try:
         with open(path, 'r', encoding='utf-8-sig') as handle:
             data = json.load(handle)
@@ -73,44 +77,82 @@ def load_manifest(path):
 
     if not isinstance(data, dict):
         raise ExtensionError('%s: 顶层必须是对象' % path)
+    if data.get('format') != 1:
+        raise ExtensionError('%s: 不支持的 format=%r（本工具只认 1）'
+                             % (path, data.get('format')))
 
-    module = _require(data, 'module', path)
-    header = _require(data, 'header', path)
-    library = _require(data, 'library', path)
-    doc = data.get('doc', '') if isinstance(data.get('doc', ''), str) else ''
+    modules = data.get('modules')
+    if not isinstance(modules, list) or not modules:
+        raise ExtensionError('%s: "modules" 必须是非空数组' % path)
 
-    entries = data.get('functions')
-    if not isinstance(entries, list) or not entries:
-        raise ExtensionError('%s: "functions" 必须是非空数组' % path)
-
-    functions = {}
-    for position, entry in enumerate(entries):
-        where = '%s: functions[%d]' % (path, position)
+    result = []
+    for position, entry in enumerate(modules):
+        where = '%s: modules[%d]' % (path, position)
         if not isinstance(entry, dict):
             raise ExtensionError('%s: 必须是对象' % where)
-        python_name = _require(entry, 'python', where)
-        cpp_name = _require(entry, 'cpp', where)
-        arity = entry.get('arity')
-        if (not isinstance(arity, list) or len(arity) != 2
-                or not all(isinstance(v, int) and v >= 0 for v in arity)
-                or arity[0] > arity[1]):
-            raise ExtensionError('%s: "arity" 必须是 [最少, 最多] 两个非负整数，'
-                                 '且前者不大于后者' % where)
-        if python_name in functions:
-            raise ExtensionError('%s: 函数 "%s" 重复声明' % (where, python_name))
-        functions[python_name] = (cpp_name, arity[0], arity[1])
 
-    return Extension(module, header, library, functions, path, doc)
+        module = _text(entry, 'name', where)
+        doc = _text(entry, 'doc', where, required=False)
+        header = _text(entry, 'header', where, required=False)
+
+        functions = {}
+        entries = entry.get('functions') or []
+        if not isinstance(entries, list):
+            raise ExtensionError('%s: "functions" 必须是数组' % where)
+        for index, item in enumerate(entries):
+            item_where = '%s.functions[%d]' % (where, index)
+            if not isinstance(item, dict):
+                raise ExtensionError('%s: 必须是对象' % item_where)
+            python_name = _text(item, 'python', item_where)
+            cpp_name = _text(item, 'cpp', item_where)
+            low, high = _arity(item, item_where)
+            if python_name in functions:
+                raise ExtensionError('%s: 函数 "%s" 重复声明'
+                                     % (item_where, python_name))
+            functions[python_name] = (cpp_name, low, high)
+
+        native = entry.get('native') or {}
+        if not isinstance(native, dict):
+            raise ExtensionError('%s: "native" 必须是对象' % where)
+        includes = native.get('include') or []
+        if not isinstance(includes, list) or not all(isinstance(p, str) for p in includes):
+            raise ExtensionError('%s.native: "include" 必须是路径数组' % where)
+        libs = native.get('lib') or {}
+        if not isinstance(libs, dict):
+            raise ExtensionError('%s.native: "lib" 必须是 {平台: 路径}' % where)
+        for platform, lib_path in libs.items():
+            if not isinstance(lib_path, str) or not lib_path:
+                raise ExtensionError('%s.native.lib."%s": 必须是包内路径'
+                                     % (where, platform))
+
+        depends = entry.get('depends') or []
+        if not isinstance(depends, list) or not all(isinstance(d, str) for d in depends):
+            raise ExtensionError('%s: "depends" 必须是模块名数组' % where)
+
+        if not header and not functions and not libs:
+            raise ExtensionError('%s: 模块 "%s" 既没有 header、函数或静态库'
+                                 % (where, module))
+
+        result.append(Extension(module, header, list(includes), functions, path,
+                                dict(libs), list(depends), doc))
+    return result
 
 
 def discover(search_dirs):
-    """在若干目录下找 <dir>/*/extension.json。找不到就跳过，不报错。"""
+    """在若干目录下找 <dir>/*/manifest.json。找不到就跳过，不报错。
+
+    也接受直接把 <dir> 指向某个包目录（里面就是 manifest.json）。
+    """
     found = []
     for directory in search_dirs:
         if not directory or not os.path.isdir(directory):
             continue
+        direct = os.path.join(directory, 'manifest.json')
+        if os.path.isfile(direct):
+            found.append(direct)
+            continue
         for name in sorted(os.listdir(directory)):
-            candidate = os.path.join(directory, name, 'extension.json')
+            candidate = os.path.join(directory, name, 'manifest.json')
             if os.path.isfile(candidate):
                 found.append(candidate)
     return found
@@ -126,7 +168,8 @@ class ExtensionIndex:
                 other = self.by_module[extension.module]
                 raise ExtensionError(
                     '模块名 "%s" 被两个清单重复定义：\n  %s\n  %s'
-                    % (extension.module, other.manifest_path, extension.manifest_path))
+                    % (extension.module, other.manifest_path,
+                       extension.manifest_path))
             self.by_module[extension.module] = extension
 
     def __len__(self):
@@ -141,7 +184,7 @@ class ExtensionIndex:
     def describe_available(self):
         """报错时列给用户看：有哪些模块可用、各提供什么。"""
         if not self.by_module:
-            return '（当前没有任何扩展。加一个扩展就是在 ext/ 下放一个 extension.json）'
+            return '（当前没有任何扩展。加一个扩展就是在 ext/ 下放一个 manifest.json）'
         lines = []
         for name in sorted(self.by_module):
             extension = self.by_module[name]
@@ -151,34 +194,9 @@ class ExtensionIndex:
         return '\n'.join(lines)
 
 
-def write_link_manifest(path, libraries):
-    """生成给 CMake include 的链接清单。
-
-    为什么由 pyuic 生成而不是在 CMakeLists 里手写：链接哪些库必须与脚本
-    实际 import 的模块一致。手写两份就会漂移——脚本删了 import、库还留着
-    （体积白涨），或者脚本加了 import、库忘了加（链接失败）。让生成器
-    同时决定「编什么」和「链什么」，两者不可能不一致。
-
-    即使没有任何扩展也写一个空文件：CMake 的 OUTPUT 列表必须稳定，否则
-    每次构建都要重新 configure。
-    """
-    lines = [
-        '# 由 pyuic 生成，请勿手工修改。',
-        '# 本文件列出脚本 import 的扩展所对应的 CMake 目标。',
-        '',
-    ]
-    if libraries:
-        lines.append('set(PYUI_LINKED_EXTENSIONS %s)' % ' '.join(libraries))
-    else:
-        lines.append('set(PYUI_LINKED_EXTENSIONS)')
-    lines.append('')
-    content = '\n'.join(lines)
-
-    try:
-        with open(path, 'r', encoding='utf-8', newline='') as handle:
-            if handle.read() == content:
-                return
-    except OSError:
-        pass
-    with open(path, 'w', encoding='utf-8', newline='') as handle:
-        handle.write(content)
+def load_dirs(search_dirs):
+    """从若干目录发现并装载全部扩展。清单有错就抛 ExtensionError。"""
+    extensions = []
+    for path in discover(search_dirs):
+        extensions.extend(load_manifest(path))
+    return ExtensionIndex(extensions)

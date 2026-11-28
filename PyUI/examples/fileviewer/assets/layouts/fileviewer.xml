@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  文件查看器界面。
+
+  这个示例验证的是边界：核心不含 IO，读写全部来自 fs 扩展。
+  界面上只有两个按钮和一块文本，够看清读写链路即可。
+-->
+<LinearLayout orientation="vertical" padding="12" spacing="8">
+
+  <LinearLayout orientation="horizontal" width="match" height="32" spacing="8">
+    <Button id="load" text="读取" width="88" height="32"/>
+    <Button id="save" text="写入" width="88" height="32"/>
+  </LinearLayout>
+
+  <TextView id="out" text="" width="match" height="match" weight="1"
+            ellipsis="false" color="#FF333333" background="#FFFFFFFF"/>
+
+</LinearLayout>

@@ -102,7 +102,9 @@ CASES = [
     ('walrus', 'def f(v):\n  if (n := v):\n    return n\n  return 0\n', 'error',
      '海象运算符'),
     ('tuple_unpack', 'def f(v):\n  a, b = v\n  return a\n', 'error', '元组解包'),
-    ('import', 'import os\n', 'error', '没有模块系统'),
+    # 没有扩展索引时 import 必须报错：静默忽略一个 import 会让程序启动后
+    # 才在调用处崩，那时已经看不出是构建期漏了 --ext-dir。
+    ('import_no_index', 'import os\n', 'error', '没有扩展模块'),
     ('class_def', 'class A:\n  pass\n', 'error', '必须继承 Activity'),
     ('class_wrong_base', 'class A(Object):\n  pass\n', 'error', '基类必须是 Activity'),
     ('class_two', 'class A(Activity):\n  pass\nclass B(Activity):\n  pass\n', 'error',
