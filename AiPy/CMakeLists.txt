@@ -457,7 +457,7 @@ if(AIPY_PYTHON)
       COMMAND ${CMAKE_COMMAND} -E make_directory ${AIPY_EXAMPLE_DIR}
       COMMAND $<TARGET_FILE:pcc>
               --exe ${script} ${example_exe}
-              --build-dir ${CMAKE_BINARY_DIR}
+              --build-dir ${CMAKE_CURRENT_BINARY_DIR}
               --lib-dir $<TARGET_FILE_DIR:aipy_pylib_threading>
       DEPENDS ${script}
               pcc
@@ -570,7 +570,7 @@ foreach(index RANGE ${last_target})
   list(GET AIPY_PYLIB_NAMES ${index} module_name)
   list(GET AIPY_PYLIB_PUBLISH ${index} publish)
   list(GET AIPY_PYLIB_SUBSYSTEMS ${index} subsystem)
-  set(archive ${CMAKE_BINARY_DIR}/${module_name}.pylib)
+  set(archive ${CMAKE_CURRENT_BINARY_DIR}/${module_name}.pylib)
   list(APPEND AIPY_PYLIB_ARCHIVES ${archive})
   if(publish)
     list(APPEND AIPY_DIST_PYLIB_ARCHIVES ${archive})
@@ -610,7 +610,7 @@ add_custom_target(aipy_pylibs ALL DEPENDS ${AIPY_PYLIB_ARCHIVES})
 #
 # 三件套在归档里按**角色**命名（runtime / base / launcher），不是原始文件名：
 # 读取端按角色取，不按文件名猜，于是「哪个是运行时、哪个是入口」是显式的。
-set(AIPY_CORE_ARCHIVE ${CMAKE_BINARY_DIR}/core.pylib)
+set(AIPY_CORE_ARCHIVE ${CMAKE_CURRENT_BINARY_DIR}/core.pylib)
 add_custom_command(
   OUTPUT ${AIPY_CORE_ARCHIVE}
   COMMAND ${AIPY_PYTHON}
@@ -749,7 +749,7 @@ if(AIPY_BUILD_TESTS)
                      ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_examples.py
                      $<TARGET_FILE:pcc>
                      $<TARGET_FILE:aipy_run>
-                     ${CMAKE_BINARY_DIR}
+                     ${CMAKE_CURRENT_BINARY_DIR}
                      $<TARGET_FILE_DIR:aipy_pylib_threading>)
 
     # `class X(Activity)` 的展开路径：self.x → 模块变量、self.m() → m()。
@@ -769,7 +769,7 @@ if(AIPY_BUILD_TESTS)
              COMMAND ${AIPY_PYTHON}
                      ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_pylib.py
                      $<TARGET_FILE:pcc>
-                     ${CMAKE_BINARY_DIR}
+                     ${CMAKE_CURRENT_BINARY_DIR}
                      $<TARGET_FILE_DIR:aipy_pylib_text>)
 
     # threading 库：功能（脚本函数真在后台跑）+ 函数级按需（只调 pending 时
@@ -778,7 +778,7 @@ if(AIPY_BUILD_TESTS)
              COMMAND ${AIPY_PYTHON}
                      ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_threading.py
                      $<TARGET_FILE:pcc>
-                     ${CMAKE_BINARY_DIR}
+                     ${CMAKE_CURRENT_BINARY_DIR}
                      $<TARGET_FILE_DIR:aipy_pylib_threading>)
 
     # 三个系统库：fs / time / json。各验功能 + 函数级按需。
@@ -786,7 +786,7 @@ if(AIPY_BUILD_TESTS)
              COMMAND ${AIPY_PYTHON}
                      ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_system_libs.py
                      $<TARGET_FILE:pcc>
-                     ${CMAKE_BINARY_DIR}
+                     ${CMAKE_CURRENT_BINARY_DIR}
                      $<TARGET_FILE_DIR:aipy_pylib_fs>)
 
     # fs.open 与 CPython open 逐行 + 逐字节对拍。
@@ -798,7 +798,7 @@ if(AIPY_BUILD_TESTS)
              COMMAND ${AIPY_PYTHON}
                      ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_fs_open.py
                      $<TARGET_FILE:pcc>
-                     ${CMAKE_BINARY_DIR}
+                     ${CMAKE_CURRENT_BINARY_DIR}
                      $<TARGET_FILE_DIR:aipy_pylib_fs>)
 
     # input() 与 CPython 逐字节对拍。
@@ -809,7 +809,7 @@ if(AIPY_BUILD_TESTS)
              COMMAND ${AIPY_PYTHON}
                      ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_input.py
                      $<TARGET_FILE:pcc>
-                     ${CMAKE_BINARY_DIR}
+                     ${CMAKE_CURRENT_BINARY_DIR}
                      $<TARGET_FILE_DIR:aipy_pylib_fs>)
 
     # Windows 外壳能力：托盘与文件关联。
@@ -821,7 +821,7 @@ if(AIPY_BUILD_TESTS)
              COMMAND ${AIPY_PYTHON}
                      ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_os_shell.py
                      $<TARGET_FILE:pcc>
-                     ${CMAKE_BINARY_DIR}
+                     ${CMAKE_CURRENT_BINARY_DIR}
                      $<TARGET_FILE_DIR:aipy_pylib_os_tray>)
   endif()
 
